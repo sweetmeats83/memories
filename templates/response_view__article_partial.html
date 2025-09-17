@@ -1,0 +1,170 @@
+{# templates/response_view__article_partial.html #}
+{# Expects: request, user, response, prompt_media, supporting_media, segments, is_token_link #}
+
+<article class="paper-card stream-item mx-auto py-12 group mt-16"
+         data-response-id="{{ response.id }}" data-clickable="1">
+
+  {% if not is_token_link %}
+<div class="article-toolbar" onclick="event.stopPropagation()">
+  <a href="{{ url_for('edit_response_page', response_id=response.id) }}"
+     class="material-symbols-outlined btn-icon"
+     aria-label="Edit"
+     onclick="event.stopPropagation()">edit</a>
+
+  <!-- NOTE: path-only action + data-nonav to avoid card click nav -->
+  <form action="{{ url_for('delete_response', response_id=response.id).path }}"
+        method="post"
+        data-nonav
+        onsubmit="event.stopPropagation(); return confirm('Delete this story? This cannot be undone.');">
+    <button type="submit"
+            class="material-symbols-outlined btn-icon"
+            aria-label="Delete"
+            onclick="event.stopPropagation()">delete</button>
+  </form>
+
+  <button class="material-symbols-outlined btn-icon"
+          aria-label="Print"
+          onclick="event.stopPropagation(); window.print()">print</button>
+</div>
+  {% endif %}
+
+  <div class="book-body">
+
+{# ---- Title or Prompt Heading ---- #}
+<div class="page-column">
+  {# ---- Title or Prompt Heading ---- #}
+  {% if response.title %}
+    <h3 class="font-baskerville text-2xl sm:text-3xl font-medium text-center text-gray-600 mb-6">
+      {{ response.title }}
+    </h3>
+  {% elif response.prompt and response.prompt.text %}
+    <h3 class="font-baskerville text-2xl sm:text-3xl font-medium text-center text-gray-600 mb-6">
+      {{ response.prompt.text }}
+    </h3>
+  {% endif %}
+    {# -------- Primary player (same rules as full view) -------- #}
+    {% set primary = (response.primary_media_url or '') %}
+    {% set primary_url = '' %}
+    {% if primary %}
+      {% if primary.startswith('http') %}
+        {% set primary_url = primary %}
+      {% else %}
+        {% set rel = primary.lstrip('/') %}
+        {% set base_rel = rel.startswith('uploads/') and rel or ('uploads/' ~ rel) %}
+        {% if is_token_link and share_token %}
+          {% set primary_url = '/media/share/' ~ share_token ~ '/' ~ base_rel %}
+        {% else %}
+          {% set primary_url = '/media/auth/' ~ base_rel %}
+        {% endif %}
+      {% endif %}
+    {% endif %}
+    {% if response.primary_thumbnail_path %}
+      {% set poster_rel = response.primary_thumbnail_path.lstrip('/') %}
+      {% if is_token_link and share_token %}
+        {% set poster_url = '/media/share/' ~ share_token ~ '/' ~ poster_rel %}
+      {% else %}
+        {% set poster_url = '/media/auth/' ~ poster_rel %}
+      {% endif %}
+    {% else %}
+      {% set poster_url = None %}
+    {% endif %}
+
+    {% if primary_url %}
+      {% set _lower = (primary|lower) %}
+      {% set is_vid = _lower.endswith('.mp4') or _lower.endswith('.webm') or _lower.endswith('.mov') %}
+      <figure class="article-player" aria-label="Primary media">
+        {% if is_vid %}
+          <video controls data-plyr {% if poster_url %}poster="{{ poster_url }}"{% endif %}>
+            <source src="{{ primary_url }}">
+          </video>
+        {% else %}
+          <audio controls data-plyr>
+            <source src="{{ primary_url }}">
+          </audio>
+        {% endif %}
+      </figure>
+    {% endif %}
+
+    <div class="page-column">
+      {# -------- Main text normalization (mirror full view) -------- #}
+      {% set main_raw = (response.response_text or response.transcription or '') %}
+      {% set main_plain = (
+        main_raw
+        | replace('</p>', '\n\n')
+        | replace('<br>', '\n')
+        | replace('<br/>', '\n')
+        | replace('<br />', '\n')
+        | replace('</div>', '\n\n')
+        | replace('&nbsp;', ' ')
+        | striptags
+        | trim
+      ) %}
+
+      {% if main_plain %}
+        <div class="prose-text">{{ main_plain }}</div>
+      {% else %}
+        <div class="italic opacity-70">No text yet.</div>
+      {% endif %}
+
+      {# ---- Transcript + Segments (optional, same as full) ---- #}
+      {% if (response.transcription and response.transcription.strip()) or (segments is defined and segments|length) %}
+        <div class="mt-8 pt-5 border-t border-black/10">
+          <details class="group details-anim">
+            <summary class="cursor-pointer select-none text-xs tracking-wide uppercase text-gray-500 hover:text-gray-700">
+              Transcript & segments
+            </summary>
+            <div class="details-body">
+              {% if response.transcription and response.transcription.strip() %}
+                <div class="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700">
+                  {{ response.transcription }}
+                </div>
+              {% endif %}
+
+              {% if segments is defined and segments|length %}
+                <div class="mt-5">
+                  <div class="text-xs uppercase tracking-wide text-gray-500 mb-2">Recorded segments</div>
+                  <ol class="grid sm:grid-cols-2 gap-3">
+                    {% for seg in segments %}
+                      <li class="tile-glass p-3 rounded-lg border border-black/10">
+                        <div class="text-xs text-gray-500 mb-1">#{{ seg.order_index or loop.index }}</div>
+                        {% if seg.transcript %}
+                          <div class="text-sm text-gray-800 whitespace-pre-wrap mb-2">{{ seg.transcript }}</div>
+                        {% endif %}
+                        {% if seg.media_path %}
+                          {% if seg.media_path.startswith('http') %}
+                            {% set seg_url = seg.media_path %}
+                          {% else %}
+                            {% set seg_rel = 'uploads/' ~ seg.media_path %}
+                            {% if is_token_link and share_token %}
+                              {% set seg_url = '/media/share/' ~ share_token ~ '/' ~ seg_rel %}
+                            {% else %}
+                              {% set seg_url = '/media/auth/' ~ seg_rel %}
+                            {% endif %}
+                          {% endif %}
+                          {% set is_seg_video = (seg.media_path|lower).endswith('.mp4') or (seg.media_path|lower).endswith('.webm') or (seg.media_path|lower).endswith('.mov') %}
+                          {% if is_seg_video %}
+                            <button type="button" class="thumb-sm" data-kind="video" data-src="{{ seg_url }}"
+                                    {% if seg.thumbnail_path %}data-poster="{{ (is_token_link and share_token) and ('/media/share/' ~ share_token ~ '/' ~ seg.thumbnail_path) or ('/media/auth/' ~ seg.thumbnail_path) }}"{% endif %}
+                                    aria-label="Play segment">
+                              <span class="thumb-icon material-symbols-outlined">play_circle</span>
+                            </button>
+                          {% else %}
+                            <button type="button" class="thumb-sm" data-kind="audio" data-src="{{ seg_url }}" aria-label="Play audio segment">
+                              <span class="thumb-icon material-symbols-outlined">graphic_eq</span>
+                            </button>
+                          {% endif %}
+                        {% endif %}
+                      </li>
+                    {% endfor %}
+                  </ol>
+                </div>
+              {% endif %}
+            </div>
+          </details>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</article>
+
+

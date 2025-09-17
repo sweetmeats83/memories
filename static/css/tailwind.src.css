@@ -1,0 +1,7 @@
+/* Tailwind entry point (compiled to static/css/tailwind.css) */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Any tiny globals you want in the TW layer can be added here */
+

@@ -1,0 +1,44 @@
+<div id="notification-container"
+     class="hidden fixed top-50 right-5 max-w-sm bg-white/80 backdrop-blur-md text-black p-4 rounded-lg shadow-lg border border-gray-200 transition-opacity duration-300 flex items-center space-x-2">
+  <span id="notification-icon" class="material-symbols-outlined text-lg">info</span>
+  <p id="notification-message" class="text-sm font-medium"></p>
+</div>
+
+<script>
+function showNotification(message, type = "info") {
+    const container = document.getElementById("notification-container");
+    const messageBox = document.getElementById("notification-message");
+    const icon = document.getElementById("notification-icon");
+
+    // Reset classes
+    container.className = "fixed top-5 right-5 max-w-sm bg-white/80 backdrop-blur-md text-black p-4 rounded-lg shadow-lg border border-gray-200 transition-opacity duration-300 flex items-center space-x-2";
+
+    // Icon & color
+    if (type === "success") {
+        container.classList.add("border-green-500", "text-green-800");
+        icon.textContent = "check_circle";
+        icon.className = "material-symbols-outlined text-green-600";
+    } else if (type === "error") {
+        container.classList.add("border-red-500", "text-red-800");
+        icon.textContent = "error";
+        icon.className = "material-symbols-outlined text-red-600";
+    } else {
+        container.classList.add("border-blue-500", "text-blue-800");
+        icon.textContent = "info";
+        icon.className = "material-symbols-outlined text-blue-600";
+    }
+
+    // Set message
+    messageBox.textContent = message;
+
+    // Show notification
+    container.classList.remove("hidden");
+    container.style.opacity = "1";
+
+    // Hide after 3 seconds
+    setTimeout(() => {
+        container.style.opacity = "0";
+        setTimeout(() => container.classList.add("hidden"), 300);
+    }, 3000);
+}
+</script>

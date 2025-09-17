@@ -1,0 +1,2015 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Tagify (used for create/edit tags) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@yaireo/tagify/dist/tagify.css">
+<script src="https://cdn.jsdelivr.net/npm/@yaireo/tagify"></script>
+
+<!-- Full-bleed container (break out of base’s centered max-width) -->
+<section class="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen">
+  <div class="mx-auto w-full max-w-[1800px] px-3 sm:px-6">
+
+    <!-- Top bar: title, global search, batch ops -->
+    <div class="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center justify-between mt-2">
+      <h1 class="font-baskerville text-2xl sm:text-3xl">Moderate</h1>
+
+      <!-- One search bar (filters Prompts Library only, live) -->
+      <div class="flex-1 sm:max-w-2xl">
+        <label for="promptSearch" class="sr-only">Search prompts</label>
+        <div class="flex items-center gap-2 rounded-full border border-black/70 bg-white/10 backdrop-blur-md px-3 py-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] focus-within:ring-2 focus-within:ring-black">
+          <span class="material-symbols-outlined select-none">search</span>
+          <input id="promptSearch" type="search" autocomplete="off" placeholder="Search prompts by text, tag, chapter, or assigned user…" class="w-full bg-transparent outline-none placeholder-black/60 text-sm sm:text-base" />
+          <button id="clearSearch" class="hidden sm:inline-flex items-center text-sm px-2 py-1 rounded-full border border-black/70 hover:bg-black hover:text-white">Clear</button>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2"></div>
+    </div>
+
+<!-- Sticky tabs -->
+<div class="sticky top-14 z-40 mt-4 bg-white/50 backdrop-blur-md border-b border-black/10 rounded-xl">
+  <div class="grid grid-cols-3">
+    
+    <!-- Left col: tabs, centered -->
+    <div class="col-span-2 flex justify-center">
+      <nav class="flex flex-wrap justify-center gap-8 py-3" role="tablist" aria-label="Admin sections">
+        <button class="adm-tab pill is-selected min-w-[10rem] justify-center" data-target="prompts" role="tab" aria-selected="true">
+          Prompts Library
+        </button>
+        <button class="adm-tab pill min-w-[10rem] justify-center" data-target="assignments" role="tab" aria-selected="false">
+          Assignments
+        </button>
+        <button class="adm-tab pill min-w-[10rem] justify-center" data-target="weekly" role="tab" aria-selected="false">
+          Weekly
+        </button>
+        <button class="adm-tab pill min-w-[10rem] justify-center" data-target="tags" role="tab" aria-selected="false">
+          Tags
+        </button>
+        <button class="adm-tab pill min-w-[10rem] justify-center" data-target="manage" role="tab" aria-selected="false">
+          Manage
+        </button>
+      </nav>
+    </div>
+    
+    <!-- Right col: empty (for future actions) -->
+    <div class="col-span-1 flex items-center justify-end px-4">
+      <!-- You can drop controls here later, like filters or buttons -->
+    </div>
+    
+  </div>
+</div>
+
+    <!-- ===== Prompts Library ===== -->
+    <section id="sec-prompts" class="adm-panel pt-4" role="tabpanel" aria-labelledby="Prompts Library">
+<div id="promptsLayout" class="flex flex-col gap-4 md:flex-row md:items-stretch">
+  <!-- LEFT: Chapters & Prompts -->
+  <div id="promptsPane"
+       class="min-w-0 md:basis-2/3 transition-all duration-300 ease-in-out">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-xl font-semibold">Chapters & Prompts</h2>
+    </div>
+    <div class="text-xs text-gray-600 mb-3">
+      Set the number to the left of each chapter title. Enter swaps/moves chapters; autosaves will run.
+    </div>
+
+    <div id="promptListContainer" class="space-y-3" aria-live="polite" aria-busy="false">
+      {% include "prompt_list.html" %}
+    </div>
+  </div>
+
+  <!-- RIGHT: Create Prompt -->
+  <aside id="createBox"
+         class="create-box w-full md:basis-1/3 rounded-2xl border border-black/10 bg-white/60 p-4 space-y-4
+                transition-all duration-300 ease-in-out"
+         aria-expanded="false" data-state="collapsed">
+    <h3 class="font-semibold">Create Prompt</h3>
+    <form id="createPromptForm" action="/admin_create_prompt" enctype="multipart/form-data" class="space-y-3">
+      <label class="block text-sm font-medium">Prompt Text</label>
+      <textarea id="createPromptText" name="prompt_text" required class="create-textarea border p-2 rounded w-full resize-y transition-all duration-300 ease-in-out" rows="4" ></textarea>
+
+      <label class="block text-sm font-medium">Chapter</label>
+      <input id="createChapter" name="chapter" required class="border p-2 rounded w-full" placeholder="e.g., childhood" />
+
+            <div>
+      <label for="createTags" class="block text-sm font-medium mb-1">Tags</label>
+      <input id="createTags" name="tags" class="w-full border rounded p-2" placeholder="Add tags…" />
+      <div class="mt-2 flex flex-wrap items-center gap-2">
+        <button type="button" id="btnSuggestTags" class="btn">Suggest tags</button>
+        <span class="muted text-xs">Click a chip to add</span>
+      </div>
+      <div id="suggestedTags" class="mt-2 flex flex-wrap gap-2"></div>
+      <div id="suggestErr" class="text-xs text-red-600 mt-1"></div>
+    </div>
+    <!-- Optional assignments -->
+<!-- Assign to users -->
+<div class="mt-3">
+  <label class="block text-sm mb-1">Assign to user(s) (optional)</label>
+  <div id="createAssignChips" class="flex flex-wrap gap-2 mb-2"></div>
+  <div class="relative">
+    <input id="createAssignInput" type="text" class="w-full rounded-md bg-black/20 border border-white/15 p-2" placeholder="Type to search users…" autocomplete="off">
+    <div id="createAssignDD" class="absolute z-20 mt-1 w-full rounded-md border border-stone-200 bg-white shadow hidden"></div>
+  </div>
+</div>
+
+<!-- Private flag -->
+<label class="mt-3 inline-flex items-center gap-2 select-none">
+  <input id="createPrivateOnly" type="checkbox" class="accent-amber-600">
+  <span class="text-sm">Private — deliver only to assigned user(s)</span>
+</label>
+
+    <!-- Media -->
+    <div class="pt-2 border-t border-stone-200">
+      <div class="text-sm font-medium mb-1">Media</div>
+      <div id="createMediaGrid" class="flex gap-2 flex-wrap"></div>
+
+      <!-- Hidden file input; we manage via dropzone -->
+      <input id="createFiles" type="file" multiple accept="image/*,video/*,audio/*" class="hidden" />
+
+      <div id="createDrop"
+           class="rounded border border-dashed border-stone-300 bg-white/60 p-4 text-sm text-stone-600 cursor-pointer">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined">upload_file</span>
+          <span>Drop files here or click to select</span>
+        </div>
+      </div>
+    </div>
+
+    <button type="submit" class="pill inline-flex items-center gap-1">
+      <span class="material-symbols-outlined text-base">add_circle</span>
+      Create
+    </button>
+    <div id="promptMsg" class="text-xs mt-1"></div>
+  </form>
+</aside>
+</div>
+    </section>
+
+    <!-- ===== Assignments ===== -->
+    <section id="sec-assignments" class="adm-panel hidden pt-4" role="tabpanel" aria-labelledby="Assignments">
+      <div class="grid md:grid-cols-3 gap-4">
+        <div class="rounded-2xl border border-black/10 bg-white/60 p-3">
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="text-lg font-semibold">Users</h2>
+            <label class="sr-only" for="userFilter">Filter users</label>
+            <input id="userFilter" type="search" placeholder="Filter users…" class="border rounded px-2 py-1 w-40" />
+          </div>
+          <ul id="usersList" class="space-y-1" aria-live="polite">
+            {% for u in (users_meta or []) %}
+              <li>
+                <button class="userRow w-full text-left flex items-center justify-between gap-2 px-2 py-2 rounded hover:bg-white border border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-black"
+                        data-user-id="{{ u.id }}">
+                  <div class="truncate">
+                    <div class="font-medium truncate">{{ u.username or u.email }}</div>
+                    <div class="text-xs text-gray-600 truncate">{{ u.email }}</div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                  <span class="text-xs rounded-full px-2 py-0.5 border {% if (u.answered_pct or 0) >= 80 %}border-green-600 bg-green-300{% else %}border-stone-300 bg-white{% endif %}">
+                    {{ u.answered_pct or 0 }}%
+                  </span>
+                    <span class="material-symbols-outlined text-[20px]">chevron_right</span>
+                  </div>
+                </button>
+              </li>
+            {% else %}
+              <li class="text-sm text-gray-600">No users yet.</li>
+            {% endfor %}
+          </ul>
+        </div>
+
+        <div id="userPool" class="md:col-span-2 rounded-2xl border border-black/10 bg-white/60 p-3 min-h-[320px]" aria-live="polite" aria-busy="false">
+          <div class="text-sm text-gray-600">Select a user to view their prompt pool. Tinted rows are answered; click a row to view the response; use the ✎ icon to jump to edit.</div>
+        </div>
+      </div>
+    </section>
+
+<!-- ===== Weekly Tab ===== -->
+<section id="sec-weekly" class="hidden">
+  <!-- Filters & Bulk toolbar -->
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div class="flex items-center gap-2">
+      <input id="wkSearch" type="search" placeholder="Search users or prompt…" class="input input-sm w-64" />
+      <div id="wkFilters" class="flex gap-2">
+        <button data-filter="" class="pill pill-sm pill-active">All</button>
+        <button data-filter="not_sent" class="pill pill-sm">Not sent</button>
+        <button data-filter="queued" class="pill pill-sm">Queued</button>
+        <button data-filter="sent" class="pill pill-sm">Sent</button>
+        <button data-filter="opened" class="pill pill-sm">Opened</button>
+        <button data-filter="responded" class="pill pill-sm">Responded</button>
+        <button data-filter="skipped" class="pill pill-sm">Skipped</button>
+        <button data-filter="expired" class="pill pill-sm">Expired</button>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <button id="wkBulkSend" class="btn btn-sm">Bulk: Send now</button>
+      <button id="wkBulkQueue" class="btn btn-sm">Bulk: Queue next</button>
+      <button id="wkBulkSchedule" class="btn btn-sm">Bulk: Schedule…</button>
+      <button id="wkHelp" class="icon-btn" title="Help">?</button>
+    </div>
+  </div>
+
+  <!-- Cards -->
+  <div id="wkCards" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+
+  <!-- Pagination -->
+  <div class="flex items-center justify-between mt-3">
+    <div id="wkTotal" class="text-xs opacity-70"></div>
+    <div class="flex gap-2">
+      <button id="wkPrev" class="btn btn-xs">Prev</button>
+      <span id="wkPage" class="text-xs"></span>
+      <button id="wkNext" class="btn btn-xs">Next</button>
+    </div>
+  </div>
+</section>
+
+<!-- Modals -->
+<div id="wkChooseModal" class="modal hidden" aria-hidden="true"></div>
+<div id="wkFollowupModal" class="modal hidden" aria-hidden="true"></div>
+<div id="wkScheduleModal" class="modal hidden" aria-hidden="true"></div>
+
+<!-- Small help popover -->
+<div id="wkHelpPopover" class="popover hidden">
+  <h4 class="font-semibold mb-1">Weekly statuses</h4>
+  <ul class="space-y-1 text-xs opacity-80">
+    <li><b>Not sent</b> – current set but never sent</li>
+    <li><b>Queued</b> – on deck to send</li>
+    <li><b>Sent</b> – email sent</li>
+    <li><b>Opened</b> – pixel fetched</li>
+    <li><b>Clicked</b> – token link visited</li>
+    <li><b>Used</b> – record page opened via token</li>
+    <li><b>Recorded</b> – recording saved</li>
+    <li><b>Responded</b> – polished & saved</li>
+    <li><b>Skipped</b> – user skipped</li>
+    <li><b>Expired</b> – token expired</li>
+  </ul>
+</div>
+
+
+    <!-- ===== Tags (whitelist management) ===== -->
+    <section id="sec-tags" class="adm-panel hidden pt-4" role="tabpanel" aria-labelledby="Tags">
+      <div class="rounded-2xl border border-black/10 bg-white/60 p-3">
+        <h2 class="text-lg font-semibold mb-2">Tags Whitelist</h2>
+        <form id="tagWhitelistForm" class="space-y-2">
+          <textarea id="tagWhitelistTextarea" class="w-full border rounded p-2 h-60"
+  placeholder='["childhood","school","work", ...]'>{{ tag_whitelist_json|safe if tag_whitelist_json else '[]' }}</textarea>
+
+          <div class="flex items-center gap-2">
+            <button class="btn" type="submit">Save Whitelist</button>
+            <span id="tagSaveMsg" class="text-sm"></span>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ===== Manage ===== -->
+    <section id="sec-manage" class="adm-panel hidden pt-4" role="tabpanel" aria-labelledby="Manage">
+      <div class="grid lg:grid-cols-2 gap-4">
+        <!-- Invites -->
+        <div class="rounded-2xl border border-black/10 bg-white/60 p-4">
+          <h2 class="text-lg font-semibold mb-2">Invites</h2>
+          <form method="post" action="/invite" class="flex gap-2 mb-4">
+            <input type="email" name="email" placeholder="Enter email" required class="border p-2 rounded w-full">
+            <button type="submit" class="btn inline-flex items-center gap-2">
+              <span class="material-symbols-outlined text-base">person_add</span>Send Invite
+            </button>
+          </form>
+          <div class="overflow-x-auto">
+            <table class="w-full bg-white/40 rounded-lg">
+              <thead class="sticky top-0 bg-white/70 backdrop-blur">
+                <tr class="text-left">
+                  <th class="p-2">Email</th>
+                  <th class="p-2">Last Sent</th>
+                  <th class="p-2">Resend Count</th>
+                  <th class="p-2">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for invite in (invites or []) %}
+                <tr class="border-t hover:bg-white/60">
+                  <td class="p-2">{{ invite.email }}</td>
+                  <td class="p-2">{{ invite.last_sent or 'Never' }}</td>
+                  <td class="p-2">{{ invite.sent_count or 0 }}</td>
+                  <td class="p-2">
+                    <form method="post" action="/resend_invite/{{ invite.id }}">
+                      <button class="btn">Resend</button>
+                    </form>
+                  </td>
+                </tr>
+                {% else %}
+                <tr><td class="p-2 text-sm text-gray-600" colspan="4">No invites yet.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Basic user admin -->
+        <div class="rounded-2xl border border-black/10 bg-white/60 p-4">
+          <h2 class="text-lg font-semibold mb-2">Users</h2>
+          <div class="space-y-3 max-h-[480px] overflow-auto pr-1">
+            {% for u in (users_meta or []) %}
+            <div class="rounded border border-stone-200 bg-white">
+              <div class="flex items-center justify-between p-2">
+                <div class="min-w-0">
+                  <div class="font-medium truncate">{{ u.username or u.email }}</div>
+                  <div class="text-xs text-gray-600 truncate">{{ u.email }}</div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs rounded-full px-2 py-0.5 border {% if (u.answered_pct or 0) >= 80 %}border-green-600 bg-green-400{% else %}border-stone-300 bg-white{% endif %}">{{ u.answered_pct or 0 }}%</span>
+                  <a href="/admin/user/{{ u.id }}" class="btn">Open</a>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 px-2 pb-2">
+                <form method="post" action="/admin/users/{{ u.id }}/force_password" class="flex gap-2 items-center">
+                  <input type="password" name="new_password" placeholder="New password (min 8)" class="border rounded px-2 py-1" required minlength="8">
+                  <button class="btn">Set Password</button>
+                </form>
+                <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete this user and all their data?')">
+                  <button class="btn btn-danger">Delete</button>
+                </form>
+              </div>
+            </div>
+            {% else %}
+            <div class="text-sm text-gray-600">No users yet.</div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>
+<!-- ===== Chapter Meta Modal (responsive) ===== -->
+<div id="chapterMetaModal"
+     class="fixed inset-0 z-[200] hidden"
+     aria-hidden="true"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="chapterMetaTitle">
+  <!-- Backdrop (clicking it will close) -->
+  <div class="absolute inset-0 bg-black/60" data-close-on-backdrop></div>
+
+  <!-- Shell centers card; mobile still has padding -->
+  <div class="relative h-full w-full flex items-center justify-center p-3 sm:p-4">
+    <!-- Card -->
+    <div class="w-full max-w-lg sm:max-w-2xl rounded-2xl bg-white text-stone-900 shadow-2xl border border-stone-200
+                max-h-[92svh] sm:max-h-[92dvh] flex flex-col"
+         data-modal-card
+         role="document"
+         tabindex="-1">
+      <!-- Sticky header -->
+      <div class="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 border-b border-stone-200 sticky top-0 bg-white z-10">
+        <h3 id="chapterMetaTitle" class="font-semibold text-base sm:text-lg">Edit Chapter Meta</h3>
+        <button type="button"
+                class="p-1 rounded hover:bg-stone-100"
+                data-action="close-chapter-meta"
+                aria-label="Close">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <!-- Scrollable body -->
+      <form id="chapterMetaForm" class="px-4 sm:px-5 py-4 space-y-4 overflow-y-auto">
+        <input type="hidden" id="cm_old_name">
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <label class="block">
+            <span class="block text-xs sm:text-sm text-stone-600 mb-1">Chapter name (canonical)</span>
+            <input id="cm_name" type="text"
+                   class="w-full rounded border border-stone-300 bg-white px-3 py-2 text-sm sm:text-base" />
+            <p class="mt-1 text-[11px] sm:text-xs text-stone-500">Changing this will rename the chapter and update all prompts.</p>
+          </label>
+
+          <label class="block">
+            <span class="block text-xs sm:text-sm text-stone-600 mb-1">Display name</span>
+            <input id="cm_display_name" type="text"
+                   class="w-full rounded border border-stone-300 bg-white px-3 py-2 text-sm sm:text-base" />
+          </label>
+
+          <label class="block">
+            <span class="block text-xs sm:text-sm text-stone-600 mb-1">Order</span>
+            <input id="cm_order" type="number" step="1"
+                   class="w-full rounded border border-stone-300 bg-white px-3 py-2 text-sm sm:text-base" />
+          </label>
+
+          <label class="block">
+            <span class="block text-xs sm:text-sm text-stone-600 mb-1">Tint</span>
+            <div class="flex gap-2">
+              <input id="cm_tint" type="text" placeholder="#EAB308"
+                     class="flex-1 rounded border border-stone-300 bg-white px-3 py-2 text-sm sm:text-base" />
+              <input id="cm_tint_picker" type="color"
+                     class="w-12 h-10 rounded border border-stone-300 bg-white" />
+            </div>
+          </label>
+
+          <label class="block sm:col-span-2">
+            <span class="block text-xs sm:text-sm text-stone-600 mb-1">Description</span>
+            <textarea id="cm_description" rows="3"
+                      class="w-full rounded border border-stone-300 bg-white px-3 py-2 text-sm sm:text-base"></textarea>
+          </label>
+
+          <label class="block sm:col-span-2">
+            <span class="block text-xs sm:text-sm text-stone-600 mb-1">Keywords</span>
+            <input id="cm_keywords" placeholder="comma, separated, keywords"
+                   class="w-full rounded border border-stone-300 bg-white px-3 py-2 text-sm sm:text-base" />
+          </label>
+
+          <label class="block sm:col-span-2">
+            <span class="block text-xs sm:text-sm text-stone-600 mb-1">LLM guidance</span>
+            <textarea id="cm_llm_guidance" rows="5"
+                      class="w-full rounded border border-stone-300 bg-white px-3 py-2 text-sm sm:text-base"
+                      placeholder="Optional steering notes for this chapter’s prompts."></textarea>
+          </label>
+        </div>
+
+        <!-- Sticky footer -->
+        <div class="pt-2 mt-1 flex items-center justify-between sticky bottom-0 bg-white z-10 -mx-4 sm:-mx-5 px-4 sm:px-5 py-3 border-t border-stone-200">
+          <div id="cm_msg" class="text-xs sm:text-sm text-stone-500"></div>
+          <div class="flex gap-2">
+            <button type="button" class="btn btn-ghost" data-action="close-chapter-meta">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Prompt Editor Modal (AJAX) -->
+<div id="promptEditorModal" class="fixed inset-0 z-50 hidden items-center justify-center">
+  <div class="absolute inset-0 bg-black/40" data-close="1"></div>
+  <div class="relative bg-red-50 w-full max-w-3xl max-h-[85vh] rounded-xl shadow-xl overflow-auto" data-modal-card>
+    <div class="flex items-center justify-between px-4 py-3 border-b">
+      <h3 class="text-lg font-semibold">Edit Prompt</h3>
+      <button class="rounded-full px-3 py-1 border" data-close="1">Close</button>
+    </div>
+    <div id="promptEditorMount" class="p-4">
+      <!-- partial HTML will be injected here -->
+    </div>
+  </div>
+</div>
+
+<!-- ===== Delete Confirm Modal ===== -->
+<div id="confirmModal" class="fixed inset-0 bg-black/30 hidden items-center justify-center z-50">
+  <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 text-center space-y-4">
+    <h3 class="text-lg font-bold text-red-600">Confirm Deletion</h3>
+    <p class="text-gray-700">Are you sure you want to delete this prompt? This action cannot be undone.</p>
+    <div class="flex justify-center gap-4">
+      <button onclick="cancelDelete()" class="btn">Cancel</button>
+      <button id="confirmDeleteBtn" class="btn btn-danger">Delete</button>
+    </div>
+  </div>
+</div>
+
+<style>
+  /* Create Prompt – expand effect */
+.create-box{
+  transition: transform .22s ease, box-shadow .22s ease, background-color .22s ease;
+  will-change: transform;
+}
+.create-box.expanded{
+  background: rgba(255,255,255,.9);
+  transform: translateY(-2px);
+  box-shadow: 0 16px 32px rgba(0,0,0,.12), 0 2px 8px rgba(0,0,0,.06);
+}
+
+.create-textarea{
+  min-height: 90px;
+  transition: min-height .22s ease;
+}
+.create-box.expanded .create-textarea{
+  min-height: 220px; /* more room when expanded */
+}
+
+/* nice little highlight ring when expanded */
+.create-box.expanded { outline: 2px solid rgba(0,0,0,.08); outline-offset: 2px; }
+
+/* prevent layout jumps while animating */
+#createBox { contain: layout paint; }
+
+/* spinner keyframes for media placeholders */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+  .chip-orange { background:#FFF4EF; border:1px solid #E7E5E4; color:#8A3E1B; }
+  .chip-orange .x { font-weight:600; margin-left:.35rem; }
+  .chip-orange:hover { background:#E07A3F; color:white; border-color:#E07A3F; }
+  .chip { display:inline-flex; align-items:center; gap:.25rem; padding:.25rem .6rem; border-radius:999px; box-shadow:0 1px 0 rgba(0,0,0,.06); }
+  .chip:focus-visible { outline:2px solid #111; outline-offset:2px; }
+  .prompt-card { border:1px solid #E7E5E4; border-radius:1rem; background:rgba(255,255,255,.75); }
+  .thumb-sm { width:36px; height:36px; border-radius:.5rem; object-fit:cover; border:1px solid #E7E5E4; }
+  .adm-panel.hidden { display:none; }
+  .prompt-text { white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
+  .chapter-summary { display:flex; align-items:center; gap:.5rem; cursor:pointer; }
+  .chapter-chip { font-size:.75rem; padding:.125rem .5rem; border-radius:999px; border:1px solid #e5e7eb; }
+  .chapter-count { opacity:.7; font-size:.8rem; }
+  .chapter-wrap { border:1px solid #ececec; border-radius:.75rem; margin:.5rem 0 1rem; background:#fff; }
+  .chapter-body { padding:.5rem .75rem .75rem; }
+  .pool-item { display:flex; align-items:center; justify-content:space-between; gap:.5rem; padding:.5rem 0; border-bottom:1px dashed #efefef; }
+  .pool-item:last-child { border-bottom:none; }
+  .pool-meta { display:flex; align-items:center; gap:.5rem; flex:1 1 auto; min-width:0; }
+  .pool-actions { display:flex; gap:.35rem; flex:0 0 auto; }
+  tr.tr-green { background: color-mix(in srgb, #10b981 16%, transparent); }
+  tr.tr-amber { background: color-mix(in srgb, #f59e0b 12%, transparent); }
+  tr.tr-red   { background: color-mix(in srgb, #ef4444 12%, transparent); }
+</style>
+
+<script>
+/* ====================== Safe globals to avoid TDZ ====================== */
+window.PromptUI = window.PromptUI || { ensureInit(){}, refreshPartial(){} };
+window.AssignUI = window.AssignUI || { ensureInit(){} };
+window.WeeklyUI = window.WeeklyUI || { ensureInit(){} };
+window.CreatePromptUI = true; // guard to avoid double init
+window.$  = window.$  || ((sel, root=document) => root.querySelector(sel));
+window.$$ = window.$$ || ((sel, root=document) => Array.from(root.querySelectorAll(sel)));
+
+/* ====================== Utilities ====================== */
+function toast(msg){
+  const t = document.createElement('div');
+  t.className = 'fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white text-sm rounded-full px-3 py-1.5 shadow z-[200] transition';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(()=> t.style.opacity = '1');
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translate(-50%, 8px)'; }, 1200);
+  setTimeout(()=> t.remove(), 1600);
+}
+function setHash(id){ history.replaceState(null, '', '#'+id); }
+function $(sel, root=document){ return root.querySelector(sel); }
+function $all(sel, root=document){ return Array.from(root.querySelectorAll(sel)); }
+
+function escapeHtml(s){
+  return (s || '').replace(/[&<>"']/g, c => (
+    { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]
+  ));
+}
+const escapeHTML = window.escapeHtml;
+/* ====================== Accordion (simple) ====================== */
+const AccordionManager = (() => {
+  function init(root){
+    $all('.acc-btn', root).forEach(btn=>{
+      const controls = btn.getAttribute('aria-controls');
+      const panel = document.getElementById(controls);
+      if (!panel) return;
+      btn.addEventListener('click', ()=>{
+        const isOpen = panel.style.display !== 'none';
+        panel.style.display = isOpen ? 'none' : '';
+      });
+      panel.style.display = '';
+    });
+  }
+  return { init };
+})();
+
+/* ====================== Prompt UI (list pane) ====================== */
+const PromptUI = (() => {
+  let inited = false;
+
+  async function refreshPartial(){
+    const cont = document.getElementById('promptListContainer');
+    if (!cont) return;
+    cont.setAttribute('aria-busy','true'); 
+    cont.style.opacity='0.6';
+
+    const res  = await fetch('/admin_dashboard_partial', { credentials:'include' });
+    const html = await res.text();
+    cont.innerHTML = html;
+
+    // Re-init chapter controls owned by the partial
+    window.ChapterUI?.init?.(cont);
+
+    // Hand off to the partial’s prompt UI
+    window.PromptCardUI?.bind?.(cont);
+    window.PromptCardUI?.hydrateAll?.(cont);
+
+    cont.style.opacity='1';
+    cont.removeAttribute('aria-busy');
+  }
+
+  function init(){
+    if (inited) return; inited = true;
+
+    // Global search stays here (filters rendered cards)
+    const search = document.getElementById('promptSearch');
+    const clear  = document.getElementById('clearSearch');
+    function filter(){
+      const q=(search.value||'').toLowerCase();
+      (document.getElementById('promptListContainer')||document)
+        .querySelectorAll('[data-role="prompt-card"]')
+        .forEach(card=>{
+          const hay=(card.getAttribute('data-search')||'').toLowerCase();
+          card.style.display = hay.includes(q) ? '' : 'none';
+        });
+      clear?.classList.toggle('hidden', !search.value);
+    }
+    search?.addEventListener('input', filter);
+    clear?.addEventListener('click', ()=>{ search.value=''; filter(); search.focus(); });
+
+    // First-time bind/hydrate for SSR include
+    const container = document.getElementById('promptListContainer') || document;
+    window.PromptCardUI?.bind?.(container);
+    window.PromptCardUI?.hydrateAll?.(container);
+  }
+
+  return { ensureInit: init, refreshPartial };
+})();
+window.PromptUI = PromptUI;
+
+/* ====================== Assignments UI ====================== */
+const AssignUI = (() => {
+  let inited = false;
+
+  function chipHtml(tag){
+    const name = (tag && (tag.name || tag.slug)) || '';
+    return `<span class="inline-flex items-center px-2 py-0.5 rounded-full border border-stone-300 bg-white text-xs mr-1">${escapeHtml(name)}</span>`;
+  }
+
+  async function renderUserPoolCollapsible(userId) {
+    const host = document.getElementById('userPool');
+    if (!host) return;
+
+    const [poolRes, chapRes] = await Promise.all([
+      fetch(`/api/admin/assignments/by-user?user_id=${encodeURIComponent(userId)}`, { credentials:'include' }),
+      fetch('/api/chapters_meta', { credentials:'include' })
+    ]);
+    if (!poolRes.ok) {
+      host.innerHTML = `<div class="text-sm text-red-600">Failed to load assignments.</div>`;
+      return;
+    }
+    const pool = await poolRes.json();
+    const chaptersMeta = chapRes.ok ? await chapRes.json() : [];
+    const orderMap = new Map(chaptersMeta.map(m => [m.name || 'Misc', m.order ?? 999999]));
+    const tintMap  = new Map(chaptersMeta.map(m => [m.name || 'Misc', m.tint || null]));
+
+    // group by chapter
+    const groups = (pool.items || []).reduce((acc, it) => {
+      const key = it.chapter || 'Misc';
+      (acc[key] ||= []).push(it);
+      return acc;
+    }, {});
+
+    const sortedChapters = Object.keys(groups).sort((a,b) => {
+      const oa = orderMap.get(a) ?? 999999, ob = orderMap.get(b) ?? 999999;
+      return oa === ob ? a.localeCompare(b) : oa - ob;
+    });
+
+    host.dataset.userId = pool.user?.id;
+    host.setAttribute('aria-busy','true');
+
+    host.innerHTML = `
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm opacity-75">${escapeHtml(pool.user?.name || pool.user?.email || 'User')} — ${(pool.answered_pct ?? 0)}% answered</div>
+        <div class="flex gap-2">
+          <button id="expandAll"  class="px-2 py-1 border rounded">Expand all</button>
+          <button id="collapseAll" class="px-2 py-1 border rounded">Collapse all</button>
+        </div>
+      </div>
+    `;
+
+    for (const chap of sortedChapters) {
+      const items = groups[chap];
+      const answered = items.filter(i => i.answered).length;
+      const tint = tintMap.get(chap);
+      const style = tint ? `style="border-color:${tint}33;background:${tint}08"` : '';
+
+      const details = document.createElement('details');
+      details.className = 'chapter-wrap rounded border border-stone-200 bg-white/60 mb-2';
+      details.open = true;
+
+      const summary = document.createElement('summary');
+      summary.className = 'chapter-summary cursor-pointer list-none flex items-center justify-between px-3 py-2 border-b border-stone-200';
+      summary.innerHTML = `
+        <div class="flex items-center gap-2">
+          <span class="text-xs px-2 py-0.5 rounded-full border border-stone-300 bg-white">${escapeHtml(chap || 'Misc')}</span>
+        </div>
+        <span class="text-xs text-stone-600">${answered}/${items.length} answered</span>
+      `;
+
+      const body = document.createElement('div');
+      body.className = 'chapter-body p-2 space-y-2';
+
+      for (const it of items) {
+        const isAnswered = !!it.answered;
+        const statusIcon = isAnswered ? "check_circle" : "hourglass_empty";
+        const statusColor = isAnswered ? "text-green-600" : "text-amber-500";
+        const rowTint = isAnswered ? "bg-green-200 border-green-200" : "bg-white border-stone-200";
+        const rid = it.response?.id || ""; 
+        const uid = host.dataset.userId || userId;
+
+        const row = document.createElement('div');
+        row.className = 'group rounded border border-stone-200 bg-white/10 p-2';
+        row.innerHTML = `
+          <div class="pool-meta flex items-start gap-2 ${rowTint} rounded p-2 border">
+            <span title="${isAnswered ? 'Answered' : 'Pending'}"
+                  class="material-symbols-outlined text-[20px] ${statusColor}">
+              ${statusIcon}
+            </span>
+
+            <button class="text-left flex-1"
+                    data-act="open"
+                    data-prompt="${it.prompt_id}"
+                    data-response="${rid ?? ''}"
+                    title="${rid ? 'Open response editor' : 'No response yet'}"
+                    style="display:inline-block; background:transparent; border:0; padding:0; margin-left:.25rem;">
+              <div class="font-medium leading-snug whitespace-normal break-words hyphens-auto">
+                ${escapeHtml(it.text || '')}
+              </div>
+              ${Array.isArray(it.tags) && it.tags.length ? `
+                <div class="mt-1 flex flex-wrap gap-1">
+                  ${it.tags.map(t => chipHtml(t)).join('')}
+                </div>` : ''
+              }
+              ${it.response_excerpt ? `
+                <div class="text-xs text-gray-600 mt-1 truncate max-w-[60ch]">${escapeHtml(it.response_excerpt)}</div>
+              ` : ''}
+            </button>
+          </div>
+
+          <div class="pool-actions flex gap-2 mt-1">
+            <button class="px-2 py-1 border rounded flex items-center gap-1 bg-fuchsia-700/30"
+                    type="button"
+                    data-edit="${it.prompt_id}"
+                    title="Edit this prompt (text, tags, assignments)">
+              <span class="material-symbols-outlined text-[18px]">edit</span>
+              Edit
+            </button>
+
+            ${rid ? `
+              <a class="px-2 py-1 border rounded flex items-center gap-1 bg-fuchsia-700/30"
+                 href="/admin/users/${encodeURIComponent(String(uid))}/responses/${encodeURIComponent(String(rid))}/edit"
+                 title="Edit this user’s response (impersonate)">
+                <span class="material-symbols-outlined text-[18px]">edit_note</span>
+                Response
+              </a>` : ''
+            }
+
+            <button class="px-2 py-1 border rounded flex items-center gap-1 bg-rose-600/30"
+                    type="button"
+                    data-remove="${it.prompt_id}"
+                    title="Remove from user’s pool">
+              <span class="material-symbols-outlined text-[18px]">delete</span>
+              Remove
+            </button>
+          </div>
+        `;
+        body.appendChild(row);
+      }
+
+      const inner = document.createElement('div');
+      inner.className = 'chapter-inner';
+      inner.appendChild(body);
+
+      details.appendChild(summary);
+      details.appendChild(inner);
+      if (style) details.setAttribute('style', style);
+      host.appendChild(details);
+    }
+
+    // actions
+    host.querySelector('#expandAll')?.addEventListener('click', () => {
+      host.querySelectorAll('details.chapter-wrap').forEach(d => d.open = true);
+    });
+    host.querySelector('#collapseAll')?.addEventListener('click', () => {
+      host.querySelectorAll('details.chapter-wrap').forEach(d => d.open = false);
+    });
+    
+    // Single delegated click handler for the chapter host
+    host.addEventListener('click', (e) => {
+      // Edit Prompt button
+      const editBtn = e.target.closest('button[data-edit]');
+      if (editBtn) {
+        e.stopPropagation();
+        const pid = +editBtn.getAttribute('data-edit');
+        if (window.openPromptEditorById) window.openPromptEditorById(pid);
+        return;
+      }
+
+      // Remove from pool button
+      const removeBtn = e.target.closest('button[data-remove]');
+      if (removeBtn) {
+        e.stopPropagation();
+        const promptId = +removeBtn.getAttribute('data-remove');
+        fetch('/api/admin/pool/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ user_id: userId, prompt_id: promptId })
+        }).then(() => renderUserPoolCollapsible(userId));
+        return;
+      }
+
+      // Open response editor (big clickable area)
+      const openBtn = e.target.closest('button[data-act="open"]');
+      if (openBtn) {
+        const rid = openBtn.getAttribute('data-response');
+        if (!rid) { toast('No response yet'); return; }
+        const uid = host.dataset.userId || userId;
+        const next = encodeURIComponent(`/response/${encodeURIComponent(String(rid))}/edit`);
+        window.location.href = `/admin/users/${encodeURIComponent(String(uid))}/responses/${encodeURIComponent(String(rid||''))}/edit`;
+      }
+    });
+
+    host.removeAttribute('aria-busy');
+  }
+
+  function init(){
+    if (inited) return; inited = true;
+    const usersList = document.getElementById('usersList');
+    const filter = document.getElementById('userFilter');
+
+    usersList?.addEventListener('click', (e)=>{
+      const row = e.target.closest('.userRow'); if(!row) return;
+      renderUserPoolCollapsible(row.getAttribute('data-user-id'));
+    });
+
+    filter?.addEventListener('input', ()=>{
+      const q = (filter.value||'').toLowerCase();
+      usersList.querySelectorAll('.userRow').forEach(r=>{
+        const text = r.textContent.toLowerCase();
+        r.parentElement.style.display = text.includes(q) ? '' : 'none';
+      });
+    });
+  }
+
+  return { ensureInit: init, renderUserPoolCollapsible };
+})();
+window.AssignUI = AssignUI;
+
+/* ====================== Weekly UI ====================== */
+const WeeklyUI = (() => {
+  // ------- local state -------
+  const wk = {
+    page: 1,
+    pageSize: 25,
+    q: "",
+    status: "",
+    rows: [],
+    total: 0,
+    selected: new Set()
+  };
+
+  // ------- element lookup (safe) -------
+  const $ = id => document.getElementById(id);
+  const el = {
+    tab: $('tab-weekly'),
+    cards: $('wkCards'),
+    total: $('wkTotal'),
+    page: $('wkPage'),
+    prev: $('wkPrev'),
+    next: $('wkNext'),
+    search: $('wkSearch'),
+    filters: $('wkFilters'),
+    chkAll: $('wkChkAll'),
+    bulkSend: $('wkBulkSend'),
+    bulkQueue: $('wkBulkQueue'),
+    bulkSchedule: $('wkBulkSchedule'),
+    help: $('wkHelp'),
+    helpPop: $('wkHelpPopover'),
+    chooseModal: $('wkChooseModal'),
+    followupModal: $('wkFollowupModal'),
+    scheduleModal: $('wkScheduleModal'),
+  };
+
+  // ------- utilities -------
+  const debounce = (fn, ms = 300) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+  const esc = (s) => (s == null ? "" : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+  const fmt = (ts) => ts ? new Date(ts).toLocaleString() : "";
+
+  async function fetchRows() {
+    if (!el.cards) return;
+    try {
+      const url = new URL('/api/admin/weekly', location.origin);
+      url.searchParams.set('page', wk.page);
+      url.searchParams.set('limit', wk.pageSize);
+      if (wk.q) url.searchParams.set('q', wk.q);
+      if (wk.status) url.searchParams.set('status', wk.status);
+
+      const r = await fetch(url, { credentials: 'include' });
+      if (!r.ok) throw new Error(`fetch /api/admin/weekly ${r.status}`);
+      const data = await r.json();
+      wk.rows = data.rows || [];
+      wk.total = data.total || 0;
+      render();
+    } catch (err) {
+      console.error(err);
+      el.cards.innerHTML = `<div class="rounded-xl border border-red-200 bg-red-50 text-red-700 p-3 text-sm">Failed to load weekly data.</div>`;
+    }
+  }
+
+  function badge(st, ts) {
+    const map = {
+      not_sent:'bg-slate-600', queued:'bg-amber-600', sent:'bg-blue-600',
+      opened:'bg-cyan-600', clicked:'bg-sky-600', used:'bg-indigo-600',
+      recorded:'bg-purple-600', responded:'bg-emerald-600', skipped:'bg-rose-600', expired:'bg-zinc-700'
+    };
+    const cls = map[st] || 'bg-slate-600';
+    const tip = ts ? fmt(ts) : '';
+    return `<span class="badge badge-xs ${cls}" title="${esc(tip)}">${esc(st)}</span>`;
+  }
+
+  function rowColor(r) {
+    const now = Date.now();
+    const completed = r.completed_at ? Date.parse(r.completed_at) : 0;
+    if (completed && (now - completed) < 7 * 864e5) return 'tr-green';
+    if (r.state === 'queued' && !r.sent_at) return 'tr-amber';
+    if (!r.sent_at && r.queued_at && (now - Date.parse(r.queued_at) > 3 * 864e5)) return 'tr-red';
+    return '';
+  }
+
+  function tags(tgs) {
+    if (!tgs || !tgs.length) return '';
+    return `<div class="flex flex-wrap gap-1 mt-1">${tgs.map(s => `<span class="chip chip-xs">${esc(s)}</span>`).join('')}</div>`;
+  }
+
+  function actions(r) {
+    return `
+      <div class="flex flex-wrap gap-2">
+        <button data-act="send" data-id="${r.user_id}" class="pill pill-sm">Send now</button>
+        <button data-act="swap" data-id="${r.user_id}" class="pill pill-sm">Swap</button>
+        <button data-act="choose" data-id="${r.user_id}" class="pill pill-sm">Choose…</button>
+        <button data-act="queue" data-id="${r.user_id}" class="pill pill-sm">Queue next</button>
+        <button data-act="follow" data-id="${r.user_id}" class="pill pill-sm">Follow-up</button>
+        <button data-act="copy" data-id="${r.user_id}" class="pill pill-sm">Copy link</button>
+        ${r.completed_at ? `<a href="/response/latest?user_id=${r.user_id}&prompt_id=${r.current_prompt?.id||''}" class="pill pill-sm">View response</a>` : ''}
+      </div>
+    `;
+  }
+
+  function render() {
+    if (!el.cards) return;
+    el.cards.innerHTML = wk.rows.map(r => `
+      <div class="rounded-2xl border border-black/10 bg-white/70 p-3 shadow-sm">
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <div class="avatar-xs">${esc((r.display_name || '?').slice(0,1).toUpperCase())}</div>
+            <div class="min-w-0">
+              <div class="font-semibold truncate">${esc(r.display_name || '')}</div>
+              <div class="text-xs opacity-70 truncate">${esc(r.email || '')}</div>
+            </div>
+          </div>
+          <label class="text-xs flex items-center gap-1">
+            <input type="checkbox" data-chk="${r.user_id}" ${wk.selected.has(r.user_id) ? 'checked' : ''}/> Select
+          </label>
+        </div>
+        <div class="mt-2">
+          ${r.current_prompt ? `
+            <div class="text-sm font-medium">${esc(r.current_prompt.title)}</div>
+            ${tags(r.current_prompt.tags)}
+            <a class="link text-xs" href="/user_record/${r.current_prompt.id}" target="_blank" rel="noopener">open record</a>
+          ` : '<span class="text-xs opacity-60">No current prompt</span>'}
+        </div>
+        <div class="mt-2 flex items-center gap-2 flex-wrap">
+          ${badge(r.state, r.sent_at || r.opened_at || r.clicked_at || r.completed_at)}
+          ${r.token_status ? badge(r.token_status, r.expires_at) : ''}
+          ${r.on_deck_prompt ? `<span class="chip chip-xs">Next: ${esc(r.on_deck_prompt.title)}</span>` : ''}
+        </div>
+        <div class="mt-2 text-xs opacity-80">
+          ${r.queued_at ? `Q: ${esc(fmt(r.queued_at))} ` : ''}
+          ${r.sent_at ? `S: ${esc(fmt(r.sent_at))} ` : ''}
+          ${r.opened_at ? `O: ${esc(fmt(r.opened_at))} ` : ''}
+          ${r.clicked_at ? `C: ${esc(fmt(r.clicked_at))} ` : ''}
+          ${r.used_at ? `U: ${esc(fmt(r.used_at))} ` : ''}
+          ${r.completed_at ? `Done: ${esc(fmt(r.completed_at))}` : ''}
+        </div>
+        <div class="mt-3">${actions(r)}</div>
+      </div>
+    `).join('');
+
+    const pages = Math.max(1, Math.ceil((wk.total || 0) / wk.pageSize));
+    if (el.page) el.page.textContent = `Page ${wk.page} / ${pages}`;
+    if (el.total) el.total.textContent = `${wk.total} total`;
+  }
+
+  // ------- events -------
+  el.search?.addEventListener('input', debounce(e => {
+    wk.q = (e.target.value || '').trim();
+    wk.page = 1;
+    fetchRows();
+  }, 250));
+
+  el.filters?.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-filter]');
+    if (!btn) return;
+    [...el.filters.querySelectorAll('button')].forEach(b => b.classList.remove('pill-active'));
+    btn.classList.add('pill-active');
+    wk.status = btn.dataset.filter || "";
+    wk.page = 1;
+    fetchRows();
+  });
+
+  el.prev?.addEventListener('click', () => { if (wk.page > 1) { wk.page--; fetchRows(); } });
+  el.next?.addEventListener('click', () => { wk.page++; fetchRows(); });
+
+  el.cards?.addEventListener('change', (e) => {
+    const cb = e.target.closest('input[type=checkbox][data-chk]');
+    if (!cb) return;
+    const id = +cb.dataset.chk;
+    if (cb.checked) wk.selected.add(id); else wk.selected.delete(id);
+  });
+
+  el.chkAll?.addEventListener('change', (e) => {
+    const all = !!e.target.checked;
+    wk.rows.forEach(r => { const id = r.user_id; if (all) wk.selected.add(id); else wk.selected.delete(id); });
+    render();
+  });
+
+  el.cards?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    const id = +btn.dataset.id;
+    const optimistic = () => { btn.disabled = true; setTimeout(() => btn.disabled = false, 800); };
+
+    try {
+      if (act === 'send') {
+        optimistic();
+        await fetch('/api/admin/weekly/send', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ user_id: id }) });
+        fetchRows();
+      } else if (act === 'swap') {
+        optimistic();
+        await fetch('/api/admin/weekly/swap', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ user_id:id, make_on_deck_current:true }) });
+        fetchRows();
+      } else if (act === 'choose') {
+        openChooseModal(id);
+      } else if (act === 'queue') {
+        openQueueModal(id);
+      } else if (act === 'follow') {
+        openFollowModal(id);
+      } else if (act === 'copy') {
+        const r = await fetch('/api/admin/weekly/copy-link', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_id:id }) });
+        const j = await r.json();
+        if (j.link) {
+          await navigator.clipboard.writeText(location.origin + j.link);
+          const old = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(() => btn.textContent = old, 1000);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  el.bulkSend?.addEventListener('click', async () => {
+    const ids = [...wk.selected];
+    if (!ids.length) return;
+    try {
+      await fetch('/api/admin/weekly/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_ids: ids }) });
+      fetchRows();
+    } catch (err) { console.error(err); }
+  });
+
+  el.bulkQueue?.addEventListener('click', () => openQueueModal([...wk.selected]));
+  el.bulkSchedule?.addEventListener('click', () => openScheduleModal([...wk.selected]));
+
+  // Help + keyboard
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '?') togglePopover(el.helpPop, true);
+    if (e.key === 'Escape') { togglePopover(el.helpPop, false); closeModals(); }
+  });
+  el.help?.addEventListener('click', () => togglePopover(el.helpPop, true));
+  document.addEventListener('click', (e) => {
+    if (el.helpPop && !el.helpPop.contains(e.target) && e.target !== el.help) togglePopover(el.helpPop, false);
+  });
+
+  function togglePopover(node, on) {
+    if (!node) return;
+    node.classList.toggle('hidden', !on);
+    lockScroll(on);
+  }
+  function lockScroll(on) { document.documentElement.classList.toggle('overflow-hidden', on); }
+
+  function closeModals() {
+    [el.chooseModal, el.followupModal, el.scheduleModal].forEach(m => {
+      if (!m) return;
+      m.classList.add('hidden');
+      m.setAttribute('aria-hidden','true');
+      m.innerHTML = ""; // clear handlers
+    });
+    lockScroll(false);
+  }
+
+  // ------- modal helpers -------
+  function openChooseModal(userId) {
+    if (!el.chooseModal) return;
+    el.chooseModal.innerHTML = `
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <h3 class="mb-2">Choose prompt</h3>
+        <input id="chPromptId" type="number" class="input w-full mb-3" placeholder="Prompt ID"/>
+        <label class="flex items-center gap-2 text-sm mb-3"><input id="chPush" type="checkbox" checked/> Push previous to On-Deck</label>
+        <div class="flex justify-end gap-2">
+          <button class="btn btn-ghost" data-x>Cancel</button>
+          <button class="btn" data-ok>Set current</button>
+        </div>
+      </div>`;
+    showModal(el.chooseModal, async (e) => {
+      if (e.target.hasAttribute('data-ok')) {
+        const pid = +document.getElementById('chPromptId').value;
+        const push = !!document.getElementById('chPush').checked;
+        await fetch('/api/admin/weekly/choose', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_id:userId, prompt_id:pid, push_previous_to_on_deck:push }) });
+        closeModals(); fetchRows();
+      }
+    });
+  }
+
+  function openQueueModal(userIdOrIds) {
+    if (!el.chooseModal) return;
+    const ids = Array.isArray(userIdOrIds) ? userIdOrIds : [userIdOrIds];
+    el.chooseModal.innerHTML = `
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <h3 class="mb-2">Queue On-Deck</h3>
+        <input id="qPromptId" type="number" class="input w-full mb-3" placeholder="Prompt ID"/>
+        <div class="flex justify-end gap-2">
+          <button class="btn btn-ghost" data-x>Cancel</button>
+          <button class="btn" data-ok>Queue</button>
+        </div>
+      </div>`;
+    showModal(el.chooseModal, async (e) => {
+      if (e.target.hasAttribute('data-ok')) {
+        const pid = +document.getElementById('qPromptId').value;
+        for (const uid of ids) {
+          await fetch('/api/admin/weekly/queue', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_id:uid, prompt_id:pid }) });
+        }
+        closeModals(); fetchRows();
+      }
+    });
+  }
+
+  function openFollowModal(userId) {
+    if (!el.followupModal) return;
+    el.followupModal.innerHTML = `
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <h3 class="mb-2">LLM Follow-up</h3>
+        <input id="respId" type="number" class="input w-full mb-2" placeholder="Response ID to seed"/>
+        <select id="style" class="input w-full mb-2">
+          <option value="gentle">Gentle</option>
+          <option value="curious">Curious</option>
+          <option value="detailed">Detailed</option>
+        </select>
+        <input id="mx" type="number" class="input w-full mb-3" value="300"/>
+        <div class="flex justify-end gap-2">
+          <button class="btn btn-ghost" data-x>Cancel</button>
+          <button class="btn" data-ok>Generate & Queue</button>
+        </div>
+      </div>`;
+    showModal(el.followupModal, async (e) => {
+      if (e.target.hasAttribute('data-ok')) {
+        const rid = +document.getElementById('respId').value;
+        const style = document.getElementById('style').value;
+        const mx = +document.getElementById('mx').value || 300;
+        await fetch('/api/admin/weekly/followup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_id:userId, response_id:rid, style, max_tokens:mx }) });
+        closeModals(); fetchRows();
+      }
+    });
+  }
+
+  function openScheduleModal(ids) {
+    if (!el.scheduleModal) return;
+    el.scheduleModal.innerHTML = `
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <h3 class="mb-2">Schedule send</h3>
+        <input id="schWhen" type="datetime-local" class="input w-full mb-3"/>
+        <div class="flex justify-end gap-2">
+          <button class="btn btn-ghost" data-x>Cancel</button>
+          <button class="btn" data-ok>Schedule</button>
+        </div>
+      </div>`;
+    showModal(el.scheduleModal, async (e) => {
+      if (e.target.hasAttribute('data-ok')) {
+        const dt = document.getElementById('schWhen').value;
+        const iso = new Date(dt).toISOString();
+        await fetch('/api/admin/weekly/schedule', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_ids: ids, when: iso }) });
+        closeModals(); fetchRows();
+      }
+    });
+  }
+
+  function showModal(modalEl, onClick) {
+    modalEl.classList.remove('hidden');
+    modalEl.setAttribute('aria-hidden', 'false');
+    lockScroll(true);
+    const handler = async (e) => {
+      if (e.target.hasAttribute('data-x') || e.target.classList.contains('modal-backdrop')) {
+        closeModals();
+      } else if (onClick) {
+        try { await onClick(e); } catch (err) { console.error(err); }
+      }
+    };
+    modalEl.addEventListener('click', handler, { once: true });
+  }
+
+  // ------- public API -------
+  function init() {
+    wk.page = 1; wk.q = ""; wk.status = ""; wk.selected.clear();
+    fetchRows();
+  }
+
+  return { init };
+})();
+
+// Call when the Weekly tab becomes active:
+window.initWeeklyTab = () => WeeklyUI.init();
+
+/* ====================== Tag whitelist (load/save) ====================== */
+async function loadTagWhitelist() {
+  const ta = document.getElementById('tagWhitelistTextarea');
+  const msg = document.getElementById('tagSaveMsg');
+  if (!ta) return;
+  msg.textContent = 'Loading…';
+  try {
+    const r = await fetch('/api/admin/tags/whitelist', { credentials: 'include' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const lines=[]; if(Array.isArray(data)){ for(const it of data){ if(typeof it==='string') lines.push(it.trim()); else if(it&&typeof it==='object'&& typeof it.value==='string') lines.push(it.value.trim()); } } ta.value = lines.filter(Boolean).join('\n');
+    msg.textContent = 'Loaded';
+  } catch (e) {
+    console.error('Whitelist load failed:', e);
+    msg.textContent = 'Failed to load whitelist';
+  } finally {
+    setTimeout(()=> msg.textContent = '', 1200);
+  }
+}
+document.getElementById('tagWhitelistForm')?.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const ta  = document.getElementById('tagWhitelistTextarea');
+  const msg = document.getElementById('tagSaveMsg');
+  try {
+    const raw=(ta.value||'').replace(/\r/g,'\n'); const parts=raw.split(/\n|,/).map(s=>(s||'').trim()).filter(Boolean); const payload=Array.from(new Set(parts));
+    const r = await fetch('/api/admin/tags/whitelist', {
+      method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    msg.textContent = r.ok ? 'Saved' : 'Failed';
+  } catch {
+    msg.textContent = '❌ Invalid JSON';
+  } finally {
+    setTimeout(()=> msg.textContent='', 1600);
+  }
+});
+
+/* ====================== Tabs ====================== */
+(function(){
+  const tabs = $all('.adm-tab');
+  const panels = {
+    prompts: document.getElementById('sec-prompts'),
+    assignments: document.getElementById('sec-assignments'),
+    weekly: document.getElementById('sec-weekly'),
+    tags: document.getElementById('sec-tags'),
+    manage: document.getElementById('sec-manage'),
+  };
+  function show(which){
+    for (const t of tabs){ const on = t.dataset.target===which; t.classList.toggle('is-selected', on); t.setAttribute('aria-selected', on?'true':'false'); }
+    for (const k in panels){ panels[k].classList.toggle('hidden', k!==which); }
+    setHash(which);
+    if (which==='prompts')    window.PromptUI?.ensureInit?.();
+    if (which==='assignments') window.AssignUI?.ensureInit?.();
+    if (which==='weekly')      window.WeeklyUI?.ensureInit?.();
+    if (which==='tags')        loadTagWhitelist();
+  }
+  tabs.forEach(t => t.addEventListener('click', ()=> show(t.dataset.target)));
+  const hash = (location.hash || '').replace('#','');
+  if (hash && panels[hash]) show(hash); else show('prompts');
+})();
+
+/* ====================== Boot (first paint) ====================== */
+window.addEventListener('DOMContentLoaded', ()=>{
+  const container = document.getElementById('promptListContainer') || document;
+  window.PromptUI?.ensureInit?.();
+  window.ChapterUI?.init?.(container);
+  window.PromptCardUI?.bind?.(container);
+  window.PromptCardUI?.hydrateAll?.(container);
+  
+});
+
+/* ====================== Partial refresh hooks ====================== */
+const __cont = document.getElementById('promptListContainer');
+window.ChapterUI?.init?.(__cont);
+window.PromptCardUI?.bind?.(__cont);
+window.PromptCardUI?.hydrateAll?.(__cont);
+
+/* ===== Flash updated card via ?updated_prompt=ID ===== */
+(function(){
+  const sp = new URLSearchParams(location.search);
+  const pid = sp.get('updated_prompt');
+  if (!pid) return;
+  sp.delete('updated_prompt');
+  history.replaceState(null, '', location.pathname + location.hash + (sp.toString() ? ('?'+sp.toString()) : ''));
+
+  const cont = document.getElementById('promptListContainer') || document;
+  const tryFlash = () => {
+    const card = cont.querySelector(`[data-role="prompt-card"][data-prompt-id="${CSS.escape(pid)}"]`);
+    if (!card) return false;
+    card.scrollIntoView({behavior:'smooth', block:'center'});
+    card.style.transition = 'background 600ms';
+    const old = card.style.background;
+    card.style.background = '#FFF4EF';
+    setTimeout(()=> card.style.background = old, 1200);
+    return true;
+  };
+  setTimeout(tryFlash, 300);
+})();
+
+/* ====================== Prompt Editor Modal (partial loader) ====================== */
+(function(){
+  const modal = document.getElementById('promptEditorModal');
+  const mount = document.getElementById('promptEditorMount');
+  const card  = modal?.querySelector('[data-modal-card]');
+  if (!modal || !mount) return;
+
+  function showModal(){ modal.classList.remove('hidden'); modal.classList.add('flex'); }
+  function hideModal(){ modal.classList.add('hidden'); modal.classList.remove('flex'); mount.innerHTML = ''; }
+  window.closeEditModal = hideModal;
+
+  // Close on backdrop or explicit [data-close]
+  modal.addEventListener('click', (e) => {
+    const wantsClose = e.target.closest('[data-close]');
+    if (wantsClose) { e.preventDefault(); hideModal(); }
+  });
+  // Close on Escape
+  document.addEventListener('keydown', (e) => {
+    if (!modal.classList.contains('hidden') && e.key === 'Escape') hideModal();
+  });
+
+  function executeScripts(root){
+    const scripts = Array.from(root.querySelectorAll('script'));
+    for (const s of scripts){
+      const n = document.createElement('script');
+      if (s.src){ n.src = s.src; n.async = false; } else { n.textContent = s.textContent; }
+      document.body.appendChild(n);
+      s.remove();
+    }
+  }
+
+  async function postForm(fd, url){
+    const r = await fetch(url, { method:'POST', body: fd, credentials:'include', headers:{Accept:'application/json'} });
+    if (!r.ok) return false;
+    const ct = r.headers.get('content-type') || '';
+    if (ct.includes('application/json')){
+      try{ const j = await r.json(); return j.ok !== false; }catch{ return true; }
+    }
+    return true;
+  }
+
+  function bindEditorForm(scope){
+    const form = scope.querySelector('form#editPromptForm');
+    if (!form || form.__boundSubmit) return;
+    form.__boundSubmit = true;
+
+    form.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+
+      const fd   = new FormData(form);
+      const msg  = scope.querySelector('#editMsg');
+      const btn  = form.querySelector('button[type="submit"]');
+      const base = form.getAttribute('action') || '';
+      const url  = base ? (base + (base.includes('?') ? '&' : '?') + 'ajax=1') : '';
+
+      const prev = btn?.textContent;
+      btn?.setAttribute('disabled','true');
+      if (btn) btn.textContent = 'Saving…';
+      if (msg){ msg.textContent = 'Saving…'; msg.className = 'text-sm text-stone-600'; }
+
+      try{
+        let ok = false;
+        if (url){
+          ok = await postForm(fd, url);
+          if (!ok && base) ok = await postForm(fd, base);
+        } else if (base){
+          ok = await postForm(fd, base);
+        }
+
+        if (!ok){
+          form.__boundSubmit = false;
+          form.submit();
+          return;
+        }
+
+        if (msg){ msg.textContent = 'Saved ✓'; msg.className = 'text-sm text-green-600'; }
+        hideModal();
+        await window.PromptUI?.refreshPartial?.();
+      } catch(err){
+        console.error(err);
+        if (msg){ msg.textContent = 'Save failed'; msg.className = 'text-sm text-red-600'; }
+        alert('Failed to update prompt.');
+      } finally {
+        if (btn) btn.textContent = prev || 'Update';
+        btn?.removeAttribute('disabled');
+      }
+    });
+  }
+
+  // Intercept .js-edit links
+  document.addEventListener('click', async (e)=>{
+    const a = e.target.closest('a.js-edit'); if (!a) return;
+    const card = a.closest('[data-role="prompt-card"]'); if (!card) return;
+    e.preventDefault();
+    try{
+      const url = a.getAttribute('href');
+      const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'partial=1', { credentials:'include' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      mount.innerHTML = await r.text();
+      executeScripts(mount);
+      bindEditorForm(mount);
+      showModal();
+    }catch(err){
+      console.error(err);
+      window.location.href = a.href;
+    }
+  });
+
+  // Open editor by id (used from Assignments)
+  window.openPromptEditorById = async function(pid){
+    const r = await fetch(`/admin_edit_prompt/${encodeURIComponent(pid)}?partial=1`, { credentials:'include' });
+    if (!r.ok) return (window.location.href = `/admin_edit_prompt/${encodeURIComponent(pid)}`);
+    mount.innerHTML = await r.text();
+    executeScripts(mount);
+    bindEditorForm(mount);
+    showModal();
+  };
+
+  window.openEditFromAssignments = (id) => window.openPromptEditorById(id);
+})();
+
+
+/* ====================== Create panel expand/collapse ====================== */
+(() => {
+  const mq   = window.matchMedia('(min-width: 768px)');
+  const box  = window.$('#createBox');
+  const left = window.$('#promptsPane');
+  const form = window.$('#createPromptForm');
+  if (!box || !left || !form) return;
+
+  function expand(){
+    if (!mq.matches || box.dataset.state === 'expanded') return;
+    box.dataset.state = 'expanded';
+    box.setAttribute('aria-expanded','true');
+    box.classList.remove('md:basis-1/3');
+    box.classList.add('md:basis-2/3','expanded','ring-2','ring-black/10');
+    left.classList.remove('md:basis-2/3');
+    left.classList.add('md:basis-1/3');
+  }
+  function collapse(){
+    if (box.dataset.state !== 'expanded') return;
+    box.dataset.state = 'collapsed';
+    box.setAttribute('aria-expanded','false');
+    box.classList.remove('md:basis-2/3','expanded','ring-2','ring-black/10');
+    box.classList.add('md:basis-1/3');
+    left.classList.remove('md:basis-1/3');
+    left.classList.add('md:basis-2/3');
+  }
+
+  // expand when interacting within the create area
+  box.addEventListener('click', expand);
+  form.addEventListener('focusin', expand);
+
+  // collapse when clicking clearly outside (ignore dropdowns/popovers belonging to create UI)
+  document.addEventListener('click', (e)=>{
+    if (!mq.matches) return;
+    const dd = window.$('#createAssignDD');
+    const tagifyDropdown = document.querySelector('.tagify__dropdown');
+    const inside =
+      box.contains(e.target) ||
+      (dd && dd.contains(e.target)) ||
+      (tagifyDropdown && tagifyDropdown.contains(e.target));
+    if (!inside) collapse();
+  });
+  document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') collapse(); });
+
+  // sync when breakpoint changes or on load
+  mq.addEventListener?.('change', ()=>{ if (mq.matches) collapse(); });
+  if (mq.matches) collapse();
+})();
+
+/* ====================== Tagify (normal tags) + Whitelist + LLM Suggest ====================== */
+(() => {
+  const input = $('#createTags');
+  if (!input || input.tagify) return;
+
+  const tf = new Tagify(input, {
+    enforceWhitelist: true,
+    maxTags: 25,
+    trim: true,
+    duplicates: false,
+    dropdown: { enabled: 0, maxItems: 12, highlightFirst: true },
+    originalInputValueFormat: values => JSON.stringify(values.map(v => v.value))
+  });
+
+  let ctl;
+  tf.on('input', async e=>{
+    const q = (e.detail.value || '').trim();
+    if (!q) return;
+    try{
+      ctl?.abort(); ctl = new AbortController();
+      const r = await fetch(`/admin/tags?q=${encodeURIComponent(q)}`, { credentials:'include', signal:ctl.signal });
+      if (!r.ok) return;
+      const list = await r.json();
+      tf.settings.whitelist = (list||[]).map(t => ({ value:t.slug, label:t.name }));
+      tf.dropdown.show.call(tf, q);
+    }catch{}
+  });
+
+  function augmentWhitelist(slug){
+    const wl = Array.isArray(tf.settings.whitelist) ? tf.settings.whitelist : [];
+    if (!wl.some(w => (w.value || w) === slug)) {
+      tf.settings.whitelist = [...wl, { value: slug }];
+    }
+  }
+
+  const btnSuggest = $('#btnSuggestTags');
+  const wrap       = $('#suggestedTags');
+  const err        = $('#suggestErr');
+  const promptTxt  = $('#createPromptText');
+
+  btnSuggest?.addEventListener('click', async ()=>{
+    if (err) err.textContent = '';
+    const text = (promptTxt?.value || '').trim();
+    if (!text){ if (wrap) wrap.innerHTML = '<span class="text-sm opacity-70">Add prompt text first.</span>'; return; }
+    if (wrap) wrap.textContent = 'Fetching suggestions…';
+    try{
+      const payload = { text, word_count: text.split(/\s+/).filter(Boolean).length };
+      const r = await fetch('/api/auto_tag/preview', {
+        method:'POST', credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      if (!r.ok) throw new Error('preview failed');
+      const data = await r.json();
+      const tags = Array.isArray(data.tags) ? data.tags : [];
+      wrap.innerHTML = '';
+      if (!tags.length){ wrap.innerHTML = '<span class="text-sm opacity-70">No suggestions.</span>'; return; }
+      tags.forEach(({ value, score })=>{
+        const chip = document.createElement('button');
+        chip.type='button';
+        chip.className='inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs';
+        chip.textContent = `${value}${typeof score === 'number' ? ` (${score.toFixed(2)})` : ''}`;
+        chip.addEventListener('click', ()=>{ augmentWhitelist(value); tf.addTags([value]); });
+        wrap.appendChild(chip);
+      });
+    }catch(e){
+      console.error(e);
+      if (wrap) wrap.innerHTML = '';
+      if (err)  err.textContent = 'Failed to fetch suggestions.';
+    }
+  });
+
+  input.tagify = tf;
+  window.createTagify = tf;
+})();
+
+/* ====================== Assign to users (chips + search) ====================== */
+(() => {
+  const chips = $('#createAssignChips');
+  const input = $('#createAssignInput');
+  const dd    = $('#createAssignDD');
+  if (!chips || !input || !dd) return;
+  if (input.__wiredAssign) return; input.__wiredAssign = true;
+
+  const assigned = new Map();
+
+  function mkChip({id,label}){
+    const span = document.createElement('span');
+    span.className = 'chip chip-orange inline-flex items-center gap-1 px-2 py-0.5 rounded-full shadow-sm';
+    span.dataset.userId = id;
+    span.innerHTML = `<span class="truncate max-w-[12rem]">${escapeHtml(label)}</span>
+                      <button type="button" class="chip-x text-[14px]" aria-label="Remove">×</button>`;
+    span.querySelector('.chip-x').addEventListener('click', ()=>{ assigned.delete(String(id)); span.remove(); });
+    return span;
+  }
+  async function searchUsers(q){
+    const r = await fetch(`/admin/users/search?q=${encodeURIComponent(q)}`, { credentials:'include' });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data) ? data : (data.users || []);
+  }
+  function hideDD(){ dd.classList.add('hidden'); dd.innerHTML=''; }
+
+  let ctl;
+  input.addEventListener('input', async ()=>{
+    const q = input.value.trim();
+    if (q.length < 2) { hideDD(); return; }
+    try{
+      ctl?.abort(); ctl = new AbortController();
+      const users = await searchUsers(q);
+      dd.innerHTML = users.length
+        ? users.map(u => `<button type="button" role="option" class="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                             data-id="${u.id}" data-label="${escapeHtml(u.name || u.email)}">
+                            <div class="font-medium">${escapeHtml(u.name || u.email)}</div>
+                            <div class="text-xs text-stone-600">${escapeHtml(u.email || '')}</div>
+                          </button>`).join('')
+        : `<div class="px-3 py-2 text-sm text-gray-500">No matches</div>`;
+      dd.classList.remove('hidden');
+    }catch{}
+  });
+  dd.addEventListener('click', (e)=>{
+    const b = e.target.closest('button[data-id]'); if (!b) return;
+    const id = b.getAttribute('data-id');
+    const label = b.getAttribute('data-label') || '';
+    if (assigned.has(id)) { input.value=''; hideDD(); return; }
+    assigned.set(id, {id, label});
+    chips.appendChild(mkChip({id, label}));
+    input.value=''; hideDD();
+  });
+  document.addEventListener('click', (ev)=>{ if (!dd.contains(ev.target) && ev.target!==input) hideDD(); });
+
+  window.__createAssigned = assigned;
+})();
+
+/* ====================== Media picker (TEMP thumbs + pipeline backoff) ====================== */
+(() => {
+  const grid    = $('#createMediaGrid');
+  const drop    = $('#createDrop');
+  const filesEl = $('#createFiles');
+  if (!grid || !drop || !filesEl) return;
+  if (drop.__wiredMedia) return; drop.__wiredMedia = true;
+
+  const picked = [];
+
+  function tempRibbon(){
+    const r=document.createElement('div');
+    r.textContent='TEMP';
+    r.className='absolute top-1 left-1 text-[10px] px-1 py-[1px] rounded bg-stone-800/80 text-white';
+    return r;
+  }
+  function addPreviewCard(file){
+    const card=document.createElement('div');
+    card.className='relative group w-16 h-16 rounded border overflow-hidden bg-white';
+    grid.appendChild(card);
+    if (file?.type?.startsWith('image/')){
+      const url=URL.createObjectURL(file);
+      const img=document.createElement('img');
+      img.className='w-full h-full object-cover';
+      img.onload = ()=>{ card.__revoke && card.__revoke(); };
+      img.src=url;
+      card.appendChild(img);
+      card.__revoke = () => URL.revokeObjectURL(url);
+    }else{
+      const ext=(file?.name||'').split('.').pop()||'FILE';
+      const ph=document.createElement('div');
+      ph.style.cssText='display:grid;place-items:center;width:100%;height:100%;font-size:.7rem;color:#555;background:#f3f4f6';
+      ph.textContent=ext.toUpperCase();
+      card.appendChild(ph);
+    }
+    card.appendChild(tempRibbon());
+    return card;
+  }
+  function addFiles(list){ Array.from(list||[]).forEach(f=>{ const card = addPreviewCard(f); picked.push({file:f, card}); }); }
+
+  drop.addEventListener('click', ()=> filesEl.click());
+  drop.addEventListener('dragover', e=>{ e.preventDefault(); });
+  drop.addEventListener('drop', e=>{ e.preventDefault(); addFiles(e.dataTransfer.files); });
+  filesEl.addEventListener('change', e=>{ addFiles(e.target.files); e.target.value=''; });
+
+  window.__createPickedMedia = picked;
+})();
+
+/* ====================== Create submit (icons safe, private, tags, media inline, assign, refresh) ====================== */
+(() => {
+  const form  = $('#createPromptForm');
+  if (!form || form.__wiredCreateSubmit) return;
+  form.__wiredCreateSubmit = true;
+
+  const msgEl = $('#promptMsg');
+  const btn   = form.querySelector('button[type="submit"]');
+
+  function setBusy(on, label=''){
+    if (!btn) return;
+    if (on){
+      if (!btn.dataset.prevHtml) btn.dataset.prevHtml = btn.innerHTML;
+      btn.classList.add('is-loading'); btn.setAttribute('disabled','true');
+      if (label) btn.setAttribute('data-status', label);
+    } else {
+      btn.classList.remove('is-loading'); btn.removeAttribute('disabled');
+      if (btn.dataset.prevHtml){ btn.innerHTML = btn.dataset.prevHtml; }
+      btn.removeAttribute('data-status');
+    }
+  }
+
+  async function refreshWithBackoff(){
+    // Single refresh is sufficient; avoid hammering endpoints
+    await window.PromptUI?.refreshPartial?.();
+  }
+
+  async function assignUsers(promptId){
+    const assigned = window.__createAssigned;
+    if (!promptId || !assigned || assigned.size === 0) return;
+    await Promise.all(
+      Array.from(assigned.values()).map(({id:uid}) =>
+        fetch('/api/admin/pool/add', {
+          method:'POST', credentials:'include',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ prompt_id: Number(promptId), user_id: Number(uid) })
+        })
+      )
+    ).catch(()=>{});
+  }
+
+  async function createAndGetId(fd, textSnippet){
+    const base = form.getAttribute('action') || '/admin_create_prompt';
+    const url  = base + (base.includes('?')?'&':'?') + 'ajax=1';
+
+    let res = await fetch(url, { method:'POST', body: fd, credentials:'include', headers:{Accept:'application/json'} });
+    if (res.ok){
+      const ct = res.headers.get('content-type')||'';
+      if (ct.includes('application/json')){
+        try{
+          const j = await res.json();
+          const id = j.id || j.prompt_id;
+          if (id) return String(id);
+        }catch{}
+      }
+    }
+
+    // fallback: non-ajax
+    res = await fetch(base, { method:'POST', body: fd, credentials:'include' });
+    if (!res.ok) throw new Error('create failed');
+
+    // best-effort sniff after one refresh
+    await window.PromptUI?.refreshPartial?.();
+    const cont  = document.getElementById('promptListContainer') || document;
+    const cards = Array.from(cont.querySelectorAll('[data-role="prompt-card"]'))
+                      .sort((a,b)=>(+b.dataset.promptId||0)-(+a.dataset.promptId||0));
+    const sn    = (textSnippet||'').trim().slice(0,64).toLowerCase();
+    const hit   = cards.find(c => (c.getAttribute('data-search')||'').toLowerCase().includes(sn));
+    return hit ? String(hit.dataset.promptId||'') : '';
+  }
+
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    setBusy(true, 'Creating…');
+    if (msgEl){ msgEl.textContent='Creating…'; msgEl.className='text-xs text-stone-600'; }
+
+    try{
+      const text        = $('#createPromptText')?.value || '';
+      const chapter     = $('#createChapter')?.value || '';
+      const privateOnly = !!$('#createPrivateOnly')?.checked;
+      let   tags        = (window.createTagify?.value || []).map(v=>v.value);
+
+      if (privateOnly && !tags.includes('scope:private')) tags = [...tags, 'scope:private'];
+
+      const fd = new FormData();
+      fd.append('prompt_text', text);
+      fd.append('chapter', chapter);
+      fd.append('tags', JSON.stringify(tags));
+      fd.append('only_assigned', privateOnly ? '1' : '0');
+      (window.__createPickedMedia||[]).forEach(({file}) => fd.append('media_files', file));
+
+      const promptId = await createAndGetId(fd, text);
+      if (msgEl){ msgEl.textContent='Processing media…'; msgEl.className='text-xs text-amber-600'; }
+
+      if (promptId) await assignUsers(promptId);
+
+      await refreshWithBackoff();
+
+      if (msgEl){ msgEl.textContent='Created ✓'; msgEl.className='text-xs text-green-700'; }
+      toast('Prompt created');
+
+      // cleanup UI
+      (window.__createPickedMedia||[]).forEach(({card})=>{ card.__revoke && card.__revoke(); card.remove(); });
+      if (Array.isArray(window.__createPickedMedia)) window.__createPickedMedia.length = 0;
+      form.reset();
+      window.createTagify?.removeAllTags?.();
+      if (window.__createAssigned){ window.__createAssigned.clear(); const chips = $('#createAssignChips'); if (chips) chips.innerHTML=''; }
+    }catch(err){
+      console.error(err);
+      if (msgEl){ msgEl.textContent='Create failed'; msgEl.className='text-xs text-red-600'; }
+      alert('Failed to create prompt.');
+    }finally{
+      setBusy(false);
+    }
+  });
+})();
+</script>
+<script>
+(() => {
+  const modal = document.getElementById('chapterMetaModal');
+  const card  = modal.querySelector('[data-modal-card]');
+  const form  = document.getElementById('chapterMetaForm');
+  const msg   = document.getElementById('cm_msg');
+
+  const f = {
+    old_name:    document.getElementById('cm_old_name'),
+    name:        document.getElementById('cm_name'),
+    display:     document.getElementById('cm_display_name'),
+    order:       document.getElementById('cm_order'),
+    tint:        document.getElementById('cm_tint'),
+    tintPicker:  document.getElementById('cm_tint_picker'),
+    desc:        document.getElementById('cm_description'),
+    keywords:    document.getElementById('cm_keywords'),
+    guide:       document.getElementById('cm_llm_guidance'),
+  };
+
+  let kwTagify = null;
+  function ensureTagify(){
+    if (window.Tagify && !kwTagify) kwTagify = new Tagify(f.keywords, { enforceWhitelist:false, dropdown:{enabled:0} });
+  }
+
+  function openModal(){
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden','false');
+    // lock background scroll
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+    // focus first field after paint
+    setTimeout(() => (f.name.value ? f.display : f.name).focus(), 0);
+  }
+
+  function closeModal(){
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden','true');
+    msg.textContent = '';
+    // unlock background scroll
+    document.documentElement.style.overflow = '';
+    document.body.style.overflow = '';
+  }
+
+  // Close on buttons
+  modal.querySelectorAll('[data-action="close-chapter-meta"]').forEach(el => {
+    el.addEventListener('click', closeModal);
+  });
+
+  // Close when clicking backdrop (anything not inside the card)
+  modal.addEventListener('mousedown', (e) => {
+    // If click starts outside the card, we intend to close
+    if (!card.contains(e.target)) modal.dataset._closeOnMouseUp = '1';
+  });
+  modal.addEventListener('mouseup', (e) => {
+    if (modal.dataset._closeOnMouseUp === '1' && !card.contains(e.target)) closeModal();
+    delete modal.dataset._closeOnMouseUp;
+  });
+
+  // Close on Esc
+  document.addEventListener('keydown', (e) => {
+    if (modal.getAttribute('aria-hidden') === 'false' && e.key === 'Escape') {
+      e.preventDefault();
+      closeModal();
+    }
+  });
+
+  // Prevent clicks inside the card from bubbling to backdrop
+  card.addEventListener('click', (e) => e.stopPropagation());
+
+  // Sync color picker <-> text
+  f.tintPicker.addEventListener('input', e => { f.tint.value = e.target.value; });
+  f.tint.addEventListener('input', e => {
+    const v = e.target.value.trim();
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v)) f.tintPicker.value = v;
+  });
+
+  // OPEN: (keeps your existing selector for the “Meta” button)
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action="open-chapter-meta"]');
+    if (!btn) return;
+
+    const section = btn.closest('section[data-chapter-name]');
+    if (!section) return;
+
+    const chapterName = section.getAttribute('data-chapter-name');
+    f.old_name.value = chapterName;
+    msg.textContent = 'Loading…';
+    ensureTagify();
+
+    try{
+      const r = await fetch('/admin/chapters_json', { credentials: 'include' });
+      if (!r.ok) throw new Error('load failed');
+      const list = await r.json();
+      const meta = list.find(x => x.name === chapterName) || {
+        name: chapterName, display_name: chapterName, order: '', tint: '', description: '', keywords: '', llm_guidance: ''
+      };
+
+      // Fill
+      f.name.value    = meta.name || '';
+      f.display.value = meta.display_name || '';
+      f.order.value   = (meta.order ?? '');
+      f.tint.value    = meta.tint || '';
+      if (meta.tint) f.tintPicker.value = meta.tint;
+      f.desc.value    = meta.description || '';
+      f.guide.value   = meta.llm_guidance || '';
+
+      if (kwTagify){
+        kwTagify.removeAllTags();
+        const kws = (meta.keywords || '').split(',').map(s=>s.trim()).filter(Boolean);
+        kwTagify.addTags(kws);
+      } else {
+        f.keywords.value = meta.keywords || '';
+      }
+
+      msg.textContent = '';
+      openModal();
+    }catch(err){
+      console.error(err);
+      msg.textContent = 'Failed to load chapter meta.';
+    }
+  });
+
+  // SAVE: (unchanged behavior; still calls your existing endpoints)
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const oldName = f.old_name.value.trim();
+    const newName = f.name.value.trim();
+    const display = f.display.value.trim();
+    const tint    = f.tint.value.trim();
+    const desc    = f.desc.value.trim();
+    const guide   = f.guide.value.trim();
+    const order   = f.order.value === '' ? null : Number(f.order.value);
+
+    let keywordsCSV = '';
+    if (kwTagify) {
+      keywordsCSV = (kwTagify.value || []).map(t => t.value).filter(Boolean).join(', ');
+    } else {
+      keywordsCSV = (f.keywords.value || '').split(',').map(s=>s.trim()).filter(Boolean).join(', ');
+    }
+
+    if (newName && newName !== oldName) {
+      msg.textContent = 'Renaming…';
+      try{
+        const fd = new FormData();
+        fd.append('old_name', oldName);
+        fd.append('new_name', newName);
+        if (tint) fd.append('tint', tint);
+
+        const r = await fetch('/admin/chapters/rename', {
+          method: 'POST',
+          body: fd,
+          credentials: 'include',
+          redirect: 'manual'
+        });
+        if (!r.ok && r.status !== 303) throw new Error('rename failed');
+        location.reload();
+        return;
+      }catch(err){
+        console.error(err);
+        msg.textContent = 'Rename failed.';
+        return;
+      }
+    }
+
+    const payload = [{
+      name: oldName,
+      display_name: display || oldName,
+      order: order,
+      tint: tint || null,
+      description: desc || null,
+      keywords: keywordsCSV || null,
+      llm_guidance: guide || null,
+    }];
+
+    msg.textContent = 'Saving…';
+    try{
+      const r = await fetch('/admin/chapters/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error('save failed');
+
+      // Reflect in-page
+      const section = document.querySelector(`section[data-chapter-name="${CSS.escape(oldName)}"]`);
+      if (section) {
+        const titleEl = section.querySelector('.chapter-title');
+        if (titleEl) titleEl.textContent = display || oldName;
+
+        const orderEl = section.querySelector('.order-input');
+        if (orderEl && order !== null) orderEl.value = String(order);
+
+        if (tint) section.style.setProperty('--chapter-tint', tint);
+        else section.style.removeProperty('--chapter-tint');
+      }
+
+      msg.textContent = 'Saved ✔';
+      setTimeout(closeModal, 350);
+    }catch(err){
+      console.error(err);
+      msg.textContent = 'Save failed.';
+    }
+  });
+})();
+</script>
+<script>
+
+</script>
+
+
+<style>
+button.is-loading { opacity:.8; pointer-events:none; position:relative; }
+button.is-loading::after {
+  content: attr(data-status);
+  position:absolute; inset:0; display:grid; place-items:center;
+  font-size:.86em; font-weight:600; background:rgba(255,255,255,.65); border-radius:inherit;
+}
+</style>
+
+
+
+
+
+
+
+{% endblock %}
+
+
+

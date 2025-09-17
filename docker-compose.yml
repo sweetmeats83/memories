@@ -1,0 +1,66 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:15
+    container_name: memories3_db
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-memories}
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      - "${PG_PORT:-5433}:5432"
+    volumes:
+      - postgres_data_memories3:/var/lib/postgresql/data
+
+  web:
+    build: .
+    runtime: nvidia
+    container_name: memories3_web
+    env_file: .env
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      - "${WEB_PORT:-8003}:8000"
+    depends_on:
+      - postgres
+    volumes:
+      - .:/app   
+      - ./static/uploads:/app/static/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Production-ready app service (CPU), uses Dockerfile.prod
+  web_prod:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: memories3_web_prod
+    env_file: .env
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      - "${WEB_PROD_PORT:-8004}:8000"
+    depends_on:
+      - postgres
+    volumes:
+      - ./static/uploads:/app/static/uploads
+    profiles: ["prod"]
+
+  # Optional Tailwind asset builder (Node) for local dev
+  assets:
+    image: node:20-alpine
+    working_dir: /app
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    command: sh -lc "npm run watch:css"
+    profiles: ["dev"]
+
+volumes:
+  postgres_data_memories3:
+  node_modules:

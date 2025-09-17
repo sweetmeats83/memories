@@ -1,0 +1,1552 @@
+{% extends "base.html" %}
+{% block content %}
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@yaireo/tagify/dist/tagify.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@yaireo/tagify"></script>
+<style>
+  /* minimal extras for this page */
+  .btn-outline{display:inline-flex;align-items:center;gap:.5rem;padding:.5rem 1rem;border:1px solid #000;border-radius:.5rem;background:transparent;color:#000;transition:background .15s,color .15s,transform .06s}
+  .btn-outline:hover{background:#000;color:#fff}
+  .btn-outline:active{transform:translateY(1px)}
+  .tile-glass{background:rgba(255,255,255,.65);backdrop-filter:blur(6px);border:1px solid #000;border-radius:.5rem;box-shadow:0 .5rem 1rem rgba(0,0,0,.05)}
+  .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid #000;border-radius:.5rem;background:rgba(255,255,255,.9)}
+  .icon-btn:hover{background:#000;color:#fff}
+
+  .primary-audio{width:100%}
+  .primary-video{width:100%;display:block;aspect-ratio:16/9;background:#000}
+
+  /* Quill: keep snow toolbar visible, compact */
+  .ql-toolbar.ql-snow{border:1px solid #000;border-radius:.5rem .5rem 0 0;background:#fff}
+  .ql-container.ql-snow{border:1px solid #000;border-top:0;border-radius:0 0 .5rem .5rem;background:#fff}
+  .ql-editor{min-height:300px}
+
+  /* Overlay bits from user_record */
+  .active-pill{ background:#000; color:#fff; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin 1s linear infinite; }
+  .skel { background: repeating-linear-gradient(90deg, #eee 0 10px, #f7f7f7 10px 20px); }
+
+  .dz { cursor: pointer; }
+  .dz--over { outline-color: #111; background: rgba(255,255,255,.85); }
+  /* normalize icon buttons in the segments panel */
+  .icon-btn{display:inline-grid;place-items:center;width:32px;height:32px;border:1px solid #000;border-radius:.5rem;background:#fff;line-height:1}
+  .icon-btn .material-symbols-outlined,
+  .icon-btn .material-icons-outlined{display:inline-flex;align-items:center;justify-content:center;font-size:18px;line-height:1}
+  /* keep row content aligned */
+  #segments-list li .flex.items-start { align-items: center; }
+  #segments-list li .text-sm { line-height: 1.3; }
+</style>
+<script>
+  // Configure API base for this editor (user vs admin proxy)
+  window.EDITOR_API_BASE = {% if is_admin_view %}"{{ admin_api_base }}"{% else %}"/response/{{ response.id }}"{% endif %};
+  window.SEG_API_BASE = window.EDITOR_API_BASE + '/segments';
+</script>
+{% if impersonated_by_admin and acting_as_user %}
+<div class="mb-2 rounded border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2 text-sm">
+  Editing as <strong>{{ acting_as_user.username or acting_as_user.email }}</strong> (admin impersonation)
+</div>
+{% endif %}
+    <a href="/user_dashboard"
+   class="pill select-none inline-flex items-center cursor-pointer"
+   role="button">
+  Back to Memories
+</a>
+<div class="max-w-4xl mx-auto mt-10 p-6 sm:p-8 bg-white/40 backdrop-blur-md rounded-lg shadow-lg border border-black">
+
+  <!-- Header -->
+<header class="mb-4">
+  <h1 id="display-title" class="text-3xl font-bold tracking-tight" style="font-family: 'Lora', serif;">
+    {{ response.title or (response.prompt.text if response.prompt else 'Edit Memory') }}
+  </h1>
+
+  {% if prompt_media %}
+  <div class="mt-4 flex justify-center flex-wrap gap-3">
+    {% for media in prompt_media %}
+      {% set purl = media.file_path.startswith('http') and media.file_path or url_for('static', path='uploads/' ~ media.file_path) %}
+      {% set turl = media.thumbnail_url and (media.thumbnail_url.startswith('http') and media.thumbnail_url or url_for('static', path=media.thumbnail_url)) %}
+      <div class="mx-1">
+        {% if media.media_type == 'image' %}
+          <img src="{{ turl or purl }}"
+               alt="Prompt media image"
+               class="thumb max-h-48 rounded border border-black cursor-pointer"
+               data-kind="image" data-src="{{ purl }}" />
+        {% elif media.media_type == 'video' %}
+          <img src="{{ turl or '/static/video-thumb.png' }}"
+               alt="Prompt video thumbnail"
+               class="thumb max-h-48 rounded border border-black cursor-pointer"
+               data-kind="video" data-src="{{ purl }}" />
+        {% elif media.media_type == 'audio' %}
+          <div class="thumb p-2 border border-black rounded cursor-pointer"
+               data-kind="audio" data-src="{{ purl }}">
+            <span class="material-icons-outlined">audiotrack</span>
+            <span>Audio Clip</span>
+          </div>
+        {% else %}
+          <a href="{{ purl }}" target="_blank" class="underline">{{ media.file_path }}</a>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</header>
+
+
+
+
+{# Primary player IN the top padding band, centered, text-width #}
+{% set primary = response.primary_media_url %}
+{% set primary_url = (primary and url_for('static', path='uploads/' ~ primary)) or None %}
+{% set poster_url = response.primary_thumbnail_path and url_for('static', path=response.primary_thumbnail_path) %}
+{% if primary_url %}
+  {% set _lower = (primary or '')|lower %}
+  {% set is_vid = _lower.endswith('.mp4') or _lower.endswith('.webm') or _lower.endswith('.mov') %}
+  <figure class="mt-3 mb-6 article-player" aria-label="Primary media">
+    {% if is_vid %}
+      <video controls data-plyr {% if poster_url %}poster="{{ poster_url }}"{% endif %}>
+        <source src="{{ primary_url }}">
+      </video>
+    {% else %}
+      <audio controls data-plyr>
+        <source src="{{ primary_url }}">
+      </audio>
+    {% endif %}
+  </figure>
+{% endif %}
+</section>
+
+
+  <!-- Toolbar -->
+  <div class="flex flex-wrap gap-3 mb-6">
+    <button id="btn-save" form="edit-form" class="btn-outline">
+      <span class="material-icons-outlined text-base">save</span>
+      <span>Save</span>
+    </button>
+
+    <button id="btn-polish" type="button" class="btn-outline" disabled>
+      <span class="material-icons-outlined text-base">auto_fix_high</span>
+      <span>Polish with AI</span>
+    </button>
+
+    <a href="/response/{{ response.id }}" class="btn-outline">
+      <span class="material-icons-outlined text-base">visibility</span>
+      <span>View</span>
+    </a>
+
+    {% if not is_admin_view %}
+    <button id="btn-history" type="button" class="btn-outline" title="Version history" onclick="window.__openHistory && window.__openHistory()">
+      <span class="material-icons-outlined text-base">history</span>
+      <span>History</span>
+    </button>
+    {% endif %}
+
+  <button id="btn-record-segment" type="button" class="btn-outline">
+    <span class="material-symbols-outlined text-base">mic_alert</span>
+    <span>Continue</span>
+  </button>
+</div>
+
+
+
+  <!-- Inline editable title + editor -->
+  <form id="edit-form" method="POST" action="{% if is_admin_view %}{{ admin_api_base }}/edit{% else %}/response/{{ response.id }}/edit{% endif %}" class="mb-6">
+    <div class="mb-4">
+      <label for="title-input" class="sr-only">Title</label>
+      <input
+        id="title-input"
+        name="title"
+        type="text"
+        class="w-full px-4 py-2 border border-black rounded-md bg-white/70"
+        placeholder="Add a title…"
+        autocomplete="off"
+        value="{{ response.title or '' }}"
+      />
+      <small class="block mt-1 text-gray-600">Updates the big title above immediately.</small>
+    </div>
+
+    <!-- Quill editor -->
+    <div id="editor">{{ (response.transcription or '')|safe }}</div>
+    <input type="hidden" name="transcription" id="transcription">
+      <!-- Response Tags -->
+      <div class="mt-4">
+        <label for="responseTags" class="block font-medium mb-1">Tags</label>
+        <input
+          id="responseTags"
+          name="response_tags"
+          placeholder="Add tags…"
+          class="w-full border border-black p-2 rounded bg-white/70"
+        />
+        <small class="block mt-1 text-gray-600">
+          Type to search existing tags; press Enter to add a new one.
+        </small>
+      </div>
+  </form>
+
+  <!-- Collapsibles -->
+  <details id="original-wrap" class="mt-6 bg-white/40 rounded p-4 shadow-sm border border-black">
+    <summary class="font-semibold cursor-pointer flex items-center gap-2">
+      <span class="material-icons-outlined text-base">psychology</span>
+      <span>Reference Transcript (pre‑polish)</span>
+    </summary>
+    <pre id="original-transcript" class="whitespace-pre-wrap mt-3 text-sm text-gray-900">
+{% if response.transcription %}{{ response.transcription }}{% endif %}
+    </pre>
+  </details>
+
+  <details id="ai-polish-wrap" class="mt-6 bg-white/40 rounded p-4 shadow-sm border border-black" {% if response.ai_polished %} open {% endif %}>
+    <summary class="font-semibold cursor-pointer flex items-center gap-2">
+      <span class="material-icons-outlined text-base">auto_fix_high</span>
+      <span>AI Polish (latest)</span>
+      {% if response.ai_polished_at %}
+        <span class="text-xs text-gray-600">· {{ response.ai_polished_at }}</span>
+      {% endif %}
+    </summary>
+    <pre id="ai-polish-text" class="whitespace-pre-wrap mt-3 text-sm text-gray-900">
+{% if response.ai_polished %}{{ response.ai_polished }}{% endif %}
+    </pre>
+  </details>
+
+  {% if is_admin_view %}
+  <!-- Version History (Admin only) -->
+  <section id="versionsPanel" class="mt-8">
+    <div class="tile-glass p-4">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-semibold">Version History</h3>
+        <div class="flex items-center gap-2">
+          <button id="versions-refresh" class="icon-btn" title="Refresh">
+            <span class="material-icons-outlined text-sm">refresh</span>
+          </button>
+        </div>
+      </div>
+      <p class="text-xs text-gray-600 mb-3">Snapshots are saved automatically before edits. Restore to roll back the title, transcript, and tags.</p>
+      <ul id="versions-list" class="space-y-2" aria-live="polite"></ul>
+      <p id="versions-empty" class="mt-2 text-sm text-gray-600 hidden">No versions yet.</p>
+    </div>
+  </section>
+  {% endif %}
+<section id="segmentsPanel" class="mt-8">
+  <div class="tile-glass p-4">
+    <div class="flex items-center justify-between">
+      <h3 class="font-semibold">Transcript Segments</h3>
+      <div class="flex items-center gap-2">
+        <button id="segments-refresh" class="icon-btn" title="Refresh">
+          <span class="material-icons-outlined text-sm">refresh</span>
+        </button>
+      </div>
+    </div>
+    <p id="segments-empty" class="mt-2 text-sm text-gray-600 hidden">No segments yet. Use “Record Segment”.</p>
+    <ul id="segments-list" class="mt-3 space-y-2" aria-live="polite"></ul>
+    <p class="mt-3 text-xs text-gray-600">Tip: drag to reorder. “Insert” places the transcript at your current cursor in the editor.</p>
+  </div>
+</section>
+
+<!-- Add Supporting Media (dropzone + hidden input) -->
+<section class="mt-8">
+  <div class="tile-glass p-4 mb-4">
+    <h3 class="font-semibold mb-3 flex items-center gap-2">
+      <span class="material-icons-outlined text-base">attach_file</span>
+      <span>Add Supporting Media</span>
+    </h3>
+
+    <!-- Dropzone -->
+    <form id="supporting-form"
+          action="{% if is_admin_view %}{{ admin_api_base }}/media{% else %}/response/{{ response.id }}/media{% endif %}"
+          method="post"
+          enctype="multipart/form-data"
+          class="relative">
+      <input id="supporting-files" name="media_files" type="file" multiple
+             accept="image/*,audio/*,video/*,application/pdf"
+             class="sr-only">
+
+      <div id="dropzone"
+           class="border border-black rounded-md bg-white/70 p-6 text-center cursor-pointer
+                  transition hover:bg-white"
+           aria-label="Click or drop files to upload">
+        <div class="flex items-center justify-center gap-2 text-black/80">
+          <span class="material-icons-outlined">add</span>
+          <span>Click or drop files to upload</span>
+        </div>
+        <p id="dropzone-hint" class="mt-2 text-xs text-gray-600">
+          Images, audio, video, or PDF. You can select multiple files.
+        </p>
+      </div>
+    </form>
+
+    <!-- Live preview of selected filenames (optional) -->
+    <ul id="supporting-preview" class="mt-3 text-sm text-gray-800"></ul>
+  </div>
+
+<!-- Supporting Media Grid (server-rendered) -->
+{% if supporting_media %}
+  <h3 class="font-semibold mb-3">Attached Media</h3>
+  <div id="supporting-grid" class="grid grid-cols-2 md:grid-cols-3 gap-4">
+    {% for media in supporting_media %}
+      {% set murl = media.file_path.startswith('http') and media.file_path or url_for('static', path='uploads/' ~ media.file_path) %}
+      <div class="tile-glass p-2 group relative" data-media-card data-media-id="{{ media.id }}">
+        {% if media.media_type == 'image' %}
+          <img src="{{ murl }}"
+               alt="Supporting image" loading="lazy"
+               class="w-full h-40 object-cover rounded-md border border-black thumb"
+               data-kind="image" data-src="{{ murl }}">
+        {% elif media.media_type == 'video' %}
+          <video class="w-full h-40 rounded-md border border-black object-cover thumb"
+                 data-kind="video" data-src="{{ murl }}">
+            <source src="{{ murl }}">
+          </video>
+        {% elif media.media_type == 'audio' %}
+          <div class="rounded-md border border-black p-2 bg-white/70 thumb"
+               data-kind="audio" data-src="{{ murl }}">
+            <audio controls class="w-full">
+              <source src="{{ murl }}">
+            </audio>
+          </div>
+        {% else %}
+          <a class="underline break-words thumb"
+             href="{{ murl }}" target="_blank"
+             data-kind="file" data-src="{{ murl }}">{{ media.file_path }}</a>
+        {% endif %}
+
+        <div class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+          <button type="button" class="icon-btn" data-media-id="{{ media.id }}" data-action="delete" title="Delete">
+            <span class="material-icons-outlined text-sm">delete</span>
+          </button>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+</section>
+{% include "_record_overlay.html" %}
+
+</div>
+</div>
+
+{% if not is_admin_view %}
+<!-- Simple History Modal (user) -->
+<div id="historyModal" class="fixed inset-0 bg-black/70 hidden z-[250] items-center justify-center">
+  <div class="bg-white rounded-xl w-full max-w-2xl max-h-[80vh] overflow-auto border border-black/20 shadow-2xl">
+    <div class="flex items-center justify-between p-3 border-b border-black/10">
+      <h3 class="font-semibold">Version History</h3>
+      <button id="historyClose" class="icon-btn" title="Close"><span class="material-icons-outlined text-sm">close</span></button>
+    </div>
+    <div class="p-3">
+      <p class="text-xs text-gray-600 mb-2">Restore to roll back your title, transcript, and tags to a previous snapshot.</p>
+      <ul id="historyList" class="space-y-2"></ul>
+      <p id="historyEmpty" class="text-sm text-gray-600">No versions yet.</p>
+    </div>
+  </div>
+  
+  
+</div>
+{% endif %}
+
+<!-- Quill -->
+<link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+<script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+
+
+<script>
+(() => {
+  const $audio = document.getElementById('mode-audio');
+  const $video = document.getElementById('mode-video');
+  let mode = 'audio';
+
+  function select(which){
+    mode = which;
+    $audio?.classList.toggle('is-selected', which==='audio');
+    $video?.classList.toggle('is-selected', which==='video');
+    window.RecordOverlay?.setCaptureMode(which);
+  }
+  $audio?.addEventListener('click', () => select('audio'));
+  $video?.addEventListener('click', () => select('video'));
+  select('audio');
+})();
+</script>
+<script>
+  // --- Quill (minimal toolbar) ---
+  window.quill = new Quill('#editor', {
+    theme: 'snow',
+    placeholder: 'Start editing your story...',
+    modules: {
+      toolbar: [
+        ['bold','italic','underline','clean'],
+        [{'list':'ordered'},{'list':'bullet'}],
+        ['link']
+      ],
+      history: { delay: 400, maxStack: 100, userOnly: true }
+    }
+  });
+
+  // Save HTML from Quill on submit
+  const form = document.getElementById('edit-form');
+  form.addEventListener('submit', function () {
+    document.getElementById('transcription').value = quill.root.innerHTML;
+  });
+</script>
+<script>
+(() => {
+  const responseId = {{ response.id }};
+  const listEl  = document.getElementById('segments-list');
+  const emptyEl = document.getElementById('segments-empty');
+  const btnRefresh = document.getElementById('segments-refresh');
+
+  function snapshotOf(list){
+    return JSON.stringify(list.map(s => ({ id:s.id, order:s.order_index, ready: !!(s.transcript && s.transcript.trim()) })));
+  }
+  let lastSnap = '';
+
+  async function fetchSegments(){
+    const r = await fetch(`${window.EDITOR_API_BASE.replace(/\/edit$/,'')}/segments`.replace('/admin/users','/response'), { credentials:'include', cache:'no-store' });
+    if(!r.ok) return [];
+    return r.json();
+  }
+
+  function renderSegments(segs){
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    if (!segs.length){ emptyEl?.classList.remove('hidden'); return; }
+    emptyEl?.classList.add('hidden');
+
+    for (let i=0;i<segs.length;i++){
+      const s = segs[i];
+      const isVid = (s.media_mime||'').startsWith('video');
+      const li = document.createElement('li');
+      li.className = 'tile-glass p-3 rounded-lg outline outline-1 outline-black draggable';
+      li.draggable = true;
+      li.dataset.id = s.id;
+      li.innerHTML = `
+        <div class="flex items-start gap-2">
+          <div class="mt-0.5 select-none text-xs w-6 text-center font-semibold">${i+1}</div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1 text-xs text-gray-600">
+              <span class="material-icons-outlined text-sm">${isVid?'play_circle':'graphic_eq'}</span>
+              <span>#${s.id}</span>
+              <span class="mx-1">•</span>
+              <span>${(s.transcript && s.transcript.trim())?'Ready':'Processing…'}</span>
+            </div>
+            <div class="mt-1 text-sm whitespace-pre-wrap break-words">${(s.transcript||'').slice(0,600)}</div>
+            <div class="mt-2 flex gap-2">
+              ${s.media_path ? `<button class="icon-btn" data-act="play" title="Play"><span class="material-symbols-outlined">play_arrow</span></button>` : ''}
+              <button class="icon-btn" data-act="insert" title="Insert at cursor"><span class="material-symbols-outlined">input_circle</span></button>
+              <button class="icon-btn" data-act="delete" title="Delete"><span class="material-symbols-outlined">delete</span></button>
+            </div>
+          </div>
+        </div>`;
+      listEl.appendChild(li);
+    }
+  }
+
+  async function refreshIfChanged(){
+    try{
+      const segs = await fetchSegments();
+      const snap = snapshotOf(segs);
+      if (snap !== lastSnap){
+        lastSnap = snap;
+        renderSegments(segs);
+      }
+    } catch {}
+  }
+
+  // manual refresh
+  btnRefresh?.addEventListener('click', (e) => { e.preventDefault(); refreshIfChanged(); });
+
+  // delegated actions: play / insert / delete
+  listEl?.addEventListener('click', async (e)=>{
+    const btn = e.target.closest('button[data-act]');
+    if(!btn) return;
+    const li = btn.closest('li'); if(!li) return;
+    const id = Number(li.dataset.id);
+    const act = btn.dataset.act;
+
+    const segs = await fetchSegments();
+    const seg = segs.find(x=>x.id===id);
+    if(!seg) return;
+
+    if (act==='play' && seg.media_path){
+      const base = `{{ url_for('static', path='') }}`;
+      const rel  = seg.media_path.startsWith('uploads/') ? seg.media_path : `uploads/${seg.media_path}`;
+      const url  = base + rel;
+      const kind = (seg.media_mime||'').startsWith('video') ? 'video' : 'audio';
+      const poster = seg.thumbnail_path ? (base + seg.thumbnail_path) : null;
+
+      // simple modal
+      const wrap = document.createElement('div');
+      wrap.className = 'fixed inset-0 bg-black/70 z-[250] grid place-items-center';
+      wrap.addEventListener('click', (ev)=>{ if(ev.target===wrap) wrap.remove(); });
+
+      const close = document.createElement('button');
+      close.className = 'absolute top-4 right-4 icon-btn';
+      close.innerHTML = '<span class="material-icons-outlined">close</span>';
+      close.onclick = ()=>wrap.remove();
+
+      const frame = document.createElement('div');
+      frame.className = 'relative max-w-[92vw] max-h-[86vh]';
+      frame.appendChild(close);
+
+      if(kind==='video'){
+        const v = document.createElement('video'); v.controls=true; v.autoplay=true; v.className='rounded-2xl max-w-[92vw] max-h-[86vh]';
+        if (poster) v.poster = poster;
+        const s = document.createElement('source'); s.src = url; v.appendChild(s);
+        frame.appendChild(v);
+      } else {
+        const a = document.createElement('audio'); a.controls=true; a.autoplay=true; a.className='w-[min(640px,92vw)]'; a.src=url;
+        frame.appendChild(a);
+      }
+      wrap.appendChild(frame);
+      document.body.appendChild(wrap);
+    }
+
+    if (act==='insert'){
+      const text = (seg.transcript||'').trim();
+      if (text && window.quill){
+        const Delta = Quill.import('delta');
+        const sel = quill.getSelection(true);
+        const idx = sel ? sel.index : quill.getLength();
+        quill.updateContents(new Delta().retain(idx).insert(text + '\n', { seg: String(seg.id) }));
+        quill.setSelection(idx + text.length + 1, 0);
+      }
+    }
+
+    if (act==='delete'){
+      if(!confirm('Delete this segment?')) return;
+      const r = await fetch(`${window.SEG_API_BASE}/${id}`, { method:'DELETE', credentials:'include' });
+      if (r.ok) refreshIfChanged();
+    }
+  });
+
+  // drag & drop reorder
+  let draggingId = null;
+  listEl?.addEventListener('dragstart', (e)=>{
+    const li = e.target.closest('li.draggable'); if (!li) return;
+    draggingId = Number(li.dataset.id);
+    e.dataTransfer.effectAllowed = 'move';
+    li.classList.add('opacity-60');
+  });
+  listEl?.addEventListener('dragend', (e)=>{
+    const li = e.target.closest('li.draggable'); li?.classList.remove('opacity-60');
+  });
+  listEl?.addEventListener('dragover', (e)=>{
+    e.preventDefault();
+    const over = e.target.closest('li.draggable');
+    const dragging = [...listEl.children].find(x => Number(x.dataset.id)===draggingId);
+    if(!over || !dragging || over===dragging) return;
+    const rect = over.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height/2;
+    listEl.insertBefore(dragging, before ? over : over.nextSibling);
+  });
+  listEl?.addEventListener('drop', async ()=>{
+    const ids = [...listEl.children].map(li => Number(li.dataset.id));
+    await fetch(`${window.SEG_API_BASE}/reorder`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ order: ids })
+    });
+    refreshIfChanged();
+  });
+
+  // keep fresh
+  refreshIfChanged();
+  const POLL_MS = 4000;
+  let pollTimer = setInterval(refreshIfChanged, POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { clearInterval(pollTimer); }
+    else { clearInterval(pollTimer); pollTimer = setInterval(refreshIfChanged, POLL_MS); refreshIfChanged(); }
+  });
+
+  // used by the overlay after upload
+  window.onSegmentUploaded = async function(segId){
+    // quick refresh loop until the transcript arrives
+    for (let i=0;i<45;i++){
+      await refreshIfChanged();
+      const segs = await fetchSegments();
+      const seg = segs.find(s => s.id === segId);
+      if (seg?.transcript?.trim()){
+        if (window.quill){
+          const Delta = Quill.import('delta');
+          const sel = quill.getSelection(true);
+          const idx = sel ? sel.index : quill.getLength();
+          const text = seg.transcript.trim() + '\n';
+          quill.updateContents(new Delta().retain(idx).insert(text, { seg: String(seg.id) }));
+          quill.setSelection(idx + text.length, 0);
+        }
+        return;
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  };
+})();
+</script>
+
+<script>
+(function () {
+  const responseId = '{{ response.id }}';
+  const btnPolish = document.getElementById('btn-polish');
+  const btnSave   = document.getElementById('btn-save');
+  const originalDetails = document.getElementById('original-wrap');
+  const originalPre = document.getElementById('original-transcript');
+  const form = document.getElementById('edit-form');
+
+  // “View” veil
+  const viewLink = document.querySelector(`a[href="/response/${responseId}"]`);
+  viewLink?.addEventListener('click', () => window.NavVeil?.show('Opening…'));
+
+  // Save → merge (fire-and-forget) then submit
+  btnSave?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try {
+      await window.NavVeil?.show('Merging audio…');
+      try {
+        await fetch(`${window.SEG_API_BASE}/merge-audio`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ include_primary: true }),
+          keepalive: true
+        });
+      } catch (err) {
+        console.warn('merge-audio failed (non-blocking):', err);
+      }
+    } finally {
+      const hidden = document.getElementById('transcription');
+      if (hidden && window.quill) hidden.value = quill.root.innerHTML;
+      form?.requestSubmit();
+    }
+  });
+
+  // ---- polish helpers (kept local so btnPolish is in scope) ----
+  function toast(msg) {
+    let t = document.getElementById('ai-toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'ai-toast';
+      Object.assign(t.style, {
+        position:'fixed', bottom:'20px', left:'50%', transform:'translateX(-50%)',
+        background:'rgba(25,25,25,0.95)', color:'#fff', padding:'8px 12px',
+        border:'1px solid black', borderRadius:'8px', zIndex:9999
+      });
+      document.body.appendChild(t);
+    }
+    t.textContent = msg; t.style.opacity = '1';
+    setTimeout(()=>{ t.style.opacity = '0'; }, 1800);
+  }
+
+  function stripTags(html){ return (html || '').replace(/<[^>]+>/g, ' '); }
+  async function getCurrentText() {
+    if (window.quill) {
+      const t1 = (quill.root.innerText || '').replace(/\s+/g,' ').trim(); if (t1) return t1;
+      const t2 = (quill.getText() || '').replace(/\s+/g,' ').trim(); if (t2) return t2;
+      const t3 = stripTags(quill.root.innerHTML).replace(/\s+/g,' ').trim(); if (t3) return t3;
+    }
+    const hidden = document.getElementById('transcription');
+    return hidden ? stripTags(hidden.value).replace(/\s+/g,' ').trim() : '';
+  }
+  async function setCurrentText(t) {
+    if (window.quill) { quill.setText((t || '').toString()); return; }
+    const hidden = document.getElementById('transcription');
+    if (hidden) hidden.value = t || '';
+  }
+  async function ensureTranscriptLoaded() {
+    const current = await getCurrentText();
+    if (current) return current;
+    if (!responseId) return '';
+    try {
+      const r = await fetch(`/api/response/${responseId}/transcript`, { credentials:'include' });
+      if (!r.ok) return '';
+      const data = await r.json();
+      if (data?.text) { await setCurrentText(data.text); return data.text; }
+    } catch {}
+    return '';
+  }
+  async function updatePolishState() {
+    let len = 0;
+    if (window.quill) len = quill.getLength(); else len = (await getCurrentText()).length;
+    if (btnPolish) btnPolish.disabled = !(len > 5);
+  }
+
+  // Init
+  (async () => { await ensureTranscriptLoaded(); await updatePolishState(); })();
+  if (window.quill) quill.on('text-change', updatePolishState);
+
+  // ---- POLISH click ----
+  btnPolish?.addEventListener('click', async () => {
+    btnPolish.disabled = true;
+    const before = (await getCurrentText()) || (await ensureTranscriptLoaded());
+    if (!before) { toast('No transcript to polish.'); btnPolish.disabled = false; return; }
+
+    const originalHasText = (originalPre?.textContent || '').trim().length > 0;
+    if (!originalHasText) {
+      if (originalPre) originalPre.textContent = before;
+      if (originalDetails) originalDetails.open = true;
+    }
+
+    btnPolish.innerHTML = '<span class="material-icons-outlined text-base">hourglass_empty</span><span>Polishing…</span>';
+
+    try {
+      const resp = await fetch('/api/polish-transcript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',               // <— IMPORTANT
+        body: JSON.stringify({ text: before, style: 'clean' })
+      });
+      const data = await resp.json().catch(()=> ({}));
+      if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
+      const after = (data.text || '').trim();
+
+      if (!after) {
+        toast('AI returned empty text.');
+      } else {
+        await setCurrentText(after);
+        toast('Polished ✓');
+        const aiWrap = document.getElementById('ai-polish-wrap');
+        const aiPre  = document.getElementById('ai-polish-text');
+        if (aiPre) aiPre.textContent = after;
+        if (aiWrap) aiWrap.open = true;
+      }
+    } catch (e) {
+      console.error(e);
+      alert('AI polish failed: ' + e.message);
+    } finally {
+      btnPolish.innerHTML = '<span class="material-icons-outlined text-base">auto_fix_high</span><span>Polish with AI</span>';
+      await updatePolishState();
+    }
+  });
+})();
+</script>
+
+{% if is_admin_view %}
+<script>
+(function(){
+  const listEl  = document.getElementById('versions-list');
+  const emptyEl = document.getElementById('versions-empty');
+  const btnRefresh = document.getElementById('versions-refresh');
+  const apiBase = (window.EDITOR_API_BASE || '').replace(/\/edit$/,'');
+
+  async function fetchVersions(){
+    try{
+      const r = await fetch(`${apiBase}/versions`, { credentials:'include', cache:'no-store' });
+      if(!r.ok) return { versions: [] };
+      return r.json();
+    }catch{ return { versions: [] }; }
+  }
+
+  function fmt(ts){
+    try{ const d = new Date(ts); return d.toLocaleString(); }catch{ return ts || ''; }
+  }
+
+  function render(list){
+    if (!listEl) return;
+    listEl.innerHTML='';
+    if (!list || !list.length){ emptyEl?.classList.remove('hidden'); return; }
+    emptyEl?.classList.add('hidden');
+
+    list.slice(0, 50).forEach(v => {
+      const li = document.createElement('li');
+      li.className = 'tile-glass p-3 rounded-lg border border-black/10 flex items-start justify-between gap-3';
+      const meta = document.createElement('div');
+      meta.className = 'min-w-0 flex-1';
+      const title = (v.title || '').trim();
+      const tags  = Array.isArray(v.tags) ? v.tags.length : 0;
+      meta.innerHTML = `
+        <div class="text-sm font-medium">${fmt(v.created_at)}</div>
+        <div class="text-xs text-gray-600">${v.edited_by_admin_id ? 'admin edit' : 'user edit'} · ${v.has_transcription ? 'has text' : 'no text'} · ${tags} tag${tags===1?'':'s'}</div>
+        ${title ? `<div class="mt-1 text-sm truncate max-w-[60ch]">“${title}”</div>` : ''}
+      `;
+      const actions = document.createElement('div');
+      actions.className = 'shrink-0 flex items-center gap-2';
+      const btn = document.createElement('button');
+      btn.className = 'icon-btn';
+      btn.title = 'Restore this version';
+      btn.innerHTML = '<span class="material-icons-outlined text-sm">history</span>';
+      btn.addEventListener('click', async () => {
+        if (!confirm('Restore this version? This will overwrite the current title, transcript, and tags.')) return;
+        const r = await fetch(`${apiBase}/versions/${v.id}/restore`, { method:'POST', credentials:'include' });
+        if (r.ok) { location.reload(); } else { alert('Restore failed'); }
+      });
+      actions.appendChild(btn);
+      li.appendChild(meta);
+      li.appendChild(actions);
+      listEl.appendChild(li);
+    });
+  }
+
+  async function refresh(){ const data = await fetchVersions(); render(data.versions||[]); }
+  btnRefresh?.addEventListener('click', (e)=>{ e.preventDefault(); refresh(); });
+  refresh();
+})();
+</script>
+
+{% if not is_admin_view %}
+<script>
+(function(){
+  const btn = document.getElementById('btn-history');
+  const modal = document.getElementById('historyModal');
+  const close = document.getElementById('historyClose');
+  const list  = document.getElementById('historyList');
+  const empty = document.getElementById('historyEmpty');
+  const rid = '{{ response.id }}';
+
+  function open(){ modal.classList.remove('hidden'); modal.classList.add('flex'); }
+  function hide(){ modal.classList.add('hidden'); modal.classList.remove('flex'); }
+
+  async function load(){
+    try{
+      const r = await fetch(`/response/${rid}/versions`, { credentials:'include', cache:'no-store' });
+      if (!r.ok) throw new Error();
+      const data = await r.json();
+      render(data.versions||[]);
+    }catch{ render([]); }
+  }
+  function fmt(ts){ try{ return new Date(ts).toLocaleString(); }catch{ return ts||''; } }
+  function render(items){
+    list.innerHTML='';
+    if (!items.length){ empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+    items.slice(0,50).forEach(v => {
+      const li = document.createElement('li');
+      li.className = 'tile-glass p-3 rounded-lg border border-black/10 flex items-start justify-between gap-3';
+      const meta = document.createElement('div');
+      meta.className = 'min-w-0 flex-1';
+      const tags = Array.isArray(v.tags) ? v.tags.length : 0;
+      meta.innerHTML = `
+        <div class="text-sm font-medium">${fmt(v.created_at)}</div>
+        <div class="text-xs text-gray-600">${v.has_transcription ? 'has text' : 'no text'} · ${tags} tag${tags===1?'':'s'}</div>
+        ${v.title ? `<div class=\"mt-1 text-sm truncate max-w-[60ch]\">“${v.title}”</div>` : ''}
+      `;
+      const actions = document.createElement('div');
+      actions.className = 'shrink-0 flex items-center gap-2';
+      const btn = document.createElement('button');
+      btn.className = 'icon-btn';
+      btn.title = 'Restore this version';
+      btn.innerHTML = '<span class="material-icons-outlined text-sm">restore</span>';
+      btn.addEventListener('click', async () => {
+        if (!confirm('Restore this version? This will overwrite your current title, transcript, and tags.')) return;
+        const r = await fetch(`/response/${rid}/versions/${v.id}/restore`, { method:'POST', credentials:'include' });
+        if (r.ok) location.reload(); else alert('Restore failed');
+      });
+      actions.appendChild(btn);
+      li.appendChild(meta);
+      li.appendChild(actions);
+      list.appendChild(li);
+    });
+  }
+
+  window.__openHistory = () => { open(); load(); };
+  btn?.addEventListener('click', () => { open(); load(); });
+  close?.addEventListener('click', hide);
+  modal?.addEventListener('click', (e) => { if (e.target === modal) hide(); });
+})();
+</script>
+{% endif %}
+{% endif %}
+<script>
+(function(){
+  const input   = document.getElementById('title-input');
+  const h1      = document.getElementById('display-title');
+  const subtitle= document.getElementById('display-subtitle');
+
+  const initialH1 = h1?.textContent?.trim() || 'Edit Memory';
+  const promptText = subtitle?.textContent?.trim() || '';
+
+  function applyTitle(){
+    const t = (input?.value || '').trim();
+
+    if (!h1) return;
+
+    if (t) {
+      // User has a custom title: big title becomes user text; show prompt as small subtitle
+      h1.textContent = t;
+      if (subtitle) {
+        subtitle.textContent = promptText;
+        subtitle.classList.remove('hidden');
+      }
+    } else {
+      // No custom title: fall back to initial H1; hide subtitle if no prompt
+      h1.textContent = initialH1;
+      if (subtitle) {
+        if (promptText) {
+          // Only show prompt as small subtitle when there IS a custom title.
+          subtitle.classList.add('hidden');
+        } else {
+          subtitle.textContent = '';
+          subtitle.classList.add('hidden');
+        }
+      }
+    }
+  }
+
+  input?.addEventListener('input', applyTitle);
+  applyTitle(); // initialize on load
+})();
+</script>
+
+<script>
+(function(){
+  // --- config ---
+  const IDLE_DEBOUNCE_MS = 1500;   // save after pause in typing
+  const PERIODIC_MS      = 120000; // save every 2 min if dirty
+
+  // --- elements ---
+  const form   = document.getElementById('edit-form');
+  const hidden = document.getElementById('transcription');
+  const titleI = document.getElementById('title-input');
+  const btnSave= document.getElementById('btn-save');
+
+  // add a save status chip next to Save button
+  let status = document.getElementById('save-status');
+  if (!status) {
+    status = document.createElement('span');
+    status.id = 'save-status';
+    status.style.fontSize = '12px';
+    status.style.opacity = '0.75';
+    status.style.marginLeft = '6px';
+    btnSave?.appendChild(status);
+  }
+
+  // --- state ---
+  let lastSavedTitle = (titleI?.value || '').trim();
+  let lastSavedHtml  = (window.quill ? quill.root.innerHTML : (hidden?.value || '')).trim();
+  let dirty = false;
+  let idleTimer = 0;
+  let periodicTimer = 0;
+  let saving = false;
+
+  function nowClock(){
+    const d = new Date();
+    const h = d.getHours()%12 || 12, m = String(d.getMinutes()).padStart(2,'0');
+    return `${h}:${m} ${d.getHours()<12 ? 'AM':'PM'}`;
+  }
+
+  function markDirty(){
+    dirty = true;
+    status.textContent = 'Unsaved changes…';
+    // idle debounce
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(()=>saveDraft('idle'), IDLE_DEBOUNCE_MS);
+  }
+
+  // watch Quill + Title for changes
+  if (window.quill) quill.on('text-change', markDirty);
+  titleI?.addEventListener('input', markDirty, { passive: true });
+
+  // periodic save if still dirty
+  function startPeriodic(){
+    clearInterval(periodicTimer);
+    periodicTimer = setInterval(()=>{
+      if (dirty) saveDraft('periodic');
+    }, PERIODIC_MS);
+  }
+  startPeriodic();
+
+  // helper to build payload from current UI
+  function buildFormData(){
+    // ensure hidden has latest HTML
+    const html = window.quill ? quill.root.innerHTML : (hidden?.value || '');
+    if (hidden) hidden.value = html;
+    const fd = new FormData(form);
+    // title already in form; transcription now up to date in hidden
+    return fd;
+  }
+
+  async function saveDraft(reason, opts={}){
+    if (saving) return; // collapse bursts
+    // compare to last saved snapshot
+    const currentTitle = (titleI?.value || '').trim();
+    const currentHtml  = (window.quill ? quill.root.innerHTML : (hidden?.value || '')).trim();
+    if (!dirty && currentTitle===lastSavedTitle && currentHtml===lastSavedHtml) return;
+
+    saving = true;
+    status.textContent = reason === 'leave' ? 'Saving before exit…' : 'Saving…';
+
+    try {
+      const fd  = buildFormData();
+      const url = form.getAttribute('action');
+      const r = await fetch(url, {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+        // keepalive lets the request complete during page unload
+        keepalive: !!opts.keepalive
+      });
+      if (!r.ok) {
+        // Try to surface server error without blocking unload
+        let msg = ''; try { msg = (await r.text()) || ''; } catch {}
+        console.warn('Autosave failed', r.status, msg);
+        status.textContent = 'Save failed';
+        return;
+      }
+      // success -> commit snapshot
+      lastSavedTitle = currentTitle;
+      lastSavedHtml  = currentHtml;
+      dirty = false;
+      status.textContent = `Saved • ${nowClock()}`;
+    } catch (e) {
+      console.warn('Autosave error', e);
+      status.textContent = 'Save failed';
+    } finally {
+      saving = false;
+    }
+  }
+
+  // manual Save still works (and updates snapshot via normal submit)
+  form?.addEventListener('submit', () => {
+    // update snapshot immediately; server response will come after navigation
+    lastSavedTitle = (titleI?.value || '').trim();
+    lastSavedHtml  = (window.quill ? quill.root.innerHTML : (hidden?.value || '')).trim();
+    dirty = false;
+  });
+
+  // save on tab hide / unload
+  function onLeave(){
+    if (!dirty) return;
+    // fast inline save; keepalive allows finishing as page goes away
+    saveDraft('leave', { keepalive: true });
+  }
+  window.addEventListener('pagehide', onLeave);
+  window.addEventListener('beforeunload', onLeave);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') onLeave();
+  });
+
+})();
+</script>
+
+<script>
+(function(){
+  const form    = document.getElementById('supporting-form');
+  const input   = document.getElementById('supporting-files');
+  const drop    = document.getElementById('dropzone');
+  const preview = document.getElementById('supporting-preview');
+  const grid    = document.getElementById('supporting-grid');
+  const editUrl = window.location.pathname; // /response/{id}/edit
+
+  // Click opens the hidden input
+  drop?.addEventListener('click', () => input?.click());
+
+  // Drag & drop handlers
+  ['dragenter','dragover'].forEach(evt =>
+    drop?.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); drop.classList.add('ring','ring-black'); })
+  );
+  ;['dragleave','drop'].forEach(evt =>
+    drop?.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); drop.classList.remove('ring','ring-black'); })
+  );
+
+  drop?.addEventListener('drop', (e) => {
+    if (!input) return;
+    const dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length) {
+      // Merge dropped files into the input's FileList
+      const data = new DataTransfer();
+      [...(input.files || [])].forEach(f => data.items.add(f));
+      [...dt.files].forEach(f => data.items.add(f));
+      input.files = data.files;
+      // Optional: show chosen filenames
+      showChosenFiles();
+      // Kick off upload
+      uploadFiles();
+    }
+  });
+  (async function bootstrapFirstSegmentOnce(){
+    const rid = '{{ response.id }}';
+    try {
+      await fetch(`${window.SEG_API_BASE}/bootstrap`, { method:'POST', credentials:'include' });
+    } catch {}
+  })();
+  // If the user selects via dialog
+  input?.addEventListener('change', () => {
+    showChosenFiles();
+    uploadFiles();
+  });
+
+  function showChosenFiles(){
+    if (!preview || !input) return;
+    preview.innerHTML = '';
+    [...input.files].forEach(f => {
+      const li = document.createElement('li');
+      li.textContent = `${f.name} (${Math.round(f.size/1024)} KB)`;
+      preview.appendChild(li);
+    });
+  }
+
+  function addPlaceholders(files){
+    if (!grid) return [];
+    const placeholders = [];
+    for (const f of files) {
+      const card = document.createElement('div');
+      card.className = 'tile-glass p-2 relative border border-dashed border-black/60';
+      card.dataset.placeholder = '1';
+      card.innerHTML = `
+        <div class="w-full h-40 rounded-md grid place-items-center bg-white/60">
+          <span class="material-icons-outlined animate-pulse">hourglass_empty</span>
+        </div>
+        <div class="mt-2 text-xs text-gray-700 truncate">${f.name}</div>
+        <div class="absolute top-2 right-2 text-xs bg-black text-white px-2 py-0.5 rounded">processing…</div>
+      `;
+      grid.prepend(card);
+      placeholders.push(card);
+    }
+    return placeholders;
+  }
+
+  async function refreshGridUntilChanged({timeoutMs=90000, intervalMs=1200} = {}){
+    if (!grid) return false;
+    const deadline = Date.now() + timeoutMs;
+    const originalHTML = grid.innerHTML;
+
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(editUrl, { credentials: 'include', cache: 'no-store' });
+        const html = await res.text();
+        const doc  = new DOMParser().parseFromString(html, 'text/html');
+        const newGrid = doc.getElementById('supporting-grid');
+        if (newGrid && newGrid.innerHTML.trim() !== originalHTML.trim()) {
+          grid.innerHTML = newGrid.innerHTML;
+          return true;
+        }
+      } catch (e) {
+        console.warn('grid refresh failed', e);
+      }
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    return false;
+  }
+
+  async function uploadFiles(){
+    if (!form || !input || !(input.files?.length)) return;
+
+    const files = [...input.files];
+    const placeholders = addPlaceholders(files);
+
+    const fd = new FormData();
+    files.forEach(f => fd.append('media_files', f));
+
+    try {
+      const res = await fetch(form.action, {
+        method: 'POST',
+        body: fd,
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(()=> '');
+        throw new Error(msg || `Upload failed (${res.status})`);
+      }
+
+      const updated = await refreshGridUntilChanged();
+      if (!updated) {
+        placeholders.forEach(el => {
+          const badge = el.querySelector('.absolute');
+          if (badge) badge.textContent = 'queued…';
+        });
+      } else {
+        placeholders.forEach(el => el.remove());
+      }
+
+      // clear selection so re-selecting the same files works
+      input.value = '';
+      preview.innerHTML = '';
+
+    } catch (err) {
+      console.error(err);
+      alert('Upload error: ' + (err?.message || err));
+      placeholders.forEach(el => el.remove());
+    }
+  }
+
+  // Delete supporting via delegated click
+  document.getElementById('supporting-grid')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action="delete"][data-media-id]');
+    if (!btn) return;
+    const mediaId = btn.getAttribute('data-media-id');
+    const card = btn.closest('[data-media-card]');
+    if (!confirm('Delete this media?')) return;
+    const resp = await fetch(`{% if is_admin_view %}{{ admin_api_base }}{% else %}/response/{{ response.id }}{% endif %}/media/${mediaId}`, { method: 'DELETE' });
+    if (resp.ok) card?.remove(); else alert('Failed to delete media');
+  });
+})();
+</script>
+<script>
+(function () {
+  // If Tagify isn't globally available, it’s probably included by base.html.
+  // If not, add its CSS/JS in base.html like you did for admin_dashboard.
+
+  const responseId = '{{ response.id }}';
+  const inputEl = document.getElementById('responseTags');
+  if (!inputEl) return;
+
+  // Tagify instance
+  const tagify = new Tagify(inputEl, {
+    maxTags: 25,
+    trim: true,
+    duplicates: false,
+    delimiters: ",",
+    dropdown: { enabled: 0, maxItems: 12, highlightFirst: true },
+    originalInputValueFormat: values => JSON.stringify(values.map(v => v.value)),
+  });
+
+  // 1) Preload existing tags for this response
+  (async function preloadResponseTags() {
+    try {
+      const r = await fetch(`{% if is_admin_view %}{{ admin_api_base }}{% else %}/response/${responseId}{% endif %}/tags`, { credentials: 'include' });
+      if (!r.ok) return;
+      const data = await r.json();
+      const names = (data.tags || []).map(t => t.name);
+      tagify.removeAllTags();
+      if (names.length) tagify.addTags(names);
+    } catch (e) {
+      console.warn('Could not preload response tags', e);
+    }
+  })();
+
+  // 2) Autosuggest (fetch whitelist as user types).
+  // This reuses your admin tag search endpoint used elsewhere.
+  let ctlSuggest;
+  tagify.on('input', async (e) => {
+    const q = (e.detail.value || '').trim();
+    if (!q) return;
+    if (ctlSuggest) ctlSuggest.abort();
+    ctlSuggest = new AbortController();
+    try {
+      const res = await fetch(`/admin/tags?q=${encodeURIComponent(q)}`, { signal: ctlSuggest.signal, credentials: 'include' });
+      if (!res.ok) return;
+      const list = await res.json();
+      tagify.settings.whitelist = list.map(t => ({ value: t.name, slug: t.slug }));
+      tagify.dropdown.show.call(tagify, q);
+    } catch {}
+  });
+
+  // 3) Save whenever tags change (add/remove/edit)
+  async function saveTags() {
+    try {
+      const names = tagify.value.map(t => t.value);
+      const res = await fetch(`{% if is_admin_view %}{{ admin_api_base }}{% else %}/response/${responseId}{% endif %}/tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(names),
+      });
+      // Optional: you can surface errors or show a tiny toast.
+      if (!res.ok) {
+        const msg = await res.text().catch(()=>'');
+        console.warn('Tag save failed', res.status, msg);
+      }
+    } catch (e) {
+      console.warn('Tag save error', e);
+    }
+  }
+
+  tagify.on('add', saveTags);
+  tagify.on('remove', saveTags);
+  tagify.on('edit:updated', saveTags);
+})();
+</script>
+<script id="segments-bundle">
+(function(){
+  // ====== CONFIG / DOM ======
+  const responseId = '{{ response.id }}';
+
+  // Segments panel
+  const listEl  = document.getElementById('segments-list');
+  const emptyEl = document.getElementById('segments-empty');
+  // Merge on save (does not block form submit)
+  const btnSave = document.getElementById('btn-save');
+  const form    = document.getElementById('edit-form');
+
+  // ====== SEGMENTS: fetch/render/poll ======
+  async function fetchSegments(){
+    const r = await fetch(`${window.SEG_API_BASE}`, { credentials:'include', cache:'no-store' });
+    if(!r.ok) return [];
+    return r.json();
+  }
+
+  function snapshotOf(list){
+    // stable snapshot ignoring long text; uses id + order + readiness
+    return JSON.stringify(list.map(s => ({ id:s.id, order:s.order_index, ready: !!(s.transcript && s.transcript.trim()) })));
+  }
+
+  function renderSegments(segs){
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    if (!segs.length) {
+      emptyEl?.classList.remove('hidden');
+      return;
+    }
+    emptyEl?.classList.add('hidden');
+
+    for (let i=0;i<segs.length;i++){
+      const s = segs[i];
+      const li = document.createElement('li');
+      li.className = 'tile-glass p-3 rounded-lg outline outline-1 outline-black draggable';
+      li.draggable = true;
+      li.dataset.id = s.id;
+
+      const isVid = (s.media_mime||'').startsWith('video');
+      li.innerHTML = `
+        <div class="flex items-start gap-2">
+          <div class="mt-0.5 select-none text-xs w-6 text-center font-semibold">${i+1}</div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1 text-xs text-gray-600">
+              <span class="material-icons-outlined text-sm">${isVid?'play_circle':'graphic_eq'}</span>
+              <span>#${s.id}</span>
+              <span class="mx-1">•</span>
+              <span>${(s.transcript && s.transcript.trim())?'Ready':'Processing…'}</span>
+            </div>
+            <div class="mt-1 text-sm whitespace-pre-wrap break-words">${(s.transcript||'').slice(0,600)}</div>
+            <div class="mt-2 flex gap-2">
+              ${s.media_path ? `<button class="icon-btn" data-act="play" title="Play"><span class="material-symbols-outlined">play_arrow</span></button>` : ''}
+              <button class="icon-btn" data-act="insert" title="Insert at cursor"><span class="material-symbols-outlined">input_circle</span></button>
+              <button class="icon-btn" data-act="delete" title="Delete"><span class="material-symbols-outlined">delete</span></button>
+            </div>
+          </div>
+        </div>`;
+      listEl.appendChild(li);
+    }
+  }
+
+  async function refreshIfChanged(){
+    try{
+      const segs = await fetchSegments();
+      const snap = snapshotOf(segs);
+      if (snap !== lastSnapshot){
+        lastSnapshot = snap;
+        renderSegments(segs);
+      }
+    } catch {}
+  }
+
+  function startAutoRefresh(){
+    stopAutoRefresh();
+    refreshIfChanged();
+    pollTimer = setInterval(refreshIfChanged, POLL_MS);
+  }
+  function stopAutoRefresh(){
+    if (pollTimer){ clearInterval(pollTimer); pollTimer=0; }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') stopAutoRefresh();
+    else startAutoRefresh();
+  });
+
+  // ====== MEDIA MODAL (uses global if available) ======
+  function openSegMedia(kind, src, poster=null){
+    if (typeof window.openMedia === 'function'){ window.openMedia(kind, src, poster); return; }
+    const wrap = document.createElement('div');
+    wrap.className = 'fixed inset-0 bg-black/70 z-[250] grid place-items-center';
+    wrap.setAttribute('role','dialog'); wrap.setAttribute('aria-modal','true');
+
+    const frame = document.createElement('div');
+    frame.className = 'relative max-w-[92vw] max-h-[86vh]';
+
+    const close = document.createElement('button');
+    close.className = 'absolute -top-3 -right-3 icon-btn';
+    close.innerHTML = '<span class="material-icons-outlined">close</span>';
+    close.onclick = ()=>wrap.remove();
+
+    frame.appendChild(close);
+
+    if(kind==='video'){
+      const v = document.createElement('video');
+      v.controls = true; v.autoplay = true; v.className='rounded-2xl max-w-[92vw] max-h-[86vh]';
+      if (poster) v.poster = poster;
+      const s = document.createElement('source'); s.src = src; v.appendChild(s);
+      frame.appendChild(v);
+    } else {
+      const a = document.createElement('audio');
+      a.controls = true; a.autoplay = true; a.className='w-[min(640px,92vw)]';
+      a.src = src; frame.appendChild(a);
+    }
+    wrap.appendChild(frame);
+    document.body.appendChild(wrap);
+
+    // close behaviors
+    wrap.addEventListener('click', (e)=>{ if(e.target===wrap) wrap.remove(); });
+    const onKey = (e)=>{ if(e.key==='Escape'){ wrap.remove(); window.removeEventListener('keydown', onKey);} };
+    window.addEventListener('keydown', onKey);
+  }
+
+  // ====== SEGMENT actions: play / insert / delete ======
+  listEl?.addEventListener('click', async (e)=>{
+    const btn = e.target.closest('button[data-act]');
+    if(!btn) return;
+    const li = btn.closest('li'); if(!li) return;
+    const id = Number(li.dataset.id);
+    const act = btn.dataset.act;
+
+    const segs = await fetchSegments();
+    const seg = segs.find(x=>x.id===id);
+    if(!seg) return;
+
+    if (act==='play' && seg.media_path){
+      const rel = seg.media_path.startsWith('uploads/') ? seg.media_path : `uploads/${seg.media_path}`;
+      const base = `{{ url_for('static', path='') }}`;
+      const url = base + rel;
+      const kind = (seg.media_mime||'').startsWith('video') ? 'video' : 'audio';
+      const poster = seg.thumbnail_path ? (base + seg.thumbnail_path) : null;
+      openSegMedia(kind, url, poster);
+    }
+
+    if (act==='insert'){
+      const text = (seg.transcript||'').trim();
+      if (!text || !window.quill) return;
+      const Delta = Quill.import('delta');
+      const sel = quill.getSelection(true);
+      const idx = sel ? sel.index : quill.getLength();
+      quill.updateContents(new Delta().retain(idx).insert(text + '\n', { seg: String(seg.id) }));
+      quill.setSelection(idx + text.length + 1, 0);
+    }
+
+    if (act==='delete'){
+      if(!confirm('Delete this segment?')) return;
+      const r = await fetch(`${window.SEG_API_BASE}/${id}`, { method:'DELETE', credentials:'include' });
+      if (r.ok) refreshIfChanged();
+    }
+  });
+
+  // ====== Drag & drop reorder ======
+  let draggingId = null;
+  listEl?.addEventListener('dragstart', (e)=>{
+    const li = e.target.closest('li.draggable'); if (!li) return;
+    draggingId = Number(li.dataset.id);
+    e.dataTransfer.effectAllowed = 'move';
+    li.classList.add('opacity-60');
+  });
+  listEl?.addEventListener('dragend', (e)=>{
+    const li = e.target.closest('li.draggable'); li?.classList.remove('opacity-60');
+  });
+  listEl?.addEventListener('dragover', (e)=>{
+    e.preventDefault();
+    const over = e.target.closest('li.draggable');
+    const dragging = [...listEl.children].find(x => Number(x.dataset.id)===draggingId);
+    if(!over || !dragging || over===dragging) return;
+    const rect = over.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height/2;
+    listEl.insertBefore(dragging, before ? over : over.nextSibling);
+  });
+  listEl?.addEventListener('drop', async ()=>{
+    const ids = [...listEl.children].map(li => Number(li.dataset.id));
+    await fetch(`${window.SEG_API_BASE}/reorder`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ order: ids })
+    });
+    refreshIfChanged();
+  });
+
+  // ====== Recorder Overlay (segments only) ======
+
+  async function uploadSegment(blob){
+    const ext = 'webm';
+    const mime= (mode==='video') ? 'video/webm' : 'audio/webm';
+    const fd = new FormData();
+    fd.append('file', new File([blob], `segment-${Date.now()}.${ext}`, { type: mime }));
+    const r = await fetch(`${window.SEG_API_BASE}`, { method: 'POST', body: fd, credentials: 'include' });
+    if (!r.ok) {
+      let m=''; try{ m=await r.text(); }catch{}
+      throw new Error(m || `Upload failed (${r.status})`);
+    }
+    return r.json(); // { segment:{id,...} }
+  }
+
+  async function fetchSegmentsOnce(){
+    const r = await fetch(`${window.SEG_API_BASE}`, { credentials:'include', cache:'no-store' });
+    if (!r.ok) return [];
+    return r.json();
+  }
+
+  function insertTranscriptAtCursor(segId, text){
+    if (!window.quill) return;
+    const Delta = Quill.import('delta');
+    const sel = quill.getSelection(true);
+    const idx = sel ? sel.index : quill.getLength();
+    quill.updateContents(new Delta().retain(idx).insert((text||'').trim() + '\n', { seg: String(segId) }));
+    quill.setSelection(idx + (text||'').trim().length + 1, 0);
+  }
+
+  async function pollSegmentReadyAndInsert(segId){
+    for (let i=0;i<45;i++){
+      const list = await fetchSegmentsOnce();
+      const seg = list.find(s => s.id === segId);
+      if (seg && seg.transcript && seg.transcript.trim()){
+        insertTranscriptAtCursor(seg.id, seg.transcript);
+        refreshIfChanged();
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    return false;
+  }
+
+  // ====== MERGE on SAVE (fire-and-forget, then submit form) ======
+  btnSave?.addEventListener('click', async (e)=>{
+    if (_mergeInFlight) return;           // hard debounce
+    _mergeInFlight = true;
+    try {
+      await fetch(`${window.SEG_API_BASE}/merge-audio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ include_primary: true })
+      });
+    } catch (err) {
+      console.warn('merge-audio failed', err);
+    } finally {
+      // make sure the transcription hidden field is up to date, then submit
+      const hidden = document.getElementById('transcription');
+      if (hidden && window.quill) hidden.value = quill.root.innerHTML;
+      form?.requestSubmit();
+      setTimeout(()=>{ _mergeInFlight = false; }, 1500); // allow again after short delay
+    }
+  });
+
+  // ====== GO ======
+  startAutoRefresh();
+})();
+</script>
+<script>
+(() => {
+  const responseId = {{ response.id }};
+  const segBtn = document.getElementById('btn-record-segment');
+
+  // Launch the overlay for a new SEGMENT.
+  // No local audio/video toggle — the overlay has its own pills.
+  segBtn?.addEventListener('click', () => {
+    window.RecordOverlay.start({
+      kind: 'segment',
+      responseId,
+      // Optional: show the current prompt/title inside the overlay header
+      promptText: document.getElementById('display-title')?.innerText || ''
+      // (No 'mode' passed; overlay picks sensible default and lets user switch)
+    });
+  });
+
+  // After upload, poll until transcript arrives and insert at cursor
+  window.onSegmentUploaded = async function (segId) {
+    for (let i = 0; i < 45; i++) {
+      try {
+        const r = await fetch(`${window.SEG_API_BASE}`, {
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        if (r.ok) {
+          const list = await r.json();
+          const seg = list.find(s => s.id === segId);
+          if (seg?.transcript?.trim()) {
+            if (window.quill) {
+              const Delta = Quill.import('delta');
+              const text = seg.transcript.trim() + '\n';
+              const sel = quill.getSelection(true);
+              const idx = sel ? sel.index : quill.getLength();
+              quill.updateContents(new Delta().retain(idx).insert(text, { seg: String(seg.id) }));
+              quill.setSelection(idx + text.length, 0);
+            }
+            // Refresh any segment list UI you might have
+            document.getElementById('segments-refresh')?.click?.();
+            return;
+          }
+        }
+      } catch {}
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  };
+})();
+</script>
+
+
+
+{% endblock %}

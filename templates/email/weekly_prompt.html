@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Weekly Prompt</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f5f7;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; color:#111;">
+    <!-- Wrapper -->
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f4f5f7;">
+      <tr>
+        <td align="center" style="padding:24px 12px;">
+          <!-- Card -->
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:640px;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+            <!-- Header strip -->
+            <tr>
+              <td style="padding:14px 18px;background:#111;color:#fff;font-weight:700;letter-spacing:.3px;">
+                Memories — Weekly Prompt
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 22px 8px 22px;">
+                <p style="margin:0 0 8px 0;">Hi {{ display_name }},</p>
+                <p style="margin:0 0 14px 0;color:#374151;">Your weekly prompt is:</p>
+                <h2 style="margin:0 0 10px 0;font-size:20px;line-height:1.35;">{{ prompt_title }}</h2>
+                {% if prompt_summary %}
+                <p style="margin:0 0 16px 0;color:#4b5563;">{{ prompt_summary }}</p>
+                {% endif %}
+                <!-- CTA -->
+                <p style="margin:18px 0 10px 0;">
+                  <a href="{{ token_link }}" style="display:inline-block;border:1px solid #111;border-radius:9999px;background:#111;color:#ffffff;text-decoration:none;padding:12px 18px;font-weight:700;">
+                    Record Your Story
+                  </a>
+                </p>
+                <!-- Fallback link -->
+                <p style="margin:12px 0 0 0;font-size:13px;color:#6b7280;word-break:break-word;">
+                  Or copy and paste this link:
+                  <br>
+                  <a href="{{ token_link }}" style="color:#0ea5e9;text-decoration:underline;">{{ token_link }}</a>
+                </p>
+                {% if expires_at %}
+                <p style="margin:10px 0 0 0;font-size:12px;color:#6b7280;">This link expires on {{ expires_at }}.</p>
+                {% endif %}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 22px 22px 22px;">
+                <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0 14px 0;">
+                <p style="margin:0;font-size:12px;color:#9ca3af;">
+                  If you didn’t expect this email, you can safely ignore it.
+                </p>
+              </td>
+            </tr>
+          </table>
+          <!-- /Card -->
+        </td>
+      </tr>
+    </table>
+    <!-- tracking pixel -->
+    <img src="{{ pixel_url }}" width="1" height="1" style="display:block;border:0;outline:none;" alt="" />
+  </body>
+</html>

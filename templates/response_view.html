@@ -1,0 +1,856 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section id="response-stream" class="mx-auto pb-[35vh] max-w-[1100px]">
+    <a href="/user_dashboard"
+   class="pill select-none inline-flex items-center cursor-pointer"
+   role="button">
+  Back to Memories
+</a>
+  <!-- Header -->
+  <header class="mb-6 text-center">
+    <h1 class="font-baskerville leading-tight text-[clamp(1.9rem,5.5vw,3.2rem)]">
+      {{ response.title or (response.prompt.text if response.prompt else 'Your Story') }}
+    </h1>
+    <div class="mt-2 text-sm opacity-70 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+      {% if response.prompt and response.prompt.chapter %}
+        <span>Chapter: <span class="font-semibold">{{ response.prompt.chapter }}</span></span>
+      {% endif %}
+      {% if response.created_at %}
+        <span>Created: <span class="font-semibold">{{ response.created_at.strftime('%b %d, %Y') }}</span></span>
+      {% endif %}
+      {% if response.tags %}
+        <span class="flex flex-wrap gap-1">
+          {% for t in response.tags %}
+            <span class="text-xs outline outline-1 outline-black rounded px-2 py-0.5">{{ t.name }}</span>
+          {% endfor %}
+        </span>
+      {% endif %}
+    </div>
+  </header>
+
+{# ---------- PROMPT MEDIA (prefer transcoded playback + poster) ---------- #}
+{% if prompt_media and prompt_media|length %}
+  <div class="mt-6 mb-4 flex justify-center">
+    <div class="flex flex-wrap justify-center gap-4 mx-auto max-w-[1000px]">
+      {% for media in prompt_media %}
+        {# kind #}
+        {% set kind = (media.media_type or '')|lower %}
+
+        {# normalize base path under static/uploads #}
+        {% set raw = (media.file_path or '') %}
+        {% set rel = raw.lstrip('/') %}
+        {% if rel.startswith('uploads/') %}
+          {% set base_rel = rel %}
+        {% else %}
+          {% set base_rel = rel and ('uploads/' ~ rel) or '' %}
+        {% endif %}
+        {% set dir_rel = base_rel.rsplit('/', 1)[0] if '/' in base_rel else '' %}
+
+        {# --- PLAY URL (prefer transcoded) --- #}
+        {% if media.playback_path %}
+          {% set pr = media.playback_path.lstrip('/') %}
+          {% set play_url = pr.startswith('http') and pr or url_for('static', path=pr) %}
+        {% elif media.playback_url %}
+          {% set play_url = media.playback_url %}
+        {% elif 'video' in kind %}
+          {% if base_rel.endswith('playback.mp4') %}
+            {% set play_rel = base_rel %}
+          {% elif dir_rel %}
+            {% set play_rel = dir_rel ~ '/playback.mp4' %}
+          {% else %}
+            {% set play_rel = base_rel %}
+          {% endif %}
+          {% set play_url = play_rel.startswith('http') and play_rel or url_for('static', path=play_rel) %}
+        {% else %}
+          {% set play_url = base_rel and url_for('static', path=base_rel) or '' %}
+        {% endif %}
+
+        {# --- THUMB URL (prefer explicit, else sibling) --- #}
+        {% if media.thumbnail_url %}
+          {% set t = media.thumbnail_url %}
+          {% set thumb_url = t.startswith('http') and t or url_for('static', path=t.lstrip('/')) %}
+        {% elif 'video' in kind and dir_rel %}
+          {% set thumb_url = url_for('static', path=dir_rel ~ '/thumb.jpg') %}
+        {% elif 'image' in kind %}
+          {% set thumb_url = play_url %}
+        {% else %}
+          {% set thumb_url = '' %}
+        {% endif %}
+
+        {# --- Render by kind --- #}
+        {% if 'image' in kind %}
+          <button type="button" class="thumb thumb-lg" data-kind="image" data-src="{{ play_url }}" aria-label="Open image">
+            <span class="thumb-bg" style="background-image:url('{{ thumb_url or play_url }}')"></span>
+          </button>
+
+        {% elif 'video' in kind %}
+          {# boomerang? check the resolved play_url (preferred), else base_rel #}
+          {% set play_s = (play_url|string) if play_url is not none else '' %}
+          {% set base_s = (base_rel|string) if base_rel is not none else '' %}
+          {% set is_boom = ('playback_boomerang.mp4' in play_s) or ('playback_boomerang.mp4' in base_s) %}
+
+          <button type="button"
+                  class="thumb thumb-lg"
+                  data-kind="video"
+                  data-src="{{ play_url }}"
+                  {% if is_boom %}data-br="1"{% endif %}
+                  {% if thumb_url %}data-poster="{{ thumb_url }}"{% endif %}
+                  aria-label="Play video">
+            <span class="thumb-bg" style="background-image:url('{{ thumb_url or play_url }}')"></span>
+            <span class="thumb-icon material-symbols-outlined">play_circle</span>
+          </button>
+
+        {% elif 'audio' in kind %}
+          <button type="button" class="thumb thumb-lg" data-kind="audio" data-src="{{ play_url }}" aria-label="Play audio">
+            <span class="thumb-icon material-symbols-outlined">graphic_eq</span>
+          </button>
+
+        {% else %}
+          <a class="thumb thumb-lg inline-flex items-center gap-2 px-3 py-2 border border-black rounded"
+             href="{{ play_url }}" target="_blank" rel="noopener">
+            <span class="material-symbols-outlined text-sm">attach_file</span>
+            <span class="truncate max-w-[32ch]">{{ media.file_path }}</span>
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
+  {# ---------- SUPPORTING MEDIA (same resolution rules) ---------- #}
+{% if supporting_media and supporting_media|length %}
+  <div class="mt-3 mb-8">
+    <div class="flex flex-wrap justify-center gap-3 mx-auto max-w-[1000px]">
+      {% for sm in supporting_media %}
+        {% set kind = (sm.media_type or '')|lower %}
+
+        {# normalize base path under static/uploads #}
+        {% set raw = (sm.file_path or '') %}
+        {% set rel = raw.lstrip('/') %}
+        {% if rel.startswith('uploads/') %}
+          {% set base_rel = rel %}
+        {% else %}
+          {% set base_rel = rel and ('uploads/' ~ rel) or '' %}
+        {% endif %}
+        {% set dir_rel = base_rel.rsplit('/', 1)[0] if '/' in base_rel else '' %}
+
+        {# --- PLAY URL (prefer transcoded) --- #}
+        {% if sm.playback_path %}
+          {% set pr = sm.playback_path.lstrip('/') %}
+          {% set play_url = pr.startswith('http') and pr or url_for('static', path=pr) %}
+        {% elif sm.playback_url %}
+          {% set play_url = sm.playback_url %}
+        {% elif 'video' in kind %}
+          {% if base_rel.endswith('playback.mp4') %}
+            {% set play_rel = base_rel %}
+          {% elif dir_rel %}
+            {% set play_rel = dir_rel ~ '/playback.mp4' %}
+          {% else %}
+            {% set play_rel = base_rel %}
+          {% endif %}
+          {% set play_url = play_rel.startswith('http') and play_rel or url_for('static', path=play_rel) %}
+        {% else %}
+          {% set play_url = base_rel and url_for('static', path=base_rel) or '' %}
+        {% endif %}
+
+        {# --- THUMB URL (prefer explicit, else sibling) --- #}
+        {% if sm.thumbnail_url %}
+          {% set t = sm.thumbnail_url %}
+          {% set thumb_url = t.startswith('http') and t or url_for('static', path=t.lstrip('/')) %}
+        {% elif 'video' in kind and dir_rel %}
+          {% set thumb_url = url_for('static', path=dir_rel ~ '/thumb.jpg') %}
+        {% elif 'image' in kind %}
+          {% set thumb_url = play_url %}
+        {% else %}
+          {% set thumb_url = '' %}
+        {% endif %}
+
+        {# --- Render by kind --- #}
+        {% if 'image' in kind %}
+          <button type="button" class="thumb" data-kind="image" data-src="{{ play_url }}" aria-label="Open image">
+            <span class="thumb-bg" style="background-image:url('{{ thumb_url or play_url }}')"></span>
+          </button>
+
+        {% elif 'video' in kind %}
+          {% set play_s = (play_url|string) if play_url is not none else '' %}
+          {% set base_s = (base_rel|string) if base_rel is not none else '' %}
+          {% set is_boom = ('playback_boomerang.mp4' in play_s) or ('playback_boomerang.mp4' in base_s) %}
+
+          <button type="button"
+                  class="thumb"
+                  data-kind="video"
+                  data-src="{{ play_url }}"
+                  {% if is_boom %}data-br="1"{% endif %}
+                  {% if thumb_url %}data-poster="{{ thumb_url }}"{% endif %}
+                  aria-label="Play video">
+            <span class="thumb-bg" style="background-image:url('{{ thumb_url or play_url }}')"></span>
+            <span class="thumb-icon material-symbols-outlined">play_circle</span>
+          </button>
+
+        {% elif 'audio' in kind %}
+          <button type="button" class="thumb" data-kind="audio" data-src="{{ play_url }}" aria-label="Play audio">
+            <span class="thumb-icon material-symbols-outlined">graphic_eq</span>
+          </button>
+
+        {% else %}
+          <a class="thumb inline-flex items-center gap-2 px-3 py-2 border border-black rounded"
+             href="{{ play_url }}" target="_blank" rel="noopener">
+            <span class="material-symbols-outlined text-sm">attach_file</span>
+            <span class="truncate max-w-[32ch]">{{ sm.file_path }}</span>
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
+
+  {# ---------------- Main paper card w/ player in top padding ---------------- #}
+  {% set main_raw = (response.response_text or response.transcription or '') %}
+  {% set main_plain = (
+    main_raw
+    | replace('</p>', '\n\n')
+    | replace('<br>', '\n')
+    | replace('<br/>', '\n')
+    | replace('<br />', '\n')
+    | replace('</div>', '\n\n')
+    | replace('&nbsp;', ' ')
+    | striptags
+    | trim
+  ) %}
+<div class="stream-item" data-response-id="{{ response.id }}">
+  <article class="paper-card stream-item mx-auto py-12 group"
+           data-response-id="{{ response.id }}">
+
+    {# Toolbar (hidden by default; omitted for token links) #}
+    {% if not is_token_link %}
+<div class="article-toolbar" onclick="event.stopPropagation()">
+  <a href="{{ url_for('edit_response_page', response_id=response.id) }}"
+     class="material-symbols-outlined btn-icon"
+     aria-label="Edit"
+     onclick="event.stopPropagation()">edit</a>
+
+  <!-- NOTE: path-only action + data-nonav to avoid card click nav -->
+  <form action="{{ url_for('delete_response', response_id=response.id).path }}"
+        method="post"
+        data-nonav
+        onsubmit="event.stopPropagation(); return confirm('Delete this story? This cannot be undone.');">
+    <button type="submit"
+            class="material-symbols-outlined btn-icon"
+            aria-label="Delete"
+            onclick="event.stopPropagation()">delete</button>
+  </form>
+
+  <button class="material-symbols-outlined btn-icon"
+          aria-label="Print"
+          onclick="event.stopPropagation(); window.print()">print</button>
+</div>
+    {% endif %}
+
+    <div class="book-body">
+
+{# Primary player IN the top padding band, centered, text-width #}
+{% set primary = (response.primary_media_url or '')|trim %}
+
+{% if primary %}
+  {# Build a safe URL only when we actually have a path #}
+  {% if primary.startswith('http') %}
+    {% set primary_url = primary %}
+  {% else %}
+    {% set rel = primary.lstrip('/') %}
+    {% if rel.startswith('uploads/') %}
+      {% set base_rel = rel %}
+    {% else %}
+      {% set base_rel = 'uploads/' ~ rel %}
+    {% endif %}
+    {% if is_token_link and share_token %}
+      {% set primary_url = '/media/share/' ~ share_token ~ '/' ~ base_rel %}
+    {% else %}
+      {% set primary_url = '/media/auth/' ~ base_rel %}
+    {% endif %}
+  {% endif %}
+  {% if response.primary_thumbnail_path %}
+    {% set poster_rel = response.primary_thumbnail_path.lstrip('/') %}
+    {% if is_token_link and share_token %}
+      {% set poster_url = '/media/share/' ~ share_token ~ '/' ~ poster_rel %}
+    {% else %}
+      {% set poster_url = '/media/auth/' ~ poster_rel %}
+    {% endif %}
+  {% else %}
+    {% set poster_url = None %}
+  {% endif %}
+  {% set _lower = primary|lower %}
+  {% set is_vid = _lower.endswith('.mp4') or _lower.endswith('.webm') or _lower.endswith('.mov') %}
+
+  <figure class="article-player" aria-label="Primary media">
+    {% if is_vid %}
+      <video controls data-plyr {% if poster_url %}poster="{{ poster_url }}"{% endif %}>
+        <source src="{{ primary_url }}">
+      </video>
+    {% else %}
+      <audio controls data-plyr>
+        <source src="{{ primary_url }}">
+      </audio>
+    {% endif %}
+  </figure>
+{% endif %}
+
+      <div class="page-column">
+        {% if main_plain %}
+          <div class="prose-text">{{ main_plain }}</div>
+        {% else %}
+          <div class="italic opacity-70">No text yet.</div>
+        {% endif %}
+
+        {# ----- Transcript + Segments INSIDE the paper card ----- #}
+        {% if (response.transcription and response.transcription.strip()) or (segments is defined and segments|length) %}
+          <div class="mt-8 pt-5 border-t border-black/10">
+            <details class="group details-anim">
+              <summary class="cursor-pointer select-none text-xs tracking-wide uppercase text-gray-500 hover:text-gray-700">
+                Transcript & segments
+              </summary>
+              <div class="details-body">
+                {% if response.transcription and response.transcription.strip() %}
+                  <div class="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700">
+                    {{ response.transcription }}
+                  </div>
+                {% endif %}
+
+                {% if segments is defined and segments|length %}
+                  <div class="mt-5">
+                    <div class="text-xs uppercase tracking-wide text-gray-500 mb-2">Recorded segments</div>
+                    <ol class="grid sm:grid-cols-2 gap-3">
+                      {% for seg in segments %}
+                        <li class="tile-glass p-3 rounded-lg border border-black/10">
+                          <div class="text-xs text-gray-500 mb-1">#{{ seg.order_index or loop.index }}</div>
+                          {% if seg.transcript %}
+                            <div class="text-sm text-gray-800 whitespace-pre-wrap mb-2">{{ seg.transcript }}</div>
+                          {% endif %}
+                          {% if seg.media_path %}
+                            {% if seg.media_path.startswith('http') %}
+                              {% set seg_url = seg.media_path %}
+                            {% else %}
+                              {% set seg_rel = 'uploads/' ~ seg.media_path %}
+                              {% if is_token_link and share_token %}
+                                {% set seg_url = '/media/share/' ~ share_token ~ '/' ~ seg_rel %}
+                              {% else %}
+                                {% set seg_url = '/media/auth/' ~ seg_rel %}
+                              {% endif %}
+                            {% endif %}
+                            {% set is_seg_video = (seg.media_path|lower).endswith('.mp4') or (seg.media_path|lower).endswith('.webm') or (seg.media_path|lower).endswith('.mov') %}
+                            {% if is_seg_video %}
+                              <button type="button" class="thumb-sm" data-kind="video" data-src="{{ seg_url }}"
+                                      {% if seg.thumbnail_path %}data-poster="{{ (is_token_link and share_token) and ('/media/share/' ~ share_token ~ '/' ~ seg.thumbnail_path) or ('/media/auth/' ~ seg.thumbnail_path) }}"{% endif %}
+                                      aria-label="Play segment">
+                                <span class="thumb-icon material-symbols-outlined">play_circle</span>
+                              </button>
+                            {% else %}
+                              <button type="button" class="thumb-sm" data-kind="audio" data-src="{{ seg_url }}" aria-label="Play audio segment">
+                                <span class="thumb-icon material-symbols-outlined">graphic_eq</span>
+                              </button>
+                            {% endif %}
+                          {% endif %}
+                        </li>
+                      {% endfor %}
+                    </ol>
+                  </div>
+                {% endif %}
+              </div>
+            </details>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </article>
+    <div class="stream-sentinel h-12"></div>
+  </div>
+</section>
+
+<script>
+  // Smooth details animation
+  (function(){
+    function setup(d){
+      const body = d.querySelector('.details-body');
+      if(!body) return;
+      body.style.maxHeight = '0px';
+      body.style.opacity = '0';
+      if(d.open){ body.style.maxHeight = body.scrollHeight + 'px'; body.style.opacity = '1'; }
+      d.addEventListener('toggle', ()=>{
+        if(d.open){
+          body.style.maxHeight = body.scrollHeight + 'px';
+          body.style.opacity = '1';
+        } else {
+          body.style.maxHeight = body.scrollHeight + 'px';
+          body.offsetHeight;
+          body.style.maxHeight = '0px';
+          body.style.opacity = '0';
+        }
+      });
+      window.addEventListener('resize', ()=>{ if(d.open){ body.style.maxHeight = body.scrollHeight + 'px'; } });
+    }
+    document.querySelectorAll('details.details-anim').forEach(setup);
+  })();
+
+  // Print button (only present when not token link)
+  document.getElementById('printBtn')?.addEventListener('click', ()=>window.print());
+</script>
+<script>
+(() => {
+  const stream = document.getElementById('response-stream');
+  if (!stream) return;
+
+  let loading = false;
+  let endReached = false;
+
+  // Helper: get last stream item
+  const lastItem = () => stream.querySelector('.stream-item:last-of-type');
+
+  // Fetch + append next response when needed
+  async function fetchNextIfNeeded() {
+    if (loading || endReached) return;
+    const last = lastItem();
+    if (!last) return;
+
+    const currentId = last.getAttribute('data-response-id');
+    loading = true;
+    try {
+      const res = await fetch(`/response/${currentId}/next`, { credentials: 'include' });
+      if (res.status === 204) {
+        endReached = true;
+        return;
+      }
+      if (!res.ok) throw new Error('Failed to load next response');
+
+      const html = await res.text();
+      if (!html.trim()) {
+        endReached = true;
+        return;
+      }
+
+      // Append the partial
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = html;
+      // Expect the partial to produce a .stream-item root
+      const item = wrapper.querySelector('.stream-item') || wrapper.firstElementChild;
+      if (item) {
+        stream.appendChild(item);
+        observeItem(item);  // begin observing the new item
+      }
+    } catch (e) {
+      // optional: toast/snackbar
+      console.warn(e);
+    } finally {
+      loading = false;
+    }
+  }
+
+  // Intersection observer: when the last item’s sentinel fully enters the viewport,
+  // it means the user scrolled through the whole response.
+  const sentinelObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const parent = entry.target.closest('.stream-item');
+      // Only load when the sentinel belongs to the last item
+      if (parent && parent === lastItem()) {
+        fetchNextIfNeeded();
+      }
+    }
+  }, {
+    root: null,
+    rootMargin: '0px',
+    threshold: 1.0, // sentinel fully visible
+  });
+
+  // Observe visibility to update URL when an item becomes the "main" one in view
+  const focusObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.intersectionRatio >= 0.6) {
+        const id = entry.target.getAttribute('data-response-id');
+        if (id) {
+          const newUrl = `/response/${id}`;
+          if (location.pathname !== newUrl) {
+            history.replaceState(null, '', newUrl);
+          }
+        }
+      }
+    });
+  }, { threshold: 0.6 });
+
+  function observeItem(item) {
+    const sentinel = item.querySelector('.stream-sentinel');
+    if (sentinel) sentinelObserver.observe(sentinel);
+    focusObserver.observe(item);
+  }
+
+  // Start with the first (already on the page)
+  observeItem(lastItem());
+
+  // Optional: handle back/forward buttons by walking to that card if it exists
+  window.addEventListener('popstate', () => {
+    const id = (location.pathname.split('/').pop() || '').replace(/\D+/g, '');
+    if (!id) return;
+    const target = stream.querySelector(`.stream-item[data-response-id="${id}"]`);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+})();
+</script>
+<script>
+  // Smooth details animation
+  (function(){
+    function setup(d){
+      const body = d.querySelector('.details-body');
+      if(!body) return;
+      body.style.maxHeight = '0px';
+      body.style.opacity = '0';
+      if(d.open){ body.style.maxHeight = body.scrollHeight + 'px'; body.style.opacity = '1'; }
+      d.addEventListener('toggle', ()=>{
+        if(d.open){
+          body.style.maxHeight = body.scrollHeight + 'px';
+          body.style.opacity = '1';
+        } else {
+          body.style.maxHeight = body.scrollHeight + 'px';
+          body.offsetHeight;
+          body.style.maxHeight = '0px';
+          body.style.opacity = '0';
+        }
+      });
+      window.addEventListener('resize', ()=>{ if(d.open){ body.style.maxHeight = body.scrollHeight + 'px'; } });
+    }
+    document.querySelectorAll('details.details-anim').forEach(setup);
+  })();
+
+  // Print button (only present when not token link)
+  document.getElementById('printBtn')?.addEventListener('click', ()=>window.print());
+</script>
+<script>
+(() => {
+  const stream = document.getElementById('response-stream');
+  if (!stream) return;
+
+  // Sentinel at the very end
+  const sentinel = document.createElement('div');
+  sentinel.id = 'endless-sentinel';
+  sentinel.style.height = '1px';
+  sentinel.style.marginTop = '4rem';
+  stream.appendChild(sentinel);
+
+  let loading = false;
+  let done = false;
+
+  const lastItem = () => {
+    const items = stream.querySelectorAll('.stream-item');
+    return items[items.length - 1] || null;
+  };
+
+  async function loadNext() {
+    if (loading || done) return;
+    const last = lastItem();
+    if (!last) return;
+
+    const fromId = last.dataset.responseId;
+    if (!fromId) return;
+
+    loading = true;
+    try {
+      const res = await fetch(`/response/${fromId}/next`, { credentials: 'include' });
+      if (res.status === 204) {
+        done = true;
+        io.disconnect?.();
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const html = await res.text();
+      if (!html.trim()) return;
+
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+
+      const item = tmp.querySelector('.stream-item');
+      if (!item) return;
+
+      const nextId = item.dataset.responseId;
+      // Hard duplicate guard
+      if (stream.querySelector(`.stream-item[data-response-id="${nextId}"]`)) return;
+
+      // Insert before sentinel
+      stream.insertBefore(item, sentinel);
+    } catch (err) {
+      console.warn('endless scroll error:', err);
+    } finally {
+      loading = false;
+    }
+  }
+
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) loadNext(); });
+  }, { root: null, threshold: 0.9 });
+
+  io.observe(sentinel);
+
+  // Update URL as a card becomes the main focus
+  const focusObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.intersectionRatio >= 0.6) {
+        const id = entry.target.dataset.responseId;
+        if (id && location.pathname !== `/response/${id}`) {
+          history.replaceState(null, '', `/response/${id}`);
+        }
+      }
+    });
+  }, { threshold: 0.6 });
+
+  // Observe existing + future items for focus updates
+  stream.querySelectorAll('.stream-item').forEach(el => focusObserver.observe(el));
+  new MutationObserver((muts) => {
+    muts.forEach(m => {
+      m.addedNodes.forEach(n => {
+        if (n.nodeType === 1 && n.classList?.contains('stream-item')) {
+          focusObserver.observe(n);
+        }
+      });
+    });
+  }).observe(stream, { childList: true });
+})();
+</script>
+<script>
+(() => {
+  const stream = document.getElementById('response-stream') || document.querySelector('section.mx-auto');
+  if (!stream) return;
+
+  // Make appended cards show a pointer cursor
+  const observer = new MutationObserver(() => {
+    stream.querySelectorAll('article.paper-card[data-clickable="1"]').forEach(el => {
+      el.style.cursor = 'pointer';
+      el.setAttribute('role', 'link');
+      el.setAttribute('tabindex', '0'); // keyboard focusable
+      el.setAttribute('aria-label', 'Open full story');
+    });
+  });
+  observer.observe(stream, { childList: true, subtree: true });
+  // also initialize existing
+  stream.querySelectorAll('article.paper-card[data-clickable="1"]').forEach(el => {
+    el.style.cursor = 'pointer';
+    el.setAttribute('role', 'link');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', 'Open full story');
+  });
+
+  // Don’t navigate when clicking interactive elements inside the card
+  const interactiveSelector = [
+    '[data-nonav]',   // ← add this
+    'a','button','summary','details','video','audio',
+    'input','textarea','select','label','.btn-icon','.thumb'
+  ].join(',');
+
+  function shouldIgnoreClick(ev) {
+    if (ev.defaultPrevented) return true;
+    if (ev.target.closest(interactiveSelector)) return true;
+    // if user is selecting text, don’t hijack
+    const sel = window.getSelection && window.getSelection().toString();
+    if (sel && sel.length) return true;
+    // only left click without modifier keys
+    if (ev.type === 'click' && ev.button !== 0) return true;
+    if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return true;
+    return false;
+  }
+
+  function gotoCard(card) {
+    const id = card?.getAttribute('data-response-id');
+    if (id) window.location.assign(`/response/${id}`);
+  }
+
+  // Click to navigate
+  stream.addEventListener('click', (ev) => {
+    const card = ev.target.closest('article.paper-card[data-clickable="1"]');
+    if (!card) return;
+    if (shouldIgnoreClick(ev)) return;
+    gotoCard(card);
+  });
+
+  // Keyboard accessibility (Enter/Space)
+  stream.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const card = ev.target.closest('article.paper-card[data-clickable="1"]');
+    if (!card) return;
+    if (shouldIgnoreClick(ev)) return;
+    ev.preventDefault();
+    gotoCard(card);
+  });
+})();
+</script>
+
+<style>
+  /* ---------- Prompt/supporting thumbnails ---------- */
+  .thumb, .thumb-sm, .thumb-lg{
+    position:relative; display:inline-grid; place-items:center;
+    border-radius:1rem; overflow:hidden; background:transparent;
+    box-shadow:0 10px 26px rgba(0,0,0,.10);
+  }
+  .thumb{ width:104px; height:104px; }
+  .thumb-sm{ width:56px; height:56px; }
+  .thumb-lg{ width:256px; height:256px; }
+  /* Make sure lg beats .thumb size if both classes present */
+  .thumb.thumb-lg{ width:256px; height:256px; }
+  @media (min-width:1024px){
+    .thumb-lg{ width:288px; height:288px; }
+    .thumb.thumb-lg{ width:288px; height:288px; }
+  }
+  .thumb .thumb-bg, .thumb-sm .thumb-bg, .thumb-lg .thumb-bg{
+    position:absolute; inset:0; background-size:cover; background-position:center;
+    filter:saturate(.98) contrast(1.02);
+  }
+  .thumb[data-kind="video"], .thumb[data-kind="audio"],
+  .thumb-sm[data-kind="video"], .thumb-sm[data-kind="audio"],
+  .thumb-lg[data-kind="video"], .thumb-lg[data-kind="audio"]{
+    background: rgba(255,255,255,.28);
+    border: 1px solid rgba(255,255,255,.45);
+    backdrop-filter: blur(10px) saturate(1.12);
+    -webkit-backdrop-filter: blur(10px) saturate(1.12);
+    box-shadow: 0 12px 32px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.30);
+  }
+  .thumb::after, .thumb-sm::after, .thumb-lg::after{
+    content:""; position:absolute; inset:0; pointer-events:none;
+    background: linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0) 60%);
+  }
+  .thumb-icon{ position:relative; z-index:1; font-size:48px; color:#6b7280; }
+  .thumb-sm .thumb-icon{ font-size:32px; }
+
+  /* ---------- Paper card (book look) ---------- */
+  .paper-card{
+    position:relative; border-radius:1rem;
+    background: linear-gradient(180deg,#FCFAF3 0%, #F7F2E7 100%);
+    box-shadow: 0 18px 50px rgba(0,0,0,.10);
+    max-width: 1000px;
+    margin-bottom: 32rem;
+
+  }
+  .paper-card::before{
+    content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.04), inset 0 0 60px rgba(0,0,0,.08);
+  }
+  .paper-card::after{
+    content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none; mix-blend-mode:multiply; opacity:.32;
+    background-image:
+      radial-gradient(rgba(0,0,0,.06) .6px, rgba(0,0,0,0) .6px),
+      radial-gradient(rgba(0,0,0,.04) .8px, rgba(0,0,0,0) .8px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='0 0.05 0.1 0.15 0.2 0.25'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 2px 2px, 4px 4px, 160px 160px;
+    background-position: 0 0, 1px 1px, 0 0;
+  }
+  .book-body{ position:relative; z-index:1; padding: 26px 20px; }
+  @media (min-width: 680px){
+    .book-body{ padding: 34px 54px; }
+  }
+
+  /* Narrower reading column for book-like gutters */
+  .page-column{
+    max-width: 64ch;
+    margin: 0 auto;
+    padding: 0 1rem;  /* breathing room on small screens */
+  }
+  @media (min-width: 720px){
+    .page-column{ padding: 0; }
+  }
+
+  /* Text */
+  .prose-text{
+    font-family: var(--font-baskerville, ui-serif, Georgia, Cambria, "Times New Roman", Times, serif);
+    font-size: clamp(1.05rem, 1.2vw, 1.22rem);
+    line-height: 1.85;
+    letter-spacing: .002em;
+    color: #111827;
+    white-space: pre-wrap;
+    text-indent: 1.25em;
+  }
+
+  
+  /* Centered, text-width player wrapper inside the paper card */
+  .paper-card .article-player{
+    --column-max: 64ch;              /* keep in sync with .page-column */
+    max-width: var(--column-max);
+    margin: 0 auto 1.25rem;
+    padding: 0;                      /* no inner padding */
+    background: transparent;         /* wrapper is transparent */
+    border: 0;
+    box-shadow: none;
+  }
+
+  /* Plyr theme variables: put them on the wrapper so they cascade into .plyr */
+  .paper-card .article-player{
+    --plyr-color-main: #000;                   /* icon/active color (tweak to taste) */
+    --plyr-video-background: transparent;
+    --plyr-video-controls-background: transparent;
+    --plyr-audio-controls-background: transparent;
+    --plyr-audio-control-color: #000;
+    --plyr-audio-control-color-hover: #333;
+    --plyr-menu-background: rgba(255,255,255,0.85); /* tooltips/menus can stay subtle */
+    --plyr-tooltip-background: rgba(0,0,0,0.6);
+    --plyr-tooltip-color: #fff;
+  }
+
+  /* Nuke any visible chrome Plyr adds */
+  .paper-card .article-player .plyr,
+  .paper-card .article-player .plyr__video-wrapper{
+    background: transparent !important;
+    box-shadow: none !important;
+    border: 0 !important;
+  }
+
+  /* Audio control bar: transparent strip */
+  .paper-card .article-player .plyr--audio .plyr__controls{
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* Video control gradient bar: fully transparent */
+  .paper-card .article-player .plyr--video .plyr__controls{
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* Make sure the media element itself doesn’t reintroduce borders */
+  .paper-card .article-player video,
+  .paper-card .article-player audio{
+    display: block;
+    width: 100%;
+    background: transparent !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+
+
+  /* ---------- Toolbar (hidden by default, shows on hover) ---------- */
+  .article-toolbar{
+    position: absolute;
+    top: 17px; right: 17px;
+    display: flex; gap: 8px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s ease;
+  }
+  .paper-card:hover .article-toolbar,
+  .paper-card:focus-within .article-toolbar{
+    opacity: 1; pointer-events: auto;
+  }
+  .btn-icon{
+    height:36px; width:36px; display:grid; place-items:center;
+    color:#6b7280; border-radius:.5rem;
+    border:1px solid rgba(0,0,0,.15);
+    background:#fff7; backdrop-filter:blur(6px);
+    transition: background .15s, color .15s;
+  }
+  .btn-icon:hover{ color:#374151; background:#fff; }
+
+  @media print{
+    body { background:#fff !important; }
+    #media-modal, .material-symbols-outlined, button, form { display:none !important; }
+    .paper-card{ box-shadow:none !important; }
+  }
+
+</style>
+{% endblock %}

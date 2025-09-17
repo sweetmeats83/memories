@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% set title = "People Graph" %}
+{% block content %}
+
+<section class="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen">
+  <style>
+    /* Full-viewport graph canvas behind content */
+    #graph { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 10; display: block; pointer-events: auto;}
+    /* Light tooltip to match site */
+    .graph-tip { position: fixed; pointer-events: none; background: #fff; color: #000; padding: 6px 8px; border-radius: 10px; font-size: 12px; transform: translate(-50%, -140%); white-space: nowrap; border: 1px solid #000; box-shadow: 0 10px 20px rgba(0,0,0,.12); }
+    /* Shared card/button/input styles that mirror site look */
+    #empty { pointer-events: none; }
+        /* keep tooltip visible but non-interactive */
+    .graph-tip { pointer-events: none; z-index: 60; }
+
+/* any full-bleed decor that might overlap should not block the canvas */
+.bg-overlay, .particles, [data-layer="decor"] { pointer-events: none !important; }
+/* —— Cards —— */
+.graph-card {
+  border: 1px solid rgba(255, 156, 234, 0.4);
+  border-radius: 16px;
+  background: rgba(200, 119, 207, 0.15);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+
+  /* floating shadows */
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.25),
+    0 2px 8px rgba(255, 255, 255, 0.15) inset;
+
+  overflow: hidden;
+}
+
+/* subtle edge sheen */
+.graph-card::before {
+  content: "";
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.35) 0%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
+
+/* —— Inputs —— */
+.graph-input {
+  width: 100%;
+  border: 1px solid rgba(255, 156, 234, 0.4);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.6);
+  color: #111;
+
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.6),
+              inset 0 -1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* —— Buttons —— */
+.graph-btn {
+  border: 1px solid rgba(255, 156, 234, 0.4);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+  padding: 10px 18px;
+  font-weight: 600;
+  color: #111;
+  cursor: pointer;
+  backdrop-filter: blur(8px) saturate(1.1);
+  -webkit-backdrop-filter: blur(8px) saturate(1.1);
+
+  transition: all 0.25s ease;
+  box-shadow:
+    0 6px 16px rgba(200, 119, 207, 0.25),
+    inset 0 1px 2px rgba(255, 255, 255, 0.5);
+}
+
+/* Hover/active glow */
+.graph-btn:hover {
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow:
+    0 8px 24px rgba(200, 119, 207, 0.35),
+    0 0 8px rgba(255, 156, 234, 0.6),
+    inset 0 1px 2px rgba(255, 255, 255, 0.5);
+}
+
+    .graph-btn:active {
+      transform: scale(0.97);
+      box-shadow:
+        0 4px 12px rgba(200, 119, 207, 0.25),
+        inset 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+    /* Edit button reveal on hover for the display panel */
+    #panel_view .edit-btn { opacity: 0; transition: opacity .2s ease; }
+    #panel_view:hover .edit-btn { opacity: 1; }
+
+    /* Resize handles for edit panel */
+    #panel .resize-handle { position: absolute; z-index: 2; }
+    #panel .rh-e  { top: 0; right: -4px; width: 8px; height: 100%; cursor: ew-resize; }
+    #panel .rh-s  { left: 0; bottom: -4px; width: 100%; height: 8px; cursor: ns-resize; }
+    #panel .rh-se { right: -6px; bottom: -6px; width: 14px; height: 14px; cursor: nwse-resize; }
+  </style>
+
+  <!-- Top toolbar (beneath site navbar) -->
+  <div class="fixed top-20 left-3 right-3 z-30 flex items-center gap-2">
+    <a href="/user_dashboard"
+   class="pill select-none inline-flex items-center cursor-pointer"
+   role="button">
+  Back to Memories
+</a>
+    <div class="ml-2 text-sm opacity-80">Hover a dot to focus • Drag to reposition</div>
+    <button id="inf_dock" class="pill" style="display:none" title="Unconfirmed mentions"></button>
+    <!-- Quick add person -->
+    <div class="flex items-center gap-2 ml-2">
+      <input id="np_name" placeholder="Add person..." class="graph-input w-40" />
+      <input id="np_role" list="np_roles_list" placeholder="Role (optional) e.g., you, mother, friend" class="graph-input w-56" />
+      <datalist id="np_roles_list"></datalist>
+      <button id="np_add" class="graph-btn">Add</button>
+    </div>
+    <!-- People search (right-aligned) -->
+    <div class="relative ml-auto">
+      <input id="pg_search" type="search" placeholder="Search people..." class="graph-input w-64" autocomplete="off" />
+      <div id="pgSearchDD" class="absolute z-40 right-0 mt-1 w-72 max-h-64 overflow-auto bg-white/90 border border-black rounded-lg shadow hidden"></div>
+    </div>
+  </div>
+
+  <!-- Graph canvas -->
+  <canvas id="graph" aria-label="People relationship graph" data-me-id="{{ me_person_id if me_person_id is defined and me_person_id is not none else '' }}"></canvas>
+
+  <!-- Empty-state helper -->
+  <div id="empty" class="fixed left-0 right-0 top-1/2 -translate-y-1/2 text-center text-stone-600 text-sm z-20" style="display:none">
+    No people yet — record a memory mentioning a name or create one via API to see dots here.
+  </div>
+
+  <!-- Hover tooltip -->
+  <div id="tip" class="graph-tip" style="display:none"></div>
+
+
+  <!-- Inferred names panel -->
+  <div id="inferred" class="graph-card fixed top-28 left-3 max-w-[380px] p-3 z-30" style="display:none">
+    <div class="flex items-center gap-2 mb-2">
+      <div class="font-semibold text-[13px]">Unconfirmed mentions</div>
+      <button id="inf_close" class="graph-btn ml-auto text-sm">Hide</button>
+    </div>
+    <div id="inf_list" class="max-h-40 overflow-auto"></div>
+  </div>
+
+  <!-- Profile DISPLAY Panel -->
+  <div id="panel_view" class="graph-card fixed right-2 top-24 z-40 w-[320px] max-w-[90vw] sm:w-[340px] p-3 text-[13px]" style="display:none; max-height: calc(100vh - 7rem); overflow: auto;">
+    <div id="pv_header" class="flex items-center gap-2 mb-2 cursor-move">
+      <div id="pv_name" class="font-semibold flex-1">Person</div>
+      <button id="pv_edit" class="graph-btn text-sm edit-btn" title="Edit">Edit</button>
+      <button id="pv_close" class="graph-btn text-sm">Close</button>
+    </div>
+    <div class="flex items-center gap-2 mb-2">
+      <img id="pv_photo" alt="Person photo" class="rounded-lg border border-black max-h-24" style="display:none" />
+    </div>
+    <div class="grid grid-cols-2 gap-2 mb-2">
+      <div>
+        <div class="text-xs text-stone-600">Role</div>
+        <div id="pv_role" class="font-medium">—</div>
+      </div>
+      <div>
+        <div class="text-xs text-stone-600">Years</div>
+        <div id="pv_years" class="font-medium">—</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 mb-2">
+      <div id="pv_connect" class="text-xs px-2 py-0.5 rounded-full border" style="display:none">Connected to you</div>
+      <div id="pv_deceased" class="text-xs px-2 py-0.5 rounded-full border" style="display:none">Deceased</div>
+    </div>
+    <div class="mb-2">
+      <div class="text-xs text-stone-600">Bio</div>
+      <div id="pv_bio" class="text-[13px] whitespace-pre-line">—</div>
+    </div>
+    <div class="mb-1 text-xs text-stone-600">Connections</div>
+    <div id="pv_edges" class="max-h-32 overflow-auto border border-black rounded-lg p-2"></div>
+  </div>
+
+  <!-- Profile/Editor Panel -->
+  <div id="panel" class="graph-card fixed right-2 top-24 z-40 w-[320px] max-w-[90vw] sm:w-[320px] p-3 text-[13px]" style="display:none; max-height: calc(100vh - 7rem); overflow: auto;">
+    <div id="p_header" class="flex items-center gap-2 mb-2 cursor-move">
+      <div id="p_name" class="font-semibold">Person</div>
+    </div>
+    <div class="text-xs text-stone-600 mb-1">Display name</div>
+    <div class="flex items-center gap-2 mb-2">
+      <input id="p_display_name" placeholder="Display name" class="graph-input w-full" />
+    </div>
+    <div class="text-xs text-stone-600 mb-1">Who is this person to you?</div>
+    <div class="flex items-center gap-2 mb-2">
+      <select id="p_role" class="graph-input flex-1" title="Select a role"></select>
+    </div>
+    <div class="text-xs text-stone-600">Photo</div>
+    <div class="relative flex items-center gap-2 my-2 flex-wrap">
+      <div class="relative">
+        <img id="p_photo_img" alt="Person photo" class="rounded-lg border border-black max-h-24" style="display:none" />
+        <button id="p_photo_remove" class="absolute top-1 right-1 text-sm rounded-full px-2 py-0.5" title="Remove photo" style="display:none; background: rgba(255,255,255,0.9); border: 1px solid #000;">×</button>
+      </div>
+      <input id="p_photo_file" type="file" accept="image/*" class="graph-input" />
+    </div>
+    <div class="flex items-center gap-2 mb-2 flex-wrap">
+      <label class="flex items-center gap-1 text-sm"><input type="checkbox" id="p_deceased" /> Deceased</label>
+      <input id="p_birth" type="number" inputmode="numeric" placeholder="Birth year" class="graph-input w-full" />
+      <input id="p_birth_full" type="date" placeholder="Full birth date (optional)" class="graph-input w-full" />
+      <input id="p_death" type="number" inputmode="numeric" placeholder="Death year (if deceased)" class="graph-input w-full hidden" />
+    </div>
+    <div class="flex items-center gap-2 my-1">
+      <span class="text-xs text-stone-600">Short bio</span>
+    </div>
+    <textarea id="p_bio" rows="2" placeholder="Write a short bio..." class="graph-input w-full" style="min-height: 48px; resize: none;"></textarea>
+    <div class="text-xs text-stone-600 mt-1">Connections</div>
+    <div id="p_edges" class="max-h-32 overflow-auto border border-black rounded-lg p-2"></div>
+    <div class="flex items-center gap-2 mt-2">
+      <button id="p_infer" class="graph-btn" title="Infer implied connections">Infer</button>
+    </div>
+    <div class="text-xs text-stone-600 mt-2">Add connection</div>
+    <div class="flex items-center gap-2 flex-wrap mt-1">
+      <div id="add_sentence" class="flex items-center gap-2 text-[13px]">
+        <span id="p_subject_label" class="font-semibold">This person</span>
+        <span>is</span>
+        <select id="p_rel" class="graph-input"></select>
+        <span>of</span>
+        <select id="p_target" class="graph-input"></select>
+      </div>
+      <button id="p_add" class="graph-btn">Add</button>
+    </div>
+    <div class="flex items-center gap-2 mt-3">
+      <button id="p_delete_person" class="graph-btn" style="border-color:#ef4444;background:rgba(239,68,68,0.2); color:#7f1d1d;">Delete Person</button>
+    </div>
+
+    <!-- Resize handles (east, south, south-east corner) -->
+    <div class="resize-handle rh-e" title="Resize"></div>
+    <div class="resize-handle rh-s" title="Resize"></div>
+    <div class="resize-handle rh-se" title="Resize"></div>
+  </div>
+
+
+<script type="module" src="{{ url_for('static', path='js/people_graph.js') }}?v=20250919"></script>
+
+</section>
+
+{% endblock %}

@@ -1,0 +1,763 @@
+{% extends "base.html" %}
+{% block title %}Onboarding{% endblock %}
+
+{% block content %}
+<style>
+  /* minimal glassmorphic card look (works with Tailwind) */
+  .glass {
+    background: rgba(255, 255, 255, 0.521);
+    border: 1px solid rgba(255,255,255,0.18);
+    box-shadow: 0 8px 32px 0 rgba(31,38,135,0.20);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 16px;
+  }
+  .input {
+    background: rgba(255, 255, 255, 0.795);
+    border: 1px solid rgba(68, 66, 66, 0.25);
+  }
+</style>
+
+<div class="container mx-auto max-w-3xl py-10">
+  <div class="glass p-8">
+    <div class="mb-6">
+      <h1 class="text-3xl font-semibold tracking-tight">Welcome to Memories</h1>
+      <p class="text-sm text-gray-600 mt-2">A gentle place to gather the threads of a life — the voices, the recipes, the road trips, the quiet victories — and weave them into something your family can hold.</p>
+    </div>
+
+    {% if step == "you" %}
+    <h2 class="text-xl mb-4">First things first — who are you?</h2>
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm mb-1">Display name</label>
+        <input id="youName" class="w-full input rounded px-3 py-2" placeholder="e.g., Jane Doe" value="{{ profile.display_name or '' }}">
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm mb-1">Gender (optional)</label>
+          <input id="youGender" class="w-full input rounded px-3 py-2" placeholder="female, male, nonbinary, etc.">
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Birthdate (optional)</label>
+          <input id="youBirthdate" type="date" class="w-full input rounded px-3 py-2">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">Where are you based? (optional)</label>
+        <input id="youLocation" class="w-full input rounded px-3 py-2" placeholder="City, State or City, Country" value="{{ profile.location or '' }}">
+      </div>
+      <div class="mt-6">
+        <button id="youNext" class="pill">Next: Roles</button>
+      </div>
+    </div>
+    {% endif %}
+<script>
+  // Server-side seed if available (preferred)
+  window.genderHint = {{ (profile.gender or '') | tojson }};
+</script>
+    {% if step == "roles" %}
+    <h2 class="text-xl mb-2">Which roles apply to you in your family?</h2>
+    <p class="mb-4 text-gray-600">Choose all that fit. You can change these later.</p>
+
+    <div class="mb-2">
+      <input id="rolesInput" class="w-full input rounded px-3 py-2"
+            placeholder="Start typing (e.g., mother)… then press Enter" autocomplete="on">
+      <div id="roleGhost" class="mt-2 flex flex-wrap gap-2 text-sm"></div>
+    </div>
+
+    <button id="rolesNext" class="pill">Next: Family</button>
+    {% endif %}
+
+    {% if step == "family" %}
+    <h2 class="text-xl mb-2">Add a few people in your circle</h2>
+    <p class="mb-4 text-grey-600">Enter a name and pick their relationship to you. Add a few — you can always add more later.</p>
+
+    <div id="familyRows" class="space-y-2 mb-4"></div>
+    <button id="addRow" class="pill">+ Add person</button>
+
+    <div class="mt-6">
+      <button id="familyNext" class="pill">Next: Places</button>
+    </div>
+    {% endif %}
+
+    {% if step == "places" %}
+      <h2 class="text-xl mb-2">Where have you lived or spent time?</h2>
+      <p class="mb-4 text-gray-600">Type a city and a state/region, then press Enter. We’ll make a chip for you.</p>
+
+      <!-- Country quick picks -->
+      <div id="countryQuick" class="flex flex-wrap gap-2 mb-3 text-sm">
+        <button type="button" class="pill px-2 py-1 border rounded data-[active=true]:bg-black/10" data-cty="US" data-active="true">US</button>
+        <button type="button" class="pill px-2 py-1 border rounded" data-cty="CA">CA</button>
+        <button type="button" class="pill px-2 py-1 border rounded" data-cty="UK">UK</button>
+        <button type="button" class="pill px-2 py-1 border rounded" data-cty="AU">AU</button>
+        <button type="button" class="pill px-2 py-1 border rounded" data-cty="MX">MX</button>
+        <button type="button" class="pill px-2 py-1 border rounded" data-cty="OTHER">Other…</button>
+      </div>
+
+      <!-- Country dropdown (hidden until Other is selected) -->
+      <div id="countryPickerWrap" class="mb-3 hidden">
+        <label class="block text-xs mb-1 opacity-70">Country</label>
+        <select id="countryPicker" class="input rounded px-3 py-2 w-full max-w-sm">
+          <!-- common first -->
+          <option value="US">United States</option>
+          <option value="CA">Canada</option>
+          <option value="UK">United Kingdom</option>
+          <option value="AU">Australia</option>
+          <option value="MX">Mexico</option>
+          <option disabled>──────────</option>
+          <!-- add more or render full ISO list from backend if you want -->
+          <option value="DE">Germany</option>
+          <option value="FR">France</option>
+          <option value="IE">Ireland</option>
+          <option value="IT">Italy</option>
+          <option value="ES">Spain</option>
+          <option value="SE">Sweden</option>
+          <option value="NO">Norway</option>
+          <option value="BR">Brazil</option>
+          <option value="IN">India</option>
+          <option value="JP">Japan</option>
+        </select>
+      </div>
+
+      <!-- Two-field entry row -->
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <div>
+          <label class="block text-xs mb-1 opacity-70">City</label>
+          <input id="cityInput" class="w-full input rounded px-3 py-2" placeholder="e.g., Springfield">
+        </div>
+        <div>
+          <label class="block text-xs mb-1 opacity-70">State / Region / Province</label>
+          <input id="stateInput" class="w-full input rounded px-3 py-2" placeholder="e.g., IL or Ontario">
+        </div>
+      </div>
+
+      <!-- Chips container (Tagify host) -->
+      <input id="placesChips" class="w-full" placeholder="(chips will appear here)" />
+
+      <div class="mt-6">
+        <button id="placesNext" class="pill">Next: Interests</button>
+      </div>
+    {% endif %}
+
+
+    {% if step == "interests" %}
+      <h2 class="text-xl mb-2">What are you into?</h2>
+      <p class="mb-4 text-gray-600">Tap to select a few. Add anything custom below.</p>
+
+      <input id="interestsSearch" class="w-full input rounded px-3 py-2 mb-3"
+            placeholder="Filter topics (optional)">
+
+      <div id="interestGrid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 mb-2"></div>
+
+      <div class="mb-4">
+        <button id="toggleMoreInterests" class="pill" type="button">Show more</button>
+      </div>
+
+      <div class="mb-2">
+        <label class="block text-xs mb-1 opacity-70">Add your own</label>
+        <input id="interestsCustom" class="w-full input rounded px-3 py-2"
+              placeholder="Type something you enjoy… then press Enter">
+      </div>
+
+      <div class="mt-6">
+        <button id="interestsNext" class="pill">Preview</button>
+      </div>
+    {% endif %}
+
+    {% if step == "preview" %}
+    <h2 class="text-xl mb-2">Ready to go?</h2>
+    <p class="mb-4 text-grey-600">We’ll assign prompts based on your roles, people, places, and interests — with extra sparkle where you mentioned specific people.</p>
+    <form method="post" action="/onboarding/commit">
+      <button class="pill">Finish</button>
+    </form>
+    {% endif %}
+<script>localStorage.removeItem("youGenderHint");</script>
+    {% if step == "done" %}
+    <h2 class="text-xl mb-2">All set!</h2>
+    <p class="mb-4 text-grey-600">Your first prompts are ready.</p>
+    <a href="/" class="btn">Go to Home</a>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+(function () {
+  // role options from server whitelist ("relationship:*" -> label only)
+  window.roleOptions = {{ role_options | tojson | safe }};
+
+  async function postJSON(url, body) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body || {})
+      });
+      if (res.redirected) {
+        window.location = res.url;
+        return null;
+      }
+      let data = null;
+      const text = await res.text();
+      if (text && text.trim().length) {
+        try { data = JSON.parse(text); } catch (_) {}
+      }
+      return data;
+    } catch (err) {
+      console.error("postJSON error", err);
+      alert("Something went wrong. Please try again.");
+      return null;
+    }
+  }
+
+  // --- step 0: you ---
+  const youNext = document.getElementById("youNext");
+  if (youNext) {
+    youNext.addEventListener("click", async () => {
+      const display_name = (document.getElementById("youName").value || "").trim();
+      const gender = (document.getElementById("youGender").value || "").trim();
+      const birthdate = (document.getElementById("youBirthdate").value || "").trim();
+      const location = (document.getElementById("youLocation").value || "").trim();
+      // cache the gender hint for the Roles step
+      localStorage.setItem("youGenderHint", gender || "");
+      const out = await postJSON("/onboarding/you", { display_name, gender, birthdate, location });
+      if (out && out.next) window.location.href = "/onboarding";
+    });
+  }
+
+  // --- roles step ---
+  (function(){
+    const rolesInput = document.getElementById("rolesInput");
+    const rolesNext  = document.getElementById("rolesNext");
+    const ghostRow   = document.getElementById("roleGhost");
+    if (!rolesInput) return;
+
+    // Guard: if Tagify missing, don’t crash
+    if (typeof Tagify === "undefined") {
+      console.error("Tagify not found on page. Ensure the CDN script is loaded in base.html or here.");
+      return;
+    }
+
+    // Whitelist from server
+    const RAW_OPTIONS = (window.roleOptions || []);
+    // --- gender pre-seed sources ---
+    const SERVER_GENDER = (window.genderHint || "").toString().trim().toLowerCase();
+    const STORED_GENDER = (localStorage.getItem("youGenderHint") || "").toString().trim().toLowerCase();
+    const GENDER_WORDS = new Map(Object.entries({
+      m:'m', male:'m', man:'m', boy:'m', dude:'m', father:'m', dad:'m', husband:'m',
+      f:'f', female:'f', woman:'f', girl:'f', mom:'f', mother:'f', wife:'f',
+      nb:'n', 'nonbinary':'n', 'non-binary':'n', enby:'n', other:'n',
+      prefer_not_to_say:'n', '':'n'
+    }));
+    function normalizeGenderWord(s){
+      const k = (s||'').toLowerCase().trim();
+      if (GENDER_WORDS.has(k)) return GENDER_WORDS.get(k);
+      if (/^m/.test(k)) return 'm';
+      if (/^f/.test(k)) return 'f';
+      return 'n';
+    }
+    const PRESEED_GENDER = normalizeGenderWord(SERVER_GENDER || STORED_GENDER);
+
+    // Canonicalize
+    const SYN = new Map(Object.entries({
+      "mom":"mother","mum":"mother","mama":"mother","mother":"mother",
+      "dad":"father","daddy":"father","father":"father",
+      "grandma":"grandmother","granny":"grandmother","nana":"grandmother","grandmother":"grandmother",
+      "grandpa":"grandfather","papa":"grandfather","grandfather":"grandfather",
+      "sis":"sister","sister":"sister",
+      "bro":"brother","brother":"brother",
+      "son":"son","daughter":"daughter",
+      "wife":"wife","husband":"husband","partner":"partner","spouse":"partner",
+      "aunt":"aunt","uncle":"uncle",
+      "niece":"niece","nephew":"nephew",
+      "cousin":"cousin",
+      "parent":"parent",
+      "grandparent":"grandparent",
+      "stepfather":"stepfather","stepdad":"stepfather",
+      "stepmother":"stepmother","stepmom":"stepmother",
+      "stepchild":"stepchild",
+      "son-in-law":"son-in-law","daughter-in-law":"daughter-in-law",
+      "mother-in-law":"mother-in-law","father-in-law":"father-in-law",
+      "caregiver":"caregiver","friend":"friend","sibling":"sibling"
+    }));
+    const canon = s => SYN.get((s||"").toLowerCase().trim()) || (s||"").toLowerCase().trim();
+
+    // Gender hints for roles: m / f / n
+    const GENDER = {
+      father:'m', husband:'m', son:'m', brother:'m', grandfather:'m', uncle:'m',
+      "father-in-law":'m', "son-in-law":'m', nephew:'m', stepfather:'m',
+      mother:'f', wife:'f', daughter:'f', sister:'f', grandmother:'f', aunt:'f',
+      "mother-in-law":'f', "daughter-in-law":'f', niece:'f', stepmother:'f',
+      partner:'n', spouse:'n', parent:'n', grandparent:'n', caregiver:'n',
+      cousin:'n', stepchild:'n', sibling:'n', friend:'n'
+    };
+
+    // Co-occurrence
+    const CO = {
+      father: { parent:3, grandfather:2, brother:2, uncle:2 },
+      mother: { parent:3, grandmother:2, sister:2, aunt:2 },
+      son: { brother:2, nephew:1, cousin:1, sibling:1 },
+      daughter: { sister:2, niece:1, cousin:1, sibling:1 },
+      husband: { partner:3, "father-in-law":2, "son-in-law":1 },
+      wife:    { partner:3, "mother-in-law":2, "daughter-in-law":1 },
+      aunt: { uncle:2, niece:1, nephew:1 },
+      uncle:{ aunt:2,  niece:1, nephew:1 },
+      brother:{ sibling:2, cousin:1 },
+      sister: { sibling:2, cousin:1 },
+      grandparent:{ caregiver:1 }
+    };
+
+    const OPTIONS = Array.from(new Set(RAW_OPTIONS));
+    const BASE_POS = new Map(OPTIONS.map((v, i) => [canon(v), i]));
+
+    let dropdownOpen = false;
+    const tagify = new Tagify(rolesInput, {
+      whitelist: OPTIONS.map(v => ({ value: v })), // will be replaced dynamically
+      enforceWhitelist: false,
+      duplicates: false,
+      delimiters: ",",
+      dropdown: {
+        enabled: 1,
+        maxItems: 20,
+        closeOnSelect: false,
+        highlightFirst: true,
+        fuzzySearch: false,       // we do our own filtering
+        sortby: null,             // DO NOT sort alphabetically
+        searchKeys: ['value']     // (explicit)
+      },
+      autoComplete: { enabled: true, rightKey: true },
+      editTags: false
+    });
+    tagify.on("dropdown:show", ()=> dropdownOpen = true);
+    tagify.on("dropdown:hide", ()=> dropdownOpen = false);
+
+    function inferGender(selectedCanonSet){
+      if (!selectedCanonSet || selectedCanonSet.size === 0) return PRESEED_GENDER;
+      let hasM = false, hasF = false;
+      for (const r of selectedCanonSet){
+        const g = GENDER[r] || 'n';
+        if (g === 'm') hasM = true;
+        else if (g === 'f') hasF = true;
+      }
+      if (hasM && !hasF) return 'm';
+      if (hasF && !hasM) return 'f';
+      return 'n';
+    }
+    const getTagifyInputValue = () => (tagify?.DOM?.input?.value ?? "");
+    function filterByGender(list, g){
+      if (g === 'n') return list.slice();
+      return list.filter(v => (GENDER[canon(v)] || 'n') !== (g === 'm' ? 'f' : 'm'));
+    }
+    function currentSelectedSet(){
+      return new Set((tagify.value || []).map(t => canon(t.value)));
+    }
+    function orderByScore(list){
+      const selected = currentSelectedSet();
+      const q = (tagify.DOM.input.value || "").trim().toLowerCase();
+      function textScore(v){
+        if (!q) return 0;
+        const val = v.toLowerCase();
+        if (val === q)         return 120;
+        if (val.startsWith(q)) return 80;
+        if (val.includes(q))   return 35;
+        return 0;
+      }
+      function coScore(v){
+        const cv = canon(v); let s = 0;
+        for (const sel of selected){
+          const rel = CO[sel]; if (rel && rel[cv]) s += rel[cv] * 15;
+        }
+        return s;
+      }
+      function baseScore(v){
+        const pos = BASE_POS.get(canon(v));
+        return pos == null ? 0 : (OPTIONS.length - pos) * 1;
+      }
+      const scored = list.map(v => ({ v, score: baseScore(v) + coScore(v) + textScore(v) + 0.01 }));
+      scored.sort((a,b)=> b.score - a.score || a.v.localeCompare(b.v));
+      return scored.map(x => x.v);
+    }
+    function updateWhitelist(){
+      const selected = currentSelectedSet();
+      const g = inferGender(selected);
+      let cands = OPTIONS.filter(v => !selected.has(canon(v)));
+      cands = filterByGender(cands, g);
+      const ordered = orderByScore(cands);
+      const selectedArr = Array.from(selected);
+      const finalList = [...selectedArr, ...ordered];
+      tagify.settings.whitelist = finalList.map(v => ({ value: v }));
+      const q = getTagifyInputValue().trim();
+      if (dropdownOpen || q) tagify.dropdown.show(q);
+      else tagify.dropdown.hide();
+    }
+
+    // Ghost suggestions
+    function rankSuggestions(){
+      const selected = currentSelectedSet();
+      const g = inferGender(selected);
+      let cands = OPTIONS.filter(v => !selected.has(canon(v)));
+      cands = filterByGender(cands, g);
+      const q = (tagify.DOM.input.value || "").trim().toLowerCase();
+      function textScore(v){
+        if (!q) return 0;
+        const val = v.toLowerCase();
+        if (val.startsWith(q)) return 80;
+        if (val.includes(q))  return 35;
+        return 0;
+      }
+      function coScore(v){
+        const cv = canon(v); let s = 0;
+        for (const sel of selected){
+          const rel = CO[sel]; if (rel && rel[cv]) s += rel[cv] * 15;
+        }
+        return s;
+      }
+      const scored = cands.map(v => ({ v, score: textScore(v) + coScore(v) + 0.01 }));
+      scored.sort((a,b)=> b.score - a.score || a.v.localeCompare(b.v));
+      return scored.map(x => x.v).slice(0, 8);
+    }
+    function updateGhost(){
+      const picks = rankSuggestions();
+      if (!ghostRow) return;
+      ghostRow.innerHTML = picks.map(v =>
+        `<button type="button" class="pill opacity-80 hover:opacity-100 js-ghost" data-value="${v}">${v}</button>`
+      ).join("");
+    }
+
+    // Enter to accept first ghost when input empty
+    tagify.DOM.input.addEventListener("keydown", (e)=>{
+      if (e.key === "Enter" && !(getTagifyInputValue().trim()) && !dropdownOpen){
+        const firstGhost = ghostRow?.querySelector(".js-ghost");
+        if (firstGhost){
+          e.preventDefault();
+          tagify.addTags([firstGhost.dataset.value]);
+          updateWhitelist();
+          updateGhost();
+        }
+      }
+    });
+
+    ghostRow?.addEventListener("click", (e)=>{
+      const b = e.target.closest(".js-ghost"); if (!b) return;
+      tagify.addTags([b.dataset.value]);
+      updateWhitelist();
+      updateGhost();
+      tagify.DOM.input.focus();
+    });
+
+    // Wire events
+    tagify.on("add",   ()=>{ updateWhitelist(); updateGhost(); });
+    tagify.on("remove",()=>{ updateWhitelist(); updateGhost(); });
+    tagify.on("input", ()=>{ updateWhitelist(); updateGhost(); });
+    tagify.on("dropdown:select", ()=>{ updateWhitelist(); updateGhost(); });
+
+    // Initial paint
+    updateWhitelist();
+    updateGhost();
+
+    // Submit
+    rolesNext?.addEventListener("click", async ()=>{
+      const roles = (tagify.value || []).map(t => (t.value || "").trim().toLowerCase()).filter(Boolean);
+      const out = await postJSON("/onboarding/roles", { roles });
+      if (out && out.next) window.location.href = "/onboarding";
+    });
+  })();
+
+  // --- family step ---
+  (function () {
+    const familyRows = document.getElementById("familyRows");
+    const addRowBtn  = document.getElementById("addRow");
+    if (!familyRows || !addRowBtn) return;
+
+    // Guard
+    if (typeof Tagify === "undefined") {
+      console.error("Tagify not found on page. Family Tagify skipped.");
+      return;
+    }
+
+    function buildRoleTagifyInput(){
+      const wrap = document.createElement("div");
+      wrap.className = "relative";
+      const input = document.createElement("input");
+      input.placeholder = "Relationship… (e.g. grandmother)";
+      input.className = "w-full input rounded px-3 py-2";
+      wrap.appendChild(input);
+
+      const WL = Array.from(new Set([...(window.roleOptions || []), "friend"]));
+
+      const tagify = new Tagify(input, {
+        whitelist: WL.map(v => ({ value: v })),
+        maxTags: 1,
+        enforceWhitelist: false,
+        duplicates: false,
+        delimiters: ", ",
+        dropdown: { enabled: 1, maxItems: 12, closeOnSelect: true, highlightFirst: true, fuzzySearch: false },
+        autoComplete: { enabled: true, rightKey: true },
+        editTags: false
+      });
+
+      wrap._tagify = tagify;
+      input.addEventListener("blur", () => {
+        if (tagify.DOM.input.value.trim()) {
+          tagify.addTags([tagify.DOM.input.value.trim()]);
+        }
+      });
+
+      return wrap;
+    }
+
+    function newRow(){
+      const row = document.createElement("div");
+      row.className = "grid grid-cols-2 gap-2";
+      const name = document.createElement("input");
+      name.placeholder = "Name (e.g. Becky)";
+      name.className = "w-full input rounded px-3 py-2";
+      const rel = buildRoleTagifyInput();
+      row.appendChild(name);
+      row.appendChild(rel);
+      row._relTagify = rel._tagify;
+      familyRows.appendChild(row);
+    }
+
+    addRowBtn.addEventListener("click", newRow);
+    newRow();
+
+    const familyNext = document.getElementById("familyNext");
+    familyNext?.addEventListener("click", async () => {
+      const rows = [];
+      familyRows.querySelectorAll(".grid").forEach(div => {
+        const nameInput = div.querySelector("input");
+        const t = div._relTagify || div.querySelector(".tagify")?._tagify;
+        const role = (t && t.value && t.value[0] && t.value[0].value) ? String(t.value[0].value).trim() : "";
+        const name = (nameInput?.value || "").trim();
+        if (name) rows.push({ name, role });
+      });
+      const out = await postJSON("/onboarding/family", rows);
+      if (out && out.next) window.location.href = "/onboarding";
+    });
+  })();
+
+  // --- places step ---
+  (function(){
+    const city   = document.getElementById("cityInput");
+    const state  = document.getElementById("stateInput");
+    const chips  = document.getElementById("placesChips");
+    const nextBtn= document.getElementById("placesNext");
+    if (!city || !state || !chips) return;
+
+    if (typeof Tagify === "undefined") {
+      console.error("Tagify not found on page. Places chips skipped.");
+      return;
+    }
+
+    let country = "US";
+    const countryQuick = document.getElementById("countryQuick");
+    const pickerWrap   = document.getElementById("countryPickerWrap");
+    const countryPicker= document.getElementById("countryPicker");
+
+    const tagify = new Tagify(chips, {
+      enforceWhitelist: false,
+      duplicates: false,
+      dropdown: { enabled: 0 },
+      editTags: false
+    });
+
+    countryQuick.addEventListener("click", (e)=>{
+      const btn = e.target.closest("button[data-cty]"); if (!btn) return;
+      const code = btn.dataset.cty;
+      countryQuick.querySelectorAll("button[data-cty]").forEach(b => b.dataset.active = "false");
+      btn.dataset.active = "true";
+      if (code === "OTHER") {
+        pickerWrap.classList.remove("hidden");
+        country = countryPicker.value || "US";
+      } else {
+        pickerWrap.classList.add("hidden");
+        country = code;
+      }
+    });
+    countryPicker?.addEventListener("change", ()=>{ country = countryPicker.value || "US"; });
+
+    function commitPlace(){
+      const cityVal = (city.value || "").trim();
+      const stateVal = (state.value || "").trim();
+      if (!cityVal || !stateVal) return;
+
+      const label = country === "US"
+        ? `${capitalize(cityVal)}, ${stateVal.toUpperCase()}`
+        : `${capitalize(cityVal)}, ${stateVal} — ${country}`;
+
+      const exists = (tagify.value || []).some(t => (t.value || "") === label);
+      if (!exists){
+        tagify.addTags([{ value: label, city: capitalize(cityVal), region: stateVal, country }]);
+      }
+      city.value = "";
+      state.value = "";
+      city.focus();
+    }
+
+    function capitalize(s){ return s.split(" ").map(w => w ? w[0].toUpperCase()+w.slice(1) : w).join(" "); }
+
+    function keyHandler(e){
+      if (e.key === "Enter"){
+        e.preventDefault();
+        commitPlace();
+      }
+    }
+    city.addEventListener("keydown", keyHandler);
+    state.addEventListener("keydown", keyHandler);
+    state.addEventListener("blur", ()=> { if (city.value.trim() && state.value.trim()) commitPlace(); });
+
+    city.addEventListener("paste", (e)=>{
+      const txt = (e.clipboardData || window.clipboardData).getData("text");
+      if (!txt || !txt.includes("\n")) return;
+      setTimeout(()=>{
+        txt.split(/\n+/).map(s=>s.trim()).filter(Boolean).forEach(line=>{
+          const m = line.match(/^(.+?)[,\s]+([A-Za-z.\- ]{2,})$/);
+          if (m){ city.value = m[1]; state.value = m[2]; commitPlace(); }
+        });
+      },0);
+    });
+
+    nextBtn?.addEventListener("click", async ()=>{
+      const payload = (tagify.value || []).map(t => ({
+        city:   t.city   || (t.value||"").split(",")[0].trim(),
+        region: t.region || (t.value||"").split(",")[1]?.split("—")[0].trim(),
+        country: t.country || ((t.value||"").includes("—") ? (t.value||"").split("—").pop().trim() : "US")
+      }));
+      const out = await postJSON("/onboarding/places", payload);
+      if (out && out.next) window.location.href = "/onboarding";
+    });
+  })();
+
+  // --- interests step ---
+  (function(){
+    const CATALOG = [
+      {slug:"music",label:"Music",icon:"music_note"},
+      {slug:"movies",label:"Movies",icon:"movie"},
+      {slug:"tv",label:"TV Shows",icon:"live_tv"},
+      {slug:"books",label:"Books",icon:"menu_book"},
+      {slug:"travel",label:"Travel",icon:"flight"},
+      {slug:"cooking",label:"Cooking",icon:"restaurant"},
+      {slug:"baking",label:"Baking",icon:"cake"},
+      {slug:"gardening",label:"Gardening",icon:"yard"},
+      {slug:"sports",label:"Sports",icon:"sports_soccer"},
+      {slug:"fitness",label:"Fitness",icon:"fitness_center"},
+      {slug:"walking",label:"Walking",icon:"directions_walk"},
+      {slug:"yoga",label:"Yoga",icon:"self_improvement"},
+      {slug:"hiking",label:"Hiking",icon:"hiking"},
+      {slug:"fishing",label:"Fishing",icon:"kayaking"},
+      {slug:"crafts",label:"Crafts",icon:"handyman"},
+      {slug:"painting",label:"Painting",icon:"palette"},
+      {slug:"photography",label:"Photography",icon:"photo_camera"},
+      {slug:"volunteering",label:"Volunteering",icon:"diversity_3"},
+      {slug:"board-games",label:"Board Games",icon:"sports_esports"},
+      {slug:"cards",label:"Cards",icon:"casino"},
+      {slug:"puzzles",label:"Puzzles",icon:"extension"},
+      {slug:"pets",label:"Pets",icon:"pets"},
+      {slug:"tech",label:"Tech",icon:"devices"},
+      {slug:"cars",label:"Cars",icon:"directions_car"},
+      {slug:"collecting",label:"Collecting",icon:"inventory_2"},
+      {slug:"history",label:"History",icon:"history_edu"},
+      {slug:"genealogy",label:"Genealogy",icon:"family_history"},
+      {slug:"church",label:"Church",icon:"church"},
+      {slug:"outdoors",label:"Outdoors",icon:"park"},
+      {slug:"bingo",label:"Bingo",icon:"confirmation_number"}
+    ];
+
+    const grid     = document.getElementById("interestGrid");
+    const search   = document.getElementById("interestsSearch");
+    const btnMore  = document.getElementById("toggleMoreInterests");
+    const nextBtn  = document.getElementById("interestsNext");
+    const customEl = document.getElementById("interestsCustom");
+    if (!grid) return;
+
+    const PRESELECT = (window.existingInterests || []).map(s => String(s).toLowerCase());
+    const selected = new Set(PRESELECT);
+    let showingAll = false;
+
+    function buttonHtml(item) {
+      const isOn = selected.has(item.slug);
+      return `
+        <button type="button"
+                class="interestBtn border rounded-lg px-2 py-3 flex flex-col items-center justify-center text-center
+                       hover:bg-stone-50 transition select-none
+                       ${isOn ? 'bg-black text-white border-black' : 'bg-white border-stone-200'}"
+                data-slug="${item.slug}"
+                role="checkbox" aria-checked="${isOn ? 'true':'false'}"
+                title="${item.label}">
+          <span class="material-symbols-outlined text-[22px] mb-1">${item.icon}</span>
+          <span class="text-xs leading-tight">${item.label}</span>
+        </button>
+      `;
+    }
+    function renderGrid() {
+      const term = (search?.value || "").trim().toLowerCase();
+      const pool = CATALOG.filter(it => !term || it.label.toLowerCase().includes(term) || it.slug.includes(term));
+      const primary = pool.slice(0, 12);
+      const rest    = pool.slice(12);
+      grid.innerHTML = primary.map(buttonHtml).join("") +
+                       (showingAll ? rest.map(buttonHtml).join("") : "");
+      if (btnMore) {
+        const hiddenCount = rest.length;
+        btnMore.style.display = hiddenCount ? "" : "none";
+        btnMore.textContent = showingAll ? "Show less" : `Show more (${hiddenCount})`;
+      }
+    }
+    renderGrid();
+
+    grid.addEventListener("click", (e) => {
+      const btn = e.target.closest(".interestBtn"); if (!btn) return;
+      const slug = btn.dataset.slug;
+      if (selected.has(slug)) selected.delete(slug); else selected.add(slug);
+      btn.classList.toggle("bg-black");
+      btn.classList.toggle("text-white");
+      btn.classList.toggle("border-black");
+      btn.classList.toggle("bg-white");
+      btn.classList.toggle("border-stone-200");
+      btn.setAttribute("aria-checked", selected.has(slug) ? "true" : "false");
+    });
+    grid.addEventListener("keydown", (e) => {
+      if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("interestBtn")) {
+        e.preventDefault(); e.target.click();
+      }
+    });
+    search?.addEventListener("input", () => { showingAll = false; renderGrid(); });
+    btnMore?.addEventListener("click", () => { showingAll = !showingAll; renderGrid(); });
+
+    // Custom Tagify
+    if (typeof Tagify !== "undefined") {
+      const tagify = new Tagify(customEl, {
+        enforceWhitelist: false,
+        duplicates: false,
+        delimiters: ", ",
+        dropdown: { enabled: 0 },
+        editTags: false
+      });
+      customEl.addEventListener("blur", () => {
+        const v = tagify.DOM.input.value?.trim();
+        if (v) tagify.addTags([v]);
+      });
+      nextBtn?.addEventListener("click", async () => {
+        const fromGrid = Array.from(selected);
+        const fromCustom = (tagify.value || [])
+          .map(t => (t.value || "").trim().toLowerCase())
+          .filter(Boolean);
+        const merged = Array.from(new Set([...fromGrid, ...fromCustom]));
+        const out = await postJSON("/onboarding/interests", { interests: merged });
+        if (out && out.next) window.location.href = "/onboarding";
+      });
+    } else {
+      // Fallback without Tagify (no custom chips)
+      nextBtn?.addEventListener("click", async () => {
+        const fromGrid = Array.from(selected);
+        const out = await postJSON("/onboarding/interests", { interests: fromGrid });
+        if (out && out.next) window.location.href = "/onboarding";
+      });
+    }
+  })();
+
+})();  // <— single top-level IIFE close (there was an extra one before)
+</script>
+
+
+{% endblock %}
+

@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', path='css/user_dashboard.css') }}?v=20250919">
+<script src="{{ url_for('static', path='js/user_dashboard.js') }}?v=20250919" defer></script>
+<!-- People Graph + Chapter Progress -->
+<!-- People Graph CTA + Progress -->
+<section class="mx-auto w-full max-w-[1800px] px-3 sm:px-6 mt-3">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
+    <!-- Glassmorphic CTA -->
+    <a href="/people/graph" class="ud-glass-btn group flex items-center justify-between gap-4 p-4">
+      <div class="flex items-center gap-3">
+        <svg width="28" height="28" viewBox="0 0 24 24" class="shrink-0">
+          <circle cx="6" cy="6" r="3" fill="currentColor" opacity="0.9"/>
+          <circle cx="18" cy="6" r="3" fill="currentColor" opacity="0.9"/>
+          <circle cx="12" cy="18" r="3" fill="currentColor" opacity="0.9"/>
+          <path d="M8.4 7.8 10.8 15m4.8-7.2L13.2 15M8.7 6h6.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.9"/>
+        </svg>
+        <div>
+          <div class="text-base text-black dark:text-grey-900 font-semibold">People / Graph</div>
+          <div class="text-sm text-gray-600 dark:text-grey-600">Explore family & relationships</div>
+        </div>
+      </div>
+      <span class="ud-hover"></span>
+    </a>
+
+    <!-- Chapter Progress -->
+    <div class="ud-glass-card lg:col-span-2 p-4">
+      <div class="flex items-center justify-between gap-3 mb-2">
+        <h3 class="text-base font-semibold text-black dark:text-black-100">Chapter Completion</h3>
+        <div class="overall flex items-center gap-2 text-sm">
+          <span class="text-black dark:text-grey-600">Overall</span>
+          <strong id="udOverallPct" class="text-black dark:text-black-100">-</strong>
+        </div>
+      </div>
+
+      <div class="ud-bar" id="udMeter" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div>
+
+      <!-- legend -->
+      <!-- div id="udLegend" class="ud-legend mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2" -->
+    </div>
+  </div>
+</section>
+
+
+<section class="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen">
+  <div class="mx-auto w-full max-w-[1800px] px-4 sm:px-6">
+
+<div id="promptWrap"
+     class="group relative mt-4 mb-6"
+     data-current-id="{{ current_prompt.id if current_prompt else '' }}"
+     data-offset="{{ request.query_params.get('ofs', 0) }}">
+
+  <!-- Prompt band (div, not <a>) -->
+  <div id="promptBand"
+       role="link"
+       tabindex="0"
+       data-href="{% if current_prompt %}{{ url_for('user_record', prompt_id=current_prompt.id) }}{% else %}{{ url_for('user_record_freeform') }}{% endif %}"
+       class="block rounded-2xl relative z-20 cursor-pointer">
+
+    <!-- tint (never blocks clicks) -->
+    <div class="tint absolute inset-0 rounded-2xl bg-white/20 backdrop-blur-sm
+              opacity-0 transition group-hover:opacity-100 pointer-events-none"></div>
+    <!-- subtle pulsing mic pill (clickable area stays the entire band) -->
+    <span class="prompt-cta" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="16" height="16" class="mr-1 inline-block">
+        <path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3zm6-3a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.94V21h2v-2.06A8 8 0 0 0 20 11h-2z"/>
+      </svg>
+      Tap to record
+    </span>
+    <!-- Text -->
+    <div class="relative z-10 px-4 sm:px-6 py-6 sm:py-10">
+      <h1 id="bannerTitle"
+        class="font-baskerville text-black dark:text-black-100 leading-tight text-[clamp(1rem,6vw,3rem)]">
+        {% if current_prompt %}{{ current_prompt.text }}{% else %}What stories do you have?{% endif %}
+      </h1>
+      <p id="promptHint" class="prompt-hint">Tap anywhere on this card to start</p>
+      {% if current_prompt and current_prompt.chapter %}
+        <div id="bannerChapterRow" class="mt-2 text-lg opacity-70">
+          Chapter: <span id="bannerChapter" class="font-medium">{{ current_prompt.chapter }}</span>
+        </div>
+      {% else %}
+        <div id="bannerChapterRow" class="mt-2 text-sm opacity-70" style="display:none"></div>
+      {% endif %}
+    </div>
+
+    {% if current_prompt %}
+    <!-- Hover actions (inside the band; no pointer-events-none) -->
+    <div class="hover-icons absolute top-30 right-10 z-20 flex items-center gap-2 opacity-0 transition group-hover:opacity-100">
+      <button type="button"
+              id="skipBtn"
+              class="js-action rounded-full bg-white/80 backdrop-blur px-2.5 py-2 shadow-[0_6px_20px_rgba(0,0,0,0.12)]"
+              title="New prompt">
+        <span class="material-symbols-outlined align-middle">refresh</span>
+      </button>
+      <a href="{{ url_for('user_record_freeform') }}"
+         class="js-action rounded-full bg-white/80 backdrop-blur px-2.5 py-2 shadow-[0_6px_20px_rgba(0,0,0,0.12)]"
+         title="Create your own story">
+        <span class="material-symbols-outlined align-middle">lightbulb</span>
+      </a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+
+
+
+
+    <div class="px-1 sm:px-2 mb-4 max-w-[1000px] pl-12">
+      <h2 class="font-baskerville"] text-xl opacity-80">Your story so far…</h2>
+    </div>
+
+<div id="masonry" class="px-1 sm:px-2 columns-1 sm:columns-2 md:columns-3 lg:columns-4 xl:columns-5 2xl:columns-7 gap-6">
+  {% for r in (responses or []) %}
+    {% set ch_name = (r.prompt.chapter if r.prompt and r.prompt.chapter else 'Misc') %}
+    {% set cs = (chapter_styles.get(ch_name) if chapter_styles else None) or {'color':'#e5e7eb','alpha':'0.06'} %}
+    {% set raw = (r.response_text or r.transcription or '') %}
+    {% set cleaned = raw|striptags|replace('&nbsp;',' ')|trim %}
+    {% set titleline = (r.prompt.text if r.prompt and r.prompt.text else 'Your Story') %}
+    {% set snippet = cleaned[:480] ~ ('…' if cleaned|length > 480 else '') %}
+
+    <div class="group break-inside-avoid mb-6 relative rounded-3xl overflow-hidden
+            shadow-[0_18px_50px_rgba(0,0,0,.22),_0_4px_14px_rgba(0,0,0,.12)]
+            hover:shadow-[0_28px_70px_rgba(0,0,0,.26),_0_6px_18px_rgba(0,0,0,.14)]
+            transition-transform will-change-transform hover:scale-[1.02]"
+         style="--tint-color: {{ cs.color }}; --tint-alpha: {{ cs.alpha }};">
+
+      <a href="{{ url_for('response_view', response_id=r.id) }}" class="block relative min-h-[12rem]">
+
+        <!-- Glass base (keeps your ethereal look) -->
+        <div class="glass-base absolute inset-0"></div>
+
+        <!-- Chapter tint layered on top of glass -->
+        <div class="tint-overlay absolute inset-0"></div>
+
+        <!-- Base content (fades out on hover so paper fully takes over) -->
+        <div class="base-content relative z-10 px-4 pt-4 pb-5 transition-opacity duration-150 group-hover:opacity-0">
+          <h3 class="font-baskerville text-lg leading-snug text-gray-900">
+            {{ titleline[:160] }}
+          </h3>
+          <p class="mt-0.5 text-xs opacity-70 text-outline-black">
+            {{ r.created_at.strftime('%b %d, %Y') if r.created_at else '' }}
+          </p>
+
+          {% if cleaned %}
+            <p class="mt-3 text-sm leading-6 text-gray-900/90 line-clamp-5 md:line-clamp-6">
+              {{ cleaned[:260] ~ ('…' if cleaned|length > 260 else '') }}
+            </p>
+          {% else %}
+            <p class="mt-3 text-sm italic opacity-70">(Open to view or write more)</p>
+          {% endif %}
+        </div>
+
+        <!-- Hover face: PAPER (fully covers base), with full-card scrolling text -->
+        <div class="hover-paper absolute inset-0 opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-20">
+          <div class="paper-surface absolute inset-0"></div>
+          <div class="paper-sheen absolute inset-0"></div>
+          <div class="paper-content absolute inset-0 p-4">
+            {% if snippet %}
+              <div class="paper-scroll h-full overflow-hidden">
+                <div class="paper-scroll-inner whitespace-pre-wrap text-[0.95rem] leading-7 text-gray-900">
+                  {{ snippet }}
+                </div>
+              </div>
+            {% else %}
+              <div class="text-sm italic opacity-70">(No text yet)</div>
+            {% endif %}
+          </div>
+        </div>
+      </a>
+
+      <!-- Edit pill on hover -->
+      <a href="{{ url_for('edit_response_page', response_id=r.id) }}"
+         title="Edit story"
+         class="absolute top-2 left-1/2 -translate-x-1/2 z-30 opacity-0 group-hover:opacity-100 transition
+                bg-white/20 backdrop-blur-md rounded-full p-2 shadow-md">
+        <span class="material-symbols-outlined">edit</span>
+      </a>
+    </div>
+  {% endfor %}
+</div>
+
+  </div>
+</section>
+
+
+
+{% endblock %}

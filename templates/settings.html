@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-3xl mx-auto mt-8 p-6 bg-white/60 backdrop-blur-md rounded-2xl border border-black/10">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-semibold">Settings</h1>
+    <div class="flex items-center gap-2" aria-label="Theme">
+      <span class="text-sm opacity-70">Theme</span>
+      <div class="flex items-center gap-1" role="group" aria-label="Theme select">
+        <button id="themeLight" type="button" class="pill text-sm">Light</button>
+        <button id="themeDark"  type="button" class="pill text-sm">Dark</button>
+      </div>
+    </div>
+  </div>
+
+  {% if request.query_params.get('notice') %}
+    {% set is_err = request.query_params.get('error') %}
+    <div class="mb-4 rounded-lg px-3 py-2 text-sm {{ 'border-red-600 bg-red-100 text-red-800' if is_err else 'border-green-600 bg-green-100 text-green-800' }} border">
+      {{ request.query_params.get('notice') }}
+    </div>
+  {% endif %}
+
+  <div class="grid gap-6 md:grid-cols-2">
+    <!-- Profile -->
+    <section class="rounded-xl border border-black/10 bg-white/70 p-4">
+      <h2 class="text-lg font-semibold mb-3">Profile</h2>
+      <form method="post" action="/settings/profile" class="space-y-3">
+        <label class="block text-sm">Display name
+          <input class="input w-full" type="text" name="display_name" value="{{ (profile.display_name if profile else '') or '' }}">
+        </label>
+        <label class="block text-sm">Birth year
+          <input class="input w-full" type="number" name="birth_year" value="{{ (profile.birth_year if profile else '') or '' }}" min="1900" max="2100">
+        </label>
+        <label class="block text-sm">Location
+          <input class="input w-full" type="text" name="location" value="{{ (profile.location if profile else '') or '' }}">
+        </label>
+        <label class="block text-sm">Roles
+          <input id="rolesInput" class="input w-full" type="text" name="relation_roles" value="{{ roles_for_form }}">
+        </label>
+        <label class="block text-sm">Interests
+          <input id="interestsInput" class="input w-full" type="text" name="interests" value="{{ interests_for_form }}">
+        </label>
+        <label class="block text-sm">Places (hometowns, schools, etc.)
+          <input id="placesInput" class="input w-full" type="text" name="places" value="{{ places_for_form }}">
+        </label>
+        <label class="block text-sm">Gender
+          <select class="input w-full" name="gender">
+            <option value="" {% if not gender %}selected{% endif %}>Prefer not to say</option>
+            <option value="female" {% if gender=='female' %}selected{% endif %}>Female</option>
+            <option value="male" {% if gender=='male' %}selected{% endif %}>Male</option>
+            <option value="nonbinary" {% if gender=='nonbinary' %}selected{% endif %}>Non-binary</option>
+            <option value="other" {% if gender=='other' %}selected{% endif %}>Other</option>
+          </select>
+        </label>
+        <label class="block text-sm">Bio
+          <textarea class="input w-full" name="bio" rows="5">{{ (profile.bio if profile else '') or '' }}</textarea>
+        </label>
+        <div class="mt-2">
+          <button class="pill">Save profile</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Profile picture -->
+    <section class="rounded-xl border border-black/10 bg-white/70 p-4">
+      <h2 class="text-lg font-semibold mb-3">Profile picture</h2>
+      <div class="mb-3">
+        {% set avatar = (profile.privacy_prefs.get('avatar_url') if profile and profile.privacy_prefs else None) %}
+        {% if avatar %}
+          <img src="/static/{{ avatar }}" alt="Avatar" style="width:200px;height:200px;border-radius:12px;border:1px solid #000;object-fit:cover;object-position:center;display:block;">
+        {% else %}
+          <div style="width:200px;height:200px;border-radius:12px;border:1px solid #000;display:grid;place-items:center;background:rgba(0,0,0,.04);font-size:56px;font-weight:700;">
+            {{ (user.username or user.email)[0] | upper }}
+          </div>
+        {% endif %}
+        <form method="post" action="/settings/avatar" enctype="multipart/form-data" class="mt-3 flex items-center gap-2">
+          <input type="file" name="avatar" accept="image/*" required>
+          <button class="pill">Upload</button>
+        </form>
+      </div>
+      <p class="text-xs opacity-70">Tip: Use a square photo if possible. We’ll center‑crop it to fit.</p>
+    </section>
+
+    <!-- Onboarding summary -->
+    <section class="rounded-xl border border-black/10 bg-white/70 p-4 md:col-span-2">
+      <h2 class="text-lg font-semibold mb-3">Onboarding summary</h2>
+      <div class="text-sm grid md:grid-cols-3 gap-3">
+        <div>
+          <div class="font-medium mb-1">Roles</div>
+          {% if onboarding_roles %}
+            <div class="flex flex-wrap gap-1">
+              {% for r in onboarding_roles %}<span class="chip chip-xs">{{ r }}</span>{% endfor %}
+            </div>
+          {% else %}
+            <div class="opacity-60">None yet</div>
+          {% endif %}
+        </div>
+        <div>
+          <div class="font-medium mb-1">Interests</div>
+          {% if profile and profile.interests %}
+            <div class="flex flex-wrap gap-1">
+              {% for r in profile.interests %}<span class="chip chip-xs">{{ r }}</span>{% endfor %}
+            </div>
+          {% else %}
+            <div class="opacity-60">None yet</div>
+          {% endif %}
+        </div>
+        <div>
+          <div class="font-medium mb-1">Status</div>
+          {% set ob = onboarding_meta or {} %}
+          <div>Step: <span class="font-medium">{{ ob.get('step','you') }}</span></div>
+          <div>Done: <span class="font-medium">{{ 'Yes' if ob.get('done') else 'No' }}</span></div>
+        </div>
+      </div>
+      <div class="mt-3">
+        <a class="pill" href="/onboarding">Re-run onboarding</a>
+      </div>
+    </section>
+    
+    <!-- Change password (moved lower for more separation) -->
+    <section class="rounded-xl border border-black/10 bg-white/70 p-4 md:col-span-2">
+      <h2 class="text-lg font-semibold mb-3">Change password</h2>
+      <form method="post" action="/settings/password" class="space-y-3 max-w-md">
+        <label class="block text-sm">Current password
+          <input class="input w-full" type="password" name="current_password" required>
+        </label>
+        <label class="block text-sm">New password
+          <input class="input w-full" type="password" name="new_password" minlength="8" required>
+        </label>
+        <label class="block text-sm">Confirm password
+          <input class="input w-full" type="password" name="confirm_password" minlength="8" required>
+        </label>
+        <div class="mt-2">
+          <button class="pill">Update password</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@yaireo/tagify"></script>
+<link href="https://cdn.jsdelivr.net/npm/@yaireo/tagify/dist/tagify.css" rel="stylesheet">
+<script>
+  (function(){
+    // Theme toggle wiring
+    try {
+      const lightBtn = document.getElementById('themeLight');
+      const darkBtn  = document.getElementById('themeDark');
+      function syncThemeButtons(){
+        const t = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+        if (t === 'dark') { darkBtn?.classList.add('is-selected'); lightBtn?.classList.remove('is-selected'); }
+        else { lightBtn?.classList.add('is-selected'); darkBtn?.classList.remove('is-selected'); }
+      }
+      lightBtn?.addEventListener('click', ()=>{ window.setTheme?.('light'); syncThemeButtons(); });
+      darkBtn?.addEventListener('click',  ()=>{ window.setTheme?.('dark');  syncThemeButtons(); });
+      syncThemeButtons();
+    } catch {}
+
+    const roles = document.getElementById('rolesInput');
+    const ints  = document.getElementById('interestsInput');
+    const places= document.getElementById('placesInput');
+    if (roles) new Tagify(roles, { enforceWhitelist:false, dropdown:{enabled:0} });
+    if (ints)  new Tagify(ints,  { enforceWhitelist:false, dropdown:{enabled:0} });
+    if (places) new Tagify(places,{ enforceWhitelist:false, dropdown:{enabled:0} });
+  })();
+  </script>
+{% endblock %}

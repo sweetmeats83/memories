@@ -1,0 +1,99 @@
+/* Global site styles (light defaults + dark overrides) */
+
+/* Color tokens for 5‑color rotation (light/dark override below) */
+:root {
+  --g1: #ffbd7a; /* warm peach */
+  --g2: #fc80ab; /* soft pink */
+  --g3: #76f7b8; /* mint */
+  --g4: #80acf8; /* pale blue */
+  --g5: #fd8383; /* light coral */
+}
+html.dark {
+  --g1: #0f1220; /* deep indigo */
+  --g2: #1a0f29; /* plum night */
+  --g3: #111827; /* midnight */
+  --g4: #221435; /* eggplant */
+  --g5: #2a0f24; /* wine */
+}
+
+/* Light gradient for body background used by base.html */
+/* Ensure base stacking context so pseudo background can sit behind */
+html, body { min-height: 100%; }
+body { position: relative; isolation: isolate; }
+
+/* Light mode: rely on original .bg-gradient-warm in base.css */
+body.bg-gradient-warm::before { content: none !important; }
+
+body.bg-gradient-warm::after { content: none !important; }
+
+/* Dark mode: five‑color linear gradient slowly moving corner to corner */
+html.dark .bg-gradient-warm {
+  /* Dark neon wash with gentle motion */
+  background: radial-gradient(1200px 800px at 10% 10%, rgba(255, 59, 193, 0.10), transparent 60%),
+              radial-gradient(900px 700px at 90% 20%, rgba(124, 58, 237, 0.12), transparent 60%),
+              radial-gradient(700px 700px at 80% 85%, rgba(34, 211, 238, 0.08), transparent 60%),
+              linear-gradient(135deg, var(--g1), var(--g2), var(--g3), var(--g4), var(--g5));
+  background-size: 400% 400%;
+  animation: gradientMove 60s ease infinite;
+}
+
+/* Improve legibility for Tailwind text-black utility in dark mode */
+/* Force readable foreground even if Tailwind applies text-black */
+html.dark body.text-black { color: var(--fg) !important; }
+
+/* Global text in dark */
+html.dark body { color: var(--fg); }
+
+/* Limit neon links to prose/reading areas, not card wrappers */
+html.dark .prose-text a,
+html.dark .page-column a { color: var(--accent); text-decoration: none; }
+html.dark .prose-text a:hover,
+html.dark .page-column a:hover { text-shadow: 0 0 8px rgba(255, 59, 193, 0.45); }
+
+/* Ensure block-level link wrappers keep inherited text color */
+html.dark a.block { color: inherit; text-shadow: none; }
+html.dark ::selection { background: rgba(255, 59, 193, 0.35); color: #fff; }
+
+/* Header subtle adjustments in dark mode */
+html.dark header {
+  background: rgba(10, 12, 20, 0.55);
+  border-color: rgba(255, 59, 193, 0.28);
+  box-shadow: var(--shadow-neon);
+}
+
+/* Brand title in dark: neon pink */
+html.dark .nav-title {
+  color: var(--accent);
+  text-shadow: 0 0 8px rgba(255, 59, 193, 0.45);
+}
+
+/* Tagify base tweaks (kept minimal to avoid fighting inline styles) */
+html.dark .tagify { background: rgba(17,24,39,0.6); color: #e5e7eb; }
+html.dark .tagify__dropdown { background: #0f141a; color: #e5e7eb; }
+
+/* Player card surface minor dark variant */
+html.dark .player-card { background: rgba(17,24,39,0.6); border-color: #374151; }
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  html.dark .bg-gradient-warm { animation: none; }
+}
+
+/* Inputs/selects in dark */
+html.dark input[type="text"],
+html.dark input[type="email"],
+html.dark input[type="file"],
+html.dark textarea,
+html.dark select {
+  background: rgba(255,255,255,0.06) !important;
+  color: var(--fg) !important;
+  border: 1px solid rgba(255, 59, 193, 0.28) !important;
+  outline: none;
+}
+html.dark input::placeholder,
+html.dark textarea::placeholder { color: rgba(232, 230, 255, 0.55); }
+
+/* Focus ring neon glow */
+html.dark :is(input, textarea, select, button, .btn):focus-visible {
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.55), 0 0 0 6px rgba(255, 59, 193, 0.28);
+}

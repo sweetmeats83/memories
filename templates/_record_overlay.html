@@ -1,0 +1,602 @@
+<!-- ===== _record_overlay.html (unified + accessible) ===== -->
+<style>
+/* ===== FULL-VIEWPORT OVERLAY & CENTERING ===== */
+#captureOverlay{
+  position: fixed !important;      /* detach from page/card layout */
+  inset: 0 !important;             /* full viewport */
+  z-index: 9999 !important;        /* above base.html */
+  display: none;                   /* JS toggles */
+  background: rgba(0,0,0,.72);
+  color: #fff;
+}
+#captureOverlay[aria-modal="true"]{ display:block; }
+
+/* Anchor from near the top and center horizontally */
+#captureOverlay .overlay-shell{
+  position: fixed; inset: 0;                   /* ensures full-viewport grid container */
+  display: grid; place-items: start center;    /* top-centered card */
+  padding: 4vh 12px;
+  pointer-events: none;                        /* only the card should catch clicks */
+}
+
+/* Recorder card centered within shell */
+#captureOverlay .overlay-card{
+  pointer-events: auto;
+  width: min(800px, 96vw);
+  max-height: 92dvh;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(24,24,24,.96), rgba(16,16,16,.96));
+  box-shadow: 0 28px 72px rgba(0,0,0,.6);
+  overflow: auto;
+}
+#captureOverlay .prompt-bar{
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+}
+#captureOverlay .prompt-text{
+  font-size: clamp(14px, 1.9vh, 16px);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;       /* clamp to 3 lines */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  position: relative;
+}
+#captureOverlay .prompt-text.expanded{
+  -webkit-line-clamp: unset;
+  max-height: none;
+}
+/* Limit preview height on narrow devices so controls stay visible */
+@media (max-width: 640px){
+  #liveVideo{ max-height: 38vh; }
+  #audioMeter{ height: 64px; }
+}
+
+#captureOverlay .prompt-toggle{
+  margin-top: 6px;
+  font-weight: 700;
+  font-size: 13px;
+  color: #fff;
+  opacity: .9;
+  text-decoration: underline;
+}
+/* Header: mode pills + close */
+#captureOverlay .overlay-head{
+  display:flex; align-items:center; justify-content:space-between; gap:.5rem;
+  padding: 10px 12px;
+  background: rgba(255,255,255,.04);
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+#captureOverlay .pill{
+  display:inline-flex; align-items:center; gap:.4rem;
+  padding: 8px 14px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.9);
+  background: transparent; color: #fff; font-weight: 700; font-size: 15px;
+  transition: background .15s, color .15s;
+}
+#captureOverlay .pill.active{ background:#fff; color:#111; }
+#captureOverlay .close-btn{
+  border:1px solid rgba(255,255,255,.9);
+  background:transparent; color:#fff; padding:8px 12px; border-radius:10px; font-weight:700;
+}
+
+/* Preview regions */
+#liveVideo{
+  display:none; width:100%; max-height:56vh; background:#000;
+}
+#audioView{ display:none; place-items:center; padding:16px 18px 10px; }
+#audioMeter{
+  width:min(720px, 90%); height:86px; border-radius:12px;
+  background: rgba(255,255,255,.08);
+}
+
+/* Timer between preview and controls */
+#captureOverlay .timer-row{
+  display:flex; justify-content:center; align-items:center;
+  padding: 8px 12px 2px; font-variant-numeric: tabular-nums;
+}
+#overlayTimer{
+  display:inline-block; padding:6px 10px; border-radius:999px;
+  border:1px solid rgba(255,255,255,.18); opacity:.9;
+}
+
+/* ===== TWO BIG COLUMNS (FILL WIDTH & HEIGHT) ===== */
+#captureOverlay .controls{
+  display:grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  padding: 12px; border-top: 1px solid rgba(255,255,255,.08);
+  min-height: clamp(130px, 20vh, 250px);  /* makes buttons tall; adjusts with screen */
+  bottom: 0;                   /* stick to the bottom of the scrolling card */
+  z-index: 2;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom)); /* iOS safe area */
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(16,16,16,.9) 18%) , 
+    rgba(255,255,255,.03);     /* subtle fade-in behind controls */
+  backdrop-filter: blur(2px);
+}
+@media (max-height: 540px){
+  #captureOverlay .btn-big{ font-size: clamp(16px, 2.1vh, 20px); }
+}
+#captureOverlay .btn-big{
+  width:100%; height:100%;
+  border-radius:16px; border:2px solid #000;
+  display:inline-flex; align-items:center; justify-content:center; gap:.6rem;
+  font-weight:900; font-size: clamp(18px, 2.6vh, 24px);
+  box-shadow: 0 4px 0 rgba(0,0,0,.6);
+  transition: transform .06s, filter .15s;
+  user-select: none;
+}
+#captureOverlay .btn-big:active{ transform: translateY(1px); }
+
+/* Record / Pause / Resume (yellow) with slow pulse when recording */
+#captureOverlay .btn-primary{ background:#FFD43B; color:#111; }
+#captureOverlay .btn-primary.recording{
+  animation: pulseGlow 1.2s ease-in-out infinite;
+}
+@keyframes pulseGlow{
+  0%   { box-shadow: 0 0 0 0 rgba(255,212,59,.55); }
+  70%  { box-shadow: 0 0 0 22px rgba(255,212,59,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,212,59,0); }
+}
+
+/* Finish (red) */
+#captureOverlay .btn-danger{ background:#EF4444; color:#fff; }
+
+/* Processing veil */
+#transcribeCover{
+  position:absolute; inset:0; display:none; place-items:center;
+  background: rgba(0,0,0,.78); backdrop-filter: blur(2px);
+}
+#transcribeCover .veil-card{
+  width:min(440px, 92vw);
+  background: rgba(20,20,20,.96);
+  border: 1px solid rgba(255,255,255,.16); border-radius:14px;
+  padding:18px 16px; text-align:center; box-shadow:0 22px 60px rgba(0,0,0,.55);
+}
+#transcribeCover .spin{
+  width:48px; height:48px; border:4px solid rgba(255,255,255,.22); border-top-color:#fff;
+  border-radius:50%; animation: spin 1s linear infinite; margin:0 auto 10px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Mobile tweaks */
+@media (max-width: 640px){
+  #captureOverlay .overlay-shell{ padding: 3vh 8px; }
+  #audioMeter{ height: 72px; }
+  #captureOverlay .controls{ gap:10px; }
+  #captureOverlay .btn-big{ border-radius:14px; }
+}
+</style>
+
+<div id="captureOverlay" role="dialog" aria-modal="false" aria-hidden="true">
+  <div class="overlay-shell">
+    <div class="overlay-card">
+      <div class="overlay-head">
+        <!-- Choose capture mode INSIDE the overlay -->
+        <div class="pills">
+          <button type="button" id="ovl-mode-audio" class="pill">Audio</button>
+          <button type="button" id="ovl-mode-video" class="pill">Video</button>
+        </div>
+        <button id="btnCancel" class="close-btn">Close</button>
+      </div>
+<div class="prompt-bar">
+  <div id="overlayPrompt" class="prompt-text"></div>
+  <button id="promptToggle" type="button" class="prompt-toggle" style="display:none">More</button>
+</div>
+      <!-- Preview -->
+      <video id="liveVideo" autoplay muted playsinline></video>
+      <div id="audioView">
+        <canvas id="audioMeter"></canvas>
+      </div>
+
+      <!-- Timer row -->
+      <div class="timer-row">
+        <span id="overlayTimer">0.0s</span>
+      </div>
+
+      <!-- Buttons: 2 columns, fill area -->
+      <div class="controls">
+        <button id="btnRecord" class="btn-big btn-primary">
+          <span class="material-symbols-outlined" aria-hidden="true">fiber_manual_record</span>
+          <span id="btnRecordLabel">Record</span>
+        </button>
+        <button id="btnFinish" class="btn-big btn-danger">
+          <span class="material-symbols-outlined" aria-hidden="true">stop_circle</span>
+          <span>Finish</span>
+        </button>
+      </div>
+
+      <!-- Processing veil -->
+      <div id="transcribeCover" aria-live="polite">
+        <div class="veil-card">
+          <div class="spin" aria-hidden="true"></div>
+          <div class="text-base font-semibold mb-1" id="veilTitle">Uploading & transcribing…</div>
+          <div class="text-sm opacity-85" id="veilNote">Please keep this tab open.</div>
+          <div class="text-red-300 text-sm mt-2" id="transcribeErr"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // Prevent double-binding if template is included twice
+  if (window.__recordOverlayBound) return;
+  window.__recordOverlayBound = true;
+
+  // --- PORTAL: ensure overlay is attached to <body> ---
+  const overlay = document.getElementById('captureOverlay');
+  if (overlay && overlay.parentElement !== document.body) {
+    document.body.appendChild(overlay);
+  }
+
+  // --- DOM refs ---
+  const vEl       = document.getElementById('liveVideo');
+  const aView     = document.getElementById('audioView');
+  const aMeter    = document.getElementById('audioMeter');
+
+  const btnAudio  = document.getElementById('ovl-mode-audio');
+  const btnVideo  = document.getElementById('ovl-mode-video');
+  const btnRecord = document.getElementById('btnRecord');
+  const btnFinish = document.getElementById('btnFinish');
+  const btnCancel = document.getElementById('btnCancel');
+  const recLabel  = document.getElementById('btnRecordLabel');
+  const timerEl   = document.getElementById('overlayTimer');
+
+  const veil      = document.getElementById('transcribeCover');
+  const veilTitle = document.getElementById('veilTitle');
+  const veilErr   = document.getElementById('transcribeErr');
+
+  // --- State ---
+  let cfg = { kind: 'segment', responseId: null, primary: null, mode: null };
+  let stream=null, rec=null, chunks=[], paused=false, recording=false;
+  let audioCtx=null, analyser=null, meterRAF=0, t0=0, raf=0;
+
+  // --- Helpers: layout/UX ---
+  function lockScroll(lock){
+    document.documentElement.style.overflow = lock ? 'hidden' : '';
+    document.body.style.overflow = lock ? 'hidden' : '';
+  }
+  function open(){
+    overlay?.setAttribute('aria-modal','true');
+    overlay?.removeAttribute('aria-hidden');
+    overlay?.classList.remove('hidden');
+    lockScroll(true);
+
+    // enforce full viewport; defend against page CSS
+    overlay.style.position = 'fixed';
+    overlay.style.inset = '0';
+    overlay.style.zIndex = '9999';
+    overlay.style.display = 'block';
+  }
+  function close(){
+    overlay?.setAttribute('aria-modal','false');
+    overlay?.setAttribute('aria-hidden','true');
+    overlay?.classList.add('hidden');
+    lockScroll(false);
+  }
+
+  function showVeil(msg){
+    if (veilTitle) veilTitle.textContent = msg || 'Uploading & transcribing…';
+    if (veilErr) veilErr.textContent = '';
+    if (veil) veil.style.display = 'grid';
+  }
+  function hideVeil(){
+    if (veil) veil.style.display = 'none';
+    if (veilErr) veilErr.textContent = '';
+  }
+
+  function setPillState(){
+    btnAudio?.classList.toggle('active', cfg.mode==='audio');
+    btnVideo?.classList.toggle('active', cfg.mode==='video');
+  }
+  function defaultModeByDevice(){
+    try { return (matchMedia && matchMedia('(pointer: coarse)').matches) ? 'video' : 'audio'; }
+    catch { return 'audio'; }
+  }
+
+  // --- Timer + meter ---
+  function tick(){
+    const s = (performance.now() - t0) / 1000;
+    if (timerEl) timerEl.textContent = s.toFixed(1) + 's';
+    raf = requestAnimationFrame(tick);
+  }
+  function stopTick(){ cancelAnimationFrame(raf); }
+
+  function drawMeter(){
+    if (!analyser || !aMeter) return;
+    const ctx = aMeter.getContext('2d');
+    const w = aMeter.width = aMeter.clientWidth;
+    const h = aMeter.height = aMeter.clientHeight;
+    const data = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(data);
+    let peak=0; for (let i=0;i<data.length;i++){ const v=Math.abs(data[i]-128)/128; if (v>peak) peak=v; }
+    ctx.clearRect(0,0,w,h);
+    const barW = Math.max(8, w*peak);
+    ctx.fillStyle = 'rgba(255,255,255,.9)';
+    ctx.fillRect(0,0,barW,h);
+    meterRAF = requestAnimationFrame(drawMeter);
+  }
+  function stopMeter(){ cancelAnimationFrame(meterRAF); }
+
+  function stopStream(){
+    try { stream?.getTracks().forEach(t => t.stop()); } catch {}
+    stream = null;
+  }
+
+  function cleanup(){
+    stopStream();
+    if (audioCtx){ try { audioCtx.close(); } catch{} }
+    audioCtx=null; analyser=null; rec=null; chunks=[];
+    paused=false; recording=false; stopTick(); stopMeter();
+    if (timerEl) timerEl.textContent='0.0s';
+    btnRecord?.classList.remove('recording');
+    if (recLabel) recLabel.textContent='Record';
+    // Hide previews
+    if (vEl) vEl.style.display='none';
+    if (aView) aView.style.display='none';
+  }
+
+  // --- Preview management (restarts when switching modes) ---
+  async function ensurePreview(){
+    stopStream(); // reset before acquiring new
+    const wantVideo = cfg.mode === 'video';
+    const constraints = wantVideo
+      ? { audio: true, video: { facingMode: 'user' } }
+      : { audio: true };
+
+    const s = await navigator.mediaDevices.getUserMedia(constraints);
+    stream = s;
+
+    if (wantVideo){
+      if (vEl){
+        vEl.srcObject = stream;
+        vEl.style.display='block';
+      }
+      if (aView) aView.style.display='none';
+    } else {
+      if (vEl) vEl.style.display='none';
+      if (aView) aView.style.display='grid';
+
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize=2048;
+      src.connect(analyser);
+      drawMeter();
+    }
+  }
+
+  function setMode(m){
+    const next = (m === 'video') ? 'video' : 'audio';
+    if (cfg.mode === next) return;
+    cfg.mode = next;
+    setPillState();
+
+    // If overlay is open, switch preview immediately
+    if (overlay && !overlay.classList.contains('hidden')){
+      ensurePreview().catch(err => {
+        alert('Could not access devices. Please allow microphone/camera.');
+        console.warn(err);
+      });
+    }
+  }
+async function gateWeeklyTokenUse(){
+  if (!weeklyToken) return true;
+  const fd = new FormData(); fd.append('token', weeklyToken);
+  const r = await fetch('/weekly/token/use', { method:'POST', body: fd, credentials:'include' });
+  if (!r.ok){
+    alert("Your link has expired or was already used. Please log in to continue.");
+    return false;
+  }
+  return true;
+}
+
+  // --- Recording ---
+  function startRecording(){
+    if (weeklyToken) document.getElementById('weeklyToken').value = weeklyToken;
+    if (!stream) return;
+    const mimeV='video/webm;codecs=vp9,opus', mimeA='audio/webm;codecs=opus';
+    const want=(cfg.mode==='video')?mimeV:mimeA;
+    const opts = MediaRecorder.isTypeSupported?.(want) ? { mimeType: want } : {};
+    rec = new MediaRecorder(stream, opts);
+    chunks=[];
+    rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = onStop;
+
+    rec.start();
+    recording = true;
+    paused = false;
+    t0 = performance.now();
+    tick();
+    btnRecord?.classList.add('recording');
+    if (recLabel) recLabel.textContent='Pause';
+  }
+
+  function toggleRecord(){
+    if (!recording){
+      startRecording();
+      return;
+    }
+    if (!paused){
+      rec?.pause();
+      paused = true;
+      stopTick();
+      if (recLabel) recLabel.textContent='Resume';
+      btnRecord?.classList.remove('recording');
+    } else {
+      rec?.resume();
+      paused = false;
+      const elapsed = parseFloat((timerEl?.textContent || '0').replace('s','')) || 0;
+      t0 = performance.now() - elapsed * 1000;
+      tick();
+      if (recLabel) recLabel.textContent='Pause';
+      btnRecord?.classList.add('recording');
+    }
+  }
+
+  // --- Upload paths ---
+  async function uploadSegment(blob){
+    const fd = new FormData();
+    const mime = (cfg.mode==='video') ? 'video/webm' : 'audio/webm';
+    fd.append('file', new File([blob], `segment-${Date.now()}.webm`, { type: mime }));
+    const base = (window.EDITOR_API_BASE && cfg.responseId) ? window.EDITOR_API_BASE : `/response/${cfg.responseId}`;
+    const url = `${base}/segments`;
+    const r = await fetch(url, { method:'POST', body: fd, credentials:'include' });
+    if (!r.ok) throw new Error(await r.text().catch(()=>`HTTP ${r.status}`));
+    return r.json(); // { segment:{id} }
+  }
+
+  async function pollSegment(segId){
+    // Poll for up to ~2 min (60 * 2s)
+    for (let i=0; i<60; i++){
+      try{
+        const base = (window.EDITOR_API_BASE && cfg.responseId) ? window.EDITOR_API_BASE : `/response/${cfg.responseId}`;
+        const r = await fetch(`${base}/segments`, { credentials:'include', cache:'no-store' });
+        if (r.ok){
+          const list = await r.json();
+          const seg = list.find(s => s.id === segId);
+          if (seg && seg.transcript && seg.transcript.trim()){
+            if (typeof window.onSegmentUploaded === 'function') window.onSegmentUploaded(segId);
+            return true;
+          }
+        }
+      }catch{}
+      await new Promise(res => setTimeout(res, 2000));
+    }
+    return false;
+  }
+
+  async function uploadPrimaryViaForm(blob){
+    const form  = document.getElementById('record-form');
+    const input = document.getElementById('primary_media_input');
+    if (!form || !input) throw new Error('record form or hidden file input missing');
+
+    const mime = (cfg.mode==='video') ? 'video/webm' : 'audio/webm';
+    const file = new File([blob], `primary-${Date.now()}.webm`, { type: mime });
+
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+
+    // Let the veil actually render before we navigate away
+    await new Promise(r => requestAnimationFrame(r));
+    await new Promise(r => setTimeout(r, 60));
+    if (typeof window.RecordOverlayOnBeforeSubmit === 'function') {
+    try { await window.RecordOverlayOnBeforeSubmit(); } catch {}
+    }
+    // Submit (browser will navigate). We do NOT hide the veil or close overlay here.
+    form.requestSubmit();
+  }
+
+  async function onStop(){
+    const blob = new Blob(chunks, { type: (cfg.mode==='video') ? 'video/webm' : 'audio/webm' });
+    showVeil('Finalizing…');
+    try {
+      if (cfg.kind === 'segment'){
+        const out = await uploadSegment(blob);
+        if (out?.segment?.id) await pollSegment(out.segment.id);
+        hideVeil(); close(); cleanup();
+      } else {
+        // PRIMARY: choose strategy (form OR xhr)
+        const strat = (cfg.primary?.strategy || 'form');
+
+        if (strat === 'xhr') {
+          // Keep veil visible through the XHR
+          const out = await uploadPrimaryViaXHR(blob);
+
+          // If server returned an id, go straight to edit
+          if (out && out.id) {
+            // keep veil up; client-side navigate
+            location.href = `/response/${out.id}/edit`;
+            return; // do not hide/close/cleanup (navigation incoming)
+          }
+
+          // If no id (e.g., server sent HTML), just fall back to reloading
+          // Veil stays up until the new page loads.
+          location.reload();
+          return;
+        } else {
+          // Current behavior: submit the form and let the browser navigate.
+          await uploadPrimaryViaForm(blob);
+          // Do NOT hide/close/cleanup — we want the veil to remain
+          return;
+        }
+      }
+    } catch (e){
+      if (veilErr) veilErr.textContent = 'Upload failed. Please try again.';
+      console.error(e);
+      setTimeout(hideVeil, 1500);
+      cleanup();
+    }
+}
+
+  // --- Wire UI ---
+  btnAudio?.addEventListener('click', () => setMode('audio'));
+  btnVideo?.addEventListener('click', () => setMode('video'));
+  btnRecord?.addEventListener('click', toggleRecord);
+  btnFinish?.addEventListener('click', () => { if (rec) { showVeil('Finalizing…'); try { rec.stop(); } catch {} }});
+  btnCancel?.addEventListener('click', () => { try { rec?.stop(); } catch{} hideVeil(); cleanup(); close(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && overlay && !overlay.classList.contains('hidden')) {
+      btnCancel?.click();
+    }
+  });
+
+  const overlayPrompt = document.getElementById('overlayPrompt');
+  const promptToggle  = document.getElementById('promptToggle');
+
+  // Show/hide “More” if the prompt overflows 3 lines
+  function updatePromptToggle(){
+    if (!overlayPrompt || !promptToggle) return;
+    // Rough overflow check — if scrollHeight > clientHeight, show toggle
+    const needsToggle = overlayPrompt.scrollHeight - 2 > overlayPrompt.clientHeight;
+    promptToggle.style.display = needsToggle ? 'inline-block' : 'none';
+  }
+  promptToggle?.addEventListener('click', () => {
+    overlayPrompt.classList.toggle('expanded');
+    promptToggle.textContent = overlayPrompt.classList.contains('expanded') ? 'Less' : 'More';
+  });
+  async function uploadPrimaryViaXHR(blob){
+    const url  = (cfg.primary && cfg.primary.xhrUrl) || '/responses/';
+    const mime = (cfg.mode==='video') ? 'video/webm' : 'audio/webm';
+    const fd   = new FormData();
+
+    // file
+    fd.append('primary_media', new File([blob], `primary-${Date.now()}.webm`, { type: mime }));
+
+    // base fields from caller
+    const base = (cfg.primary && cfg.primary.baseFields) || {};
+    for (const [k,v] of Object.entries(base)) fd.append(k, v);
+
+    const r = await fetch(url, { method:'POST', body: fd, credentials:'include' });
+    if (!r.ok) throw new Error(await r.text().catch(()=>`HTTP ${r.status}`));
+    return r.json(); // expect { id: <response_id>, ... } from your API
+  }
+  // In your public API
+  window.RecordOverlay = {
+    start(config){
+      cfg = Object.assign({ kind:'segment' }, config || {});
+      setMode(cfg.mode || defaultModeByDevice());
+
+      // NEW: set prompt text if provided
+      if (overlayPrompt) {
+        overlayPrompt.textContent = (cfg.promptText || '').trim();
+        // Let layout settle, then decide if we show the "More" button
+        requestAnimationFrame(() => updatePromptToggle());
+      }
+
+      open();
+      ensurePreview().catch(err => {
+        alert('Could not start recorder. Please allow microphone/camera.');
+        console.warn(err);
+        close();
+        cleanup();
+      });
+    },
+    setCaptureMode(m){ setMode(m === 'video' ? 'video' : 'audio'); }
+  };
+})();
+</script>

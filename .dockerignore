@@ -1,0 +1,17 @@
+.git
+.gitignore
+.continue
+node_modules
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.log
+.env
+.env.*
+core
+transcription.log
+tmp_*
+static/uploads
+

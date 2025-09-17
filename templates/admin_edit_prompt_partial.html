@@ -1,0 +1,381 @@
+ 
+{# templates/admin_edit_prompt_partial.html #}
+
+<form id="editPromptForm" action="/admin_update_prompt/{{ prompt.id }}" method="post" enctype="multipart/form-data" class="bg-white/50 backdrop-blur rounded-xl p-4 shadow">
+  <input type="hidden" id="editPromptId" name="prompt_id" value="{{ prompt.id }}">
+
+  <label class="block text-sm font-medium">Prompt text</label>
+  <textarea id="editPromptText" name="prompt_text" rows="4"
+    class="w-full border rounded p-2 mb-3">{{ prompt.text }}</textarea>
+
+  <label class="block text-sm font-medium">Chapter</label>
+  <input id="editChapter" name="chapter" value="{{ prompt.chapter or '' }}"
+    class="w-full border rounded p-2 mb-3" />
+
+  <label class="block text-sm font-medium">Tags</label>
+  <input id="editTags" name="tags" class="w-full border rounded p-2 mb-3" placeholder="Add tags…" />
+
+{% set total = (assigned_users|length) if assigned_users is defined else 0 %}
+{% set answered = (assigned_users|selectattr('answered')|list|length) if assigned_users is defined else 0 %}
+
+<div class="border-t border-stone-200 pt-3">
+  <div class="flex items-center justify-between mb-1">
+    <div class="text-sm font-medium">
+      Assigned users
+      <span class="text-xs text-stone-600">(<span id="assignCount">{{ total }}</span> total, <span id="assignAnswered">{{ answered }}</span> answered)</span>
+    </div>
+  </div>
+
+  <div id="assignChips"
+       class="flex flex-wrap gap-2 mb-2"
+       data-prompt-id="{{ prompt.id }}"
+       data-hydrated="{{ 'true' if total else 'false' }}">
+    {% for u in (assigned_users or []) %}
+      <span class="chip chip-orange chip-assign inline-flex items-center gap-1 px-2 py-0.5 rounded-full shadow-sm {% if u.answered %}ring-1 ring-green-500{% endif %}"
+            data-user-id="{{ u.id }}"
+            data-answered="{{ '1' if u.answered else '0' }}">
+        <span class="truncate max-w-[12rem]">{{ u.name or u.email }}</span>
+        {% if u.answered %}
+          <span class="material-symbols-outlined text-[16px]" title="Answered">check_circle</span>
+        {% endif %}
+        <button type="button" class="chip-x text-[14px] leading-none" aria-label="Remove">×</button>
+      </span>
+    {% endfor %}
+  </div>
+
+  <div class="relative">
+    <input id="assignInput" type="text" class="border rounded px-2 py-1 w-full text-sm"
+           placeholder="Add user by name or email…" autocomplete="off">
+    <div id="assignDD" class="absolute z-10 bg-white border border-stone-200 rounded shadow hidden mt-1 w-full max-h-56 overflow-auto" role="listbox"></div>
+  </div>
+  <p class="text-xs text-gray-500 mt-1">Click × to remove. Green-ring chips have answered.</p>
+</div>
+
+  <!-- Media -->
+  <div class="text-sm font-medium mb-2">Media</div>
+
+  <!-- Existing media -->
+  <div class="mb-2">
+    <div class="text-sm font-medium mb-2">Attached media</div>
+    <div id="attachedMediaPreview" class="flex gap-3 flex-wrap">
+      {% for m in (media_list or []) %}
+        <div class="relative group w-48 rounded border bg-white" data-media-card="{{ m.id }}" data-assignees='{{ (m.assignees or []) | tojson | safe }}'>
+          <img src="{{ (('/static/' ~ m.thumbnail_url) if m.thumbnail_url else ('/static/uploads/' ~ m.file_path)) }}"
+               class="w-full h-28 object-cover" alt="media">
+          <button type="button" title="Remove"
+                  class="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-6 h-6 grid place-items-center"
+                  onclick="deleteMedia({{ m.id }}, this)">×</button>
+
+          <div class="p-2 text-[11px]" data-media-assign-field>
+            <label class="block text-[11px] text-stone-600 mb-1">Assignees</label>
+            <input class="media-assign-input w-full border rounded px-2 py-1" data-media-id="{{ m.id }}" placeholder="Type a name or email…">
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Dropzone upload (AJAX, immediate) -->
+  <div id="promptMediaForm" action="/admin/prompts/{{ prompt.id }}/media" method="post" enctype="multipart/form-data" class="mt-3">
+    <input id="promptFiles" type="file" multiple accept="image/*,video/*,audio/*" class="hidden">
+    <div id="promptDrop" class="rounded border border-dashed border-stone-300 bg-white/60 p-4 text-sm text-stone-600 cursor-pointer">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined">upload_file</span>
+        <span>Drop files here or click to upload</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex justify-end gap-2 pt-2">
+    <a href="/admin_dashboard" class="px-4 py-2 border rounded">Cancel</a>
+    <button type="submit" class="px-4 py-2 rounded text-white" style="background: #E07A3F;">Update</button>
+  </div>
+
+  <p id="editMsg" class="text-sm mt-3"></p>
+</form>
+
+<script>
+  /* Tagify for edit */
+  let editTagify;
+  (function initTagify(){
+    const el = document.getElementById('editTags');
+    if (!el) return;
+    editTagify = new Tagify(el, {
+      maxTags: 25, trim: true, duplicates: false, delimiters: ",",
+      dropdown: { enabled: 0, maxItems: 12, highlightFirst: true },
+      originalInputValueFormat: values => JSON.stringify(values.map(v => v.value))
+    });
+
+    // seed tags
+    const seed = {{ (tag_list or []) | tojson | safe }};
+    if (seed?.length) editTagify.addTags(seed.map(t => t.name));
+
+    // async suggestions
+    let ctl;
+    editTagify.on('input', async e => {
+      const v = e.detail.value?.trim(); if (!v) return;
+      if (ctl) ctl.abort(); ctl = new AbortController();
+      try {
+        const r = await fetch(`/admin/tags?q=${encodeURIComponent(v)}`, { credentials:'include', signal: ctl.signal });
+        if (!r.ok) return;
+        const list = await r.json();
+        editTagify.settings.whitelist = list.map(t => ({ value: t.name, slug: t.slug }));
+        editTagify.dropdown.show.call(editTagify, v);
+      } catch {}
+    });
+  })();
+
+  (function(){
+    const pid   = {{ prompt.id }};
+    const chips = document.getElementById('assignChips');
+    const input = document.getElementById('assignInput');
+    const dd    = document.getElementById('assignDD');
+    const elCount = document.getElementById('assignCount');
+    const elAns   = document.getElementById('assignAnswered');
+
+    function escapeHTML(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+    function recalcCounts(){
+      const total = chips.querySelectorAll('.chip-assign').length;
+      const answered = chips.querySelectorAll('.chip-assign[data-answered="1"]').length;
+      if (elCount) elCount.textContent = total;
+      if (elAns)   elAns.textContent = answered;
+    }
+
+    function mkChip(label, uid, answered){
+      const span = document.createElement('span');
+      span.className = 'chip chip-orange chip-assign inline-flex items-center gap-1 px-2 py-0.5 rounded-full shadow-sm' + (answered ? ' ring-1 ring-green-500' : '');
+      span.setAttribute('data-user-id', uid);
+      span.setAttribute('data-answered', answered ? '1' : '0');
+      span.innerHTML = `
+        <span class="truncate max-w-[12rem]">${escapeHTML(label)}</span>
+        ${answered ? '<span class="material-symbols-outlined text-[16px]" title="Answered">check_circle</span>' : ''}
+        <button type="button" class="chip-x text-[14px] leading-none" aria-label="Remove">×</button>`;
+      return span;
+    }
+
+    async function hydrate(){
+      if (chips.dataset.hydrated === 'true') { bindChipRemovers(); return; }
+      try{
+        const r = await fetch(`/api/admin/assignments/by-prompt?prompt_id=${encodeURIComponent(pid)}`, { credentials:'include' });
+        if (!r.ok) return;
+        const data = await r.json();
+        chips.innerHTML = '';
+        (data.users || []).forEach(u => chips.appendChild(mkChip(u.name || u.email, u.id, !!u.answered)));
+        chips.dataset.hydrated = 'true';
+        bindChipRemovers();
+        recalcCounts();
+      }catch{}
+    }
+
+    function bindChipRemovers(){
+      chips.querySelectorAll('.chip-assign .chip-x').forEach(btn=>{
+        if (btn.__bound) return; btn.__bound = true;
+        btn.addEventListener('click', async ()=>{
+          const uid = btn.closest('[data-user-id]')?.getAttribute('data-user-id');
+          if (!uid) return;
+          const r = await fetch('/api/admin/pool/remove', {
+            method:'POST', credentials:'include',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ prompt_id: Number(pid), user_id: Number(uid) })
+          });
+          if (r.ok){ btn.closest('.chip-assign')?.remove(); recalcCounts(); }
+        });
+      });
+    }
+
+    async function searchUsers(q){
+      const r = await fetch(`/admin/users/search?q=${encodeURIComponent(q)}`, { credentials:'include' });
+      if (!r.ok) return [];
+      const payload = await r.json();
+      return Array.isArray(payload) ? payload : (payload.users || []);
+    }
+
+    function hideDD(){ dd.classList.add('hidden'); dd.innerHTML=''; }
+
+    let ctl;
+    input.addEventListener('input', async ()=>{
+      const q = input.value.trim();
+      if (q.length < 2){ hideDD(); return; }
+      try{
+        ctl?.abort(); ctl = new AbortController();
+        const users = await searchUsers(q);
+        dd.innerHTML = users.length
+          ? users.map(u => `<button type="button" role="option" class="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                              data-id="${u.id}" data-label="${escapeHTML(u.name || u.email)}">
+                              <div class="font-medium">${escapeHTML(u.name || u.email)}</div>
+                              <div class="text-xs text-stone-600">${escapeHTML(u.email || '')}</div>
+                            </button>`).join('')
+          : `<div class="px-3 py-2 text-sm text-gray-500">No matches</div>`;
+        dd.classList.remove('hidden');
+      }catch{}
+    });
+
+    dd.addEventListener('click', async (e)=>{
+      const b = e.target.closest('button[data-id]'); if (!b) return;
+      const uid = b.getAttribute('data-id');
+      const label = b.getAttribute('data-label') || '';
+      if (chips.querySelector(`[data-user-id="${CSS.escape(uid)}"]`)) { input.value=''; hideDD(); return; }
+      const r = await fetch('/api/admin/pool/add', {
+        method:'POST', credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ prompt_id: Number(pid), user_id: Number(uid) })
+      });
+      if (r.ok){
+        chips.appendChild(mkChip(label, uid, /*answered=*/false));
+        bindChipRemovers();
+        recalcCounts();
+        input.value=''; hideDD();
+      }
+    });
+
+    document.addEventListener('click', (ev)=>{ if (!dd.contains(ev.target) && ev.target!==input) hideDD(); });
+
+    // go!
+    hydrate();
+  })();
+
+  // ----- Save -----
+  document.getElementById('editPromptForm')?.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const id = document.getElementById('editPromptId').value;
+    const fd = new FormData(e.target);
+    try {
+      const r = await fetch(`/admin_update_prompt/${id}`, { method:'POST', body: fd, credentials:'include' });
+      const msg = document.getElementById('editMsg');
+      if (!r.ok) { msg.textContent = 'Failed to update prompt.'; msg.className='text-red-600'; return; }
+      const tags = (editTagify?.value || []).map(t => t.value);
+      const tRes = await fetch(`/admin/prompts/${id}/tags`, {
+        method:'POST', credentials:'include', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(tags)
+      });
+      if (tRes.ok) { msg.textContent='Updated'; msg.className='text-green-600'; }
+      else { msg.textContent='Prompt saved, tags failed'; msg.className='text-orange-600'; }
+    } catch(e){ console.error(e); }
+  });
+
+  // ----- Delete media -----
+  async function deleteMedia(mediaId, btn){
+    try{
+      const r = await fetch(`/admin_delete_prompt_media/${mediaId}`, { method:'DELETE', credentials:'include' });
+      if (r.ok) {
+        btn.closest('[data-media-card]')?.remove();
+      } else {
+        alert('Failed to delete media.');
+      }
+    }catch(e){ console.error(e); }
+  }
+
+  // Tagify-based per-media assignees in modal
+  (function initMediaAssignTagify(){
+    async function searchUsers(q){
+      const r = await fetch(`/admin/users/search?q=${encodeURIComponent(q)}`, { credentials:'include' });
+      if (!r.ok) return [];
+      const payload = await r.json();
+      const list = Array.isArray(payload) ? payload : (payload.users || []);
+      return list.map(u => ({ value: (u.name||u.email), uid: u.id, email: u.email }));
+    }
+
+    function attachAssignTagifyToCard(card){
+      card.querySelectorAll('.media-assign-input').forEach((input)=>{
+        if (input.__tagified) return; input.__tagified = true;
+        const mediaId = input.getAttribute('data-media-id');
+        if (!mediaId) return;
+        const raw = card.getAttribute('data-assignees') || '[]';
+        let seed = [];
+        try { seed = JSON.parse(raw) || []; } catch {}
+        const tagify = new Tagify(input, { dropdown:{ enabled:0, maxItems:10 }, whitelist:[], originalInputValueFormat: (vals)=> JSON.stringify(vals.map(v=>({ id:v.uid, label:v.value })))});
+        if (seed && seed.length) tagify.addTags(seed.map(u => ({ value:(u.name||u.email||''), uid:Number(u.id) })));
+        let ctl;
+        tagify.on('input', async (e)=>{
+          const v = (e.detail.value||'').trim(); if (v.length<2) return tagify.dropdown.hide();
+          try{ ctl?.abort(); ctl=new AbortController(); const items = await searchUsers(v); tagify.settings.whitelist = items; tagify.dropdown.show(v);}catch{}
+        });
+        tagify.on('add', async (e)=>{
+          const d = e.detail?.data || {}; if (typeof d.uid==='undefined') return;
+          try{ const r=await fetch(`/admin/prompt_media/${encodeURIComponent(mediaId)}/assignees/add`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:Number(d.uid)})}); if(!r.ok) throw 0;}catch{ tagify.removeTags(d.value); }
+        });
+        tagify.on('remove', async (e)=>{
+          const d = e.detail?.data || {}; if (typeof d.uid==='undefined') return;
+          try{ const r=await fetch(`/admin/prompt_media/${encodeURIComponent(mediaId)}/assignees/remove`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:Number(d.uid)})}); if(!r.ok) throw 0;}catch{}
+        });
+      });
+    }
+    window.attachAssignTagifyToCard = attachAssignTagifyToCard;
+    document.querySelectorAll('[data-media-card]').forEach(attachAssignTagifyToCard);
+  })();
+
+  // Drag & drop + click-to-upload (AJAX immediate upload)
+  (function initDropUpload(){
+    const grid = document.getElementById('mediaGrid') || document.getElementById('attachedMediaPreview');
+    const wrap = document.getElementById('promptMediaForm');
+    const input = document.getElementById('promptFiles');
+    const dz = document.getElementById('promptDrop');
+    if (!wrap || !input || !dz || !grid) return;
+
+    function makeSpinner(){ const d=document.createElement('div'); d.className='spinner'; return d; }
+    function filePlaceholder(ext){ const d=document.createElement('div'); d.className='file-placeholder'; d.textContent=(ext||'FILE').toUpperCase(); return d; }
+
+    function makeCardSkeleton(file){
+      const card = document.createElement('div');
+      card.className = 'relative group w-48 rounded border overflow-hidden bg-white';
+      let imgEl = null;
+      if (file?.type?.startsWith('image/')){
+        const url = URL.createObjectURL(file);
+        imgEl = document.createElement('img'); imgEl.src=url; imgEl.className='w-full h-28 object-cover';
+        card.appendChild(imgEl); card.__revoke = ()=> URL.revokeObjectURL(url);
+      } else {
+        const ext=(file?.name||'').split('.').pop()||''; card.appendChild(filePlaceholder(ext));
+      }
+      card.appendChild(makeSpinner());
+      const meta = document.createElement('div'); meta.className='p-2 text-[11px]';
+      meta.innerHTML = '<label class="block text-[11px] text-stone-600 mb-1">Assignees</label>\n<input class="media-assign-input w-full border rounded px-2 py-1" placeholder="Type a name or email…">';
+      card.appendChild(meta);
+      grid.appendChild(card);
+      card.__img = imgEl;
+      return card;
+    }
+
+    function attachDeleteBtn(card, mediaId){
+      const b=document.createElement('button'); b.type='button'; b.title='Remove';
+      b.className='absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-6 h-6 grid place-items-center';
+      b.textContent='×';
+      b.addEventListener('click', ()=> deleteMedia(mediaId, b));
+      card.appendChild(b);
+    }
+
+    function whenImageLoads(url, ok, fail){ const img=new Image(); const bust=url+(url.includes('?')?'&':'?')+'v='+Date.now(); img.onload=()=>ok(bust); img.onerror=fail; img.src=bust; }
+    function pollForThumb(card, url){ if(!url){ card.querySelector('.spinner')?.remove(); return; } let tries=0; (function tick(){ whenImageLoads(url, (fresh)=>{ if(card.__img) card.__img.src=fresh; card.querySelector('.spinner')?.remove(); }, ()=>{ if(++tries<10) setTimeout(tick, 1200); else card.querySelector('.spinner')?.remove(); }); })(); }
+
+    async function upload(files){
+      if (!files || !files.length) return;
+      const action = wrap.getAttribute('action');
+      const skeletons = Array.from(files).map(makeCardSkeleton);
+      const fd = new FormData(); Array.from(files).forEach(f=> fd.append('media_files', f));
+      try{
+        const r = await fetch(action, { method:'POST', body: fd, credentials:'include' });
+        if (!r.ok) throw new Error('upload failed');
+        const payload = await r.json();
+        const items = Array.isArray(payload.media) ? payload.media : [];
+        items.forEach((it, i)=>{
+          const card = skeletons[i]; if (!card) return;
+          if (typeof card.__revoke==='function') card.__revoke();
+          card.setAttribute('data-media-card', String(it.id));
+          const input = card.querySelector('.media-assign-input'); if (input) input.setAttribute('data-media-id', String(it.id));
+          window.attachAssignTagifyToCard?.(card);
+          attachDeleteBtn(card, it.id);
+          const u = it.thumbnail_url || it.file_url || '';
+          if (u && card.__img) { card.__img.src = u + (u.includes('?')?'&':'?') + 'v=' + Date.now(); }
+          pollForThumb(card, it.thumbnail_url || it.file_url);
+        });
+      }catch(e){ console.error(e); skeletons.forEach(c=>{ c.style.boxShadow='inset 0 0 0 2px #dc2626'; c.querySelector('.spinner')?.remove(); }); }
+      finally { input.value=''; }
+    }
+
+    dz.addEventListener('click', ()=> input.click());
+    input.addEventListener('change', ()=> upload(input.files));
+    dz.addEventListener('dragover', (e)=>{ e.preventDefault(); dz.style.borderColor='#E07A3F'; dz.style.background='#FFF4EF'; });
+    dz.addEventListener('dragleave', ()=>{ dz.style.borderColor=''; dz.style.background=''; });
+    dz.addEventListener('drop', (e)=>{ e.preventDefault(); dz.style.borderColor=''; dz.style.background=''; upload(e.dataTransfer.files); });
+  })();
+</script>

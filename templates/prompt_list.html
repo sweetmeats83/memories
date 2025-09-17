@@ -1,0 +1,473 @@
+{# templates/prompt_list.html — Chapters & Prompts (numbered ordering, no drag) #}
+
+{% set _groups = chapters.items() if chapters is defined else (prompts|groupby('chapter')) %}
+
+<div id="chaptersRoot" class="space-y-3">
+  {% for chapter, items in _groups %}
+  {% set chap = chapter or 'Misc' %}
+  {% set chap_key = (chap|lower|replace(' ', '_')|replace('/', '_')) %}
+<section class="chapter-block rounded border border-stone-200 bg-white/60 backdrop-blur-sm"
+         data-chapter-name="{{ chap }}" data-chapter-key="{{ chap_key }}">
+  <header class="flex items-center gap-3 px-3 py-2 border-b rounded-md border-stone-200 bg-white/30">
+    <!-- order bubble -->
+    <input type="number"
+           class="order-input w-12 text-center px-2 py-1 rounded-full border border-stone-300 bg-white"
+           min="1" step="1" value="{{ loop.index }}" aria-label="Chapter order" />
+    <!-- title + count -->
+    <div class="flex-1 min-w-0 flex items-center gap-2">
+      <h3 class="chapter-title font-medium truncate">{{ chap }}</h3>
+      <span class="text-xs text-stone-500">{{ items|length }} prompts</span>
+    </div>
+
+    <!-- NEW: meta button (fix the data-chapter-key) -->
+    <button
+      type="button"
+      class="btn btn-sm btn-ghost text-grey-600 hover:text-amber-300"
+      title="Edit chapter meta"
+      data-action="open-chapter-meta"
+      data-chapter-key="{{ chap_key }}"
+      data-meta-btn>
+      <span class="material-symbols-outlined align-middle text-lg">tune</span>
+      <span class="ml-1 align-middle">Meta</span>
+    </button>
+
+    <button type="button" class="toggle-btn text-stone-600 hover:text-black"
+            aria-expanded="false" title="Collapse/Expand">
+      <span class="material-symbols-outlined">expand_less</span>
+    </button>
+  </header>
+
+    <div class="chapter-body p-2 space-y-2" style="display:none">
+      {% for p in items %}
+      {% set pid   = p.id %}
+      {% set tlist = (tags_map.get(pid, []) if tags_map is defined else []) %}
+      {% set mlist = (media_map.get(pid, []) if media_map is defined else []) %}
+      {% set assigns = (assignments_by_prompt.get(pid, []) if assignments_by_prompt is defined else []) %}
+
+      {# Build a search blob (text + chapter + tags + assignee names) #}
+      {% set search_blob = (p.text or '') ~ ' ' ~ (p.chapter or '') ~ ' ' ~
+         (tlist | map(attribute='name') | join(' ')) ~ ' ' ~
+         (assigns | map(attribute='name') | join(' ')) %}
+
+      <article class="group rounded border border-stone-200 bg-white/50 p-2"
+               data-role="prompt-card"
+               data-prompt-id="{{ pid }}"
+               data-search="{{ search_blob|lower }}">
+        <div class="flex items-start gap-2">
+          <span class="material-symbols-outlined text-[20px] text-stone-500">description</span>
+
+          <div class="flex-1 min-w-0">
+            <!-- Prompt text -->
+            <div class="font-medium leading-snug break-words">{{ p.text }}</div>
+
+            <!-- Media thumbs (if any) -->
+            {% if mlist %}
+            <div class="mt-2 flex flex-wrap gap-1">
+              {% for m in mlist %}
+                {# file/thumb normalization for both context shapes #}
+                {% set _file  = (m.file_url if m.file_url is defined else ('/static/uploads/' ~ (m.file_path or ''))) %}
+                {% set _thumb = (m.thumb_url if m.thumb_url is defined else ('/static/' ~ (m.thumbnail_url or ''))) %}
+                {% set _img = _thumb or _file %}
+                {% if _img %}
+                <img src="{{ _img }}" alt="" class="thumb-sm">
+                {% endif %}
+              {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Tag chips -->
+            {% if tlist %}
+            <div class="mt-2 flex flex-wrap gap-1">
+              {% for t in tlist %}
+              <span class="text-xs px-2 py-0.5 rounded-full border border-stone-300 bg-white">
+                {{ t.name or t.slug }}
+              </span>
+              {% endfor %}
+            </div>
+            {% endif %} 
+
+            <div class="assign-chips flex flex-wrap gap-1 items-center"
+                data-hydrated="{{ 'true' if assigns else 'false' }}">
+              {% for u in assigns %}
+                <span class="chip chip-assign chip-orange inline-flex items-center gap-1 px-2 py-0.5 rounded-full shadow-sm"
+                      data-user-id="{{ u.id }}">
+                  <span class="truncate max-w-[9rem]">{{ u.name or u.email }}</span>
+                  <button class="chip-x text-[14px] leading-none" aria-label="Remove">×</button>
+                </span>
+              {% endfor %}
+            </div>
+
+            <!-- Add-assignee input + dropdown (PromptUI.wirePromptCards binds these) -->
+            <div class="mt-2 relative">
+              <input class="assign-add w-full input rounded px-3 py-1.5"
+                     placeholder="Assign to a user… type to search"
+                     autocomplete="off" />
+              <div class="assign-dd absolute z-10 bg-white border border-stone-200 rounded shadow hidden mt-1 w-64 max-h-56 overflow-auto"></div>
+            </div>
+          </div>
+
+          <!-- Row actions -->
+          <div class="shrink-0 flex flex-col gap-1 items-end">
+            <a class="px-2 py-1 border rounded flex items-center gap-1 js-edit"
+               href="/admin_edit_prompt/{{ pid }}" title="Edit prompt">
+              <span class="material-symbols-outlined text-[18px]">edit</span> Edit
+            </a>
+              <button type="button"
+                      class="px-2 py-1 border rounded flex items-center gap-1 js-delete del-btn"
+                      title="Delete prompt">
+                <span class="material-symbols-outlined text-[18px]">delete</span> Delete
+              </button>
+          </div>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+<style>
+  .chip-orange{ background:#FFF4EF; border:1px solid #E7E5E4; color:#C65D31; }
+  .chip-orange .chip-x{ margin-left:.25rem; }
+  .del-btn{ border-color:#E07A3F; color:#C65D31; }
+  .del-btn:hover{ background:#FFF4EF; }
+  .chapter-block header { flex-wrap: wrap; row-gap: .5rem; }
+  .chapter-block .order-input { width: 3.25rem; } /* avoids shrinking too small on mobile */
+</style>
+<script>
+/* prompt_list.html initializer (exported) */
+(function(){
+  window.ChapterUI = window.ChapterUI || {};
+
+  window.ChapterUI.init = function init(container){
+    const root = (container || document).querySelector('#chaptersRoot');
+    if (!root || root.__wired) return;
+    root.__wired = true;
+
+    const saveBtn = document.getElementById('saveChapterOrderBtn');
+    const $$    = (sel, el=root) => Array.from(el.querySelectorAll(sel));
+    const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n|0));
+    const toast = (msg, ok=true) => {
+      try { window.toast?.(msg); } catch(_){
+        const t = document.createElement('div');
+        t.textContent = msg;
+        t.className = 'fixed bottom-4 left-1/2 -translate-x-1/2 px-3 py-2 rounded shadow text-sm ' +
+                      (ok ? 'bg-green-600 text-white' : 'bg-red-600 text-white');
+        document.body.appendChild(t);
+        setTimeout(()=>t.remove(), 2000);
+      }
+    };
+
+    // -------- Load server meta (order, display_name, tint) and apply
+    async function loadMeta() {
+      try {
+        const res = await fetch('/admin/chapters_json', { credentials:'include' });
+        if (!res.ok) return;
+        const meta = await res.json(); // [{name, display_name, order, tint, ...}]
+        const byName = new Map((meta||[]).map(m => [String(m.name||'Misc'), m]));
+
+        $$('.chapter-block').forEach((blk) => {
+          const name = blk.dataset.chapterName || 'Misc';
+          const m = byName.get(name);
+          const input = blk.querySelector('.order-input');
+          const title = blk.querySelector('.chapter-title');
+
+          if (m && Number.isFinite(+m.order)) input.value = +m.order + 1; // display 1..N (server is 0-based)
+          input.dataset.prev = input.value;
+
+          if (m && m.display_name && title) title.textContent = m.display_name;
+
+          if (m && m.tint) {
+            blk.style.borderColor = m.tint + '33';
+            blk.style.background  = m.tint + '08';
+            const metaBtn = blk.querySelector('[data-meta-btn]');
+            if (metaBtn) {
+              // Convert HEX to RGBA with alpha
+              function hexToRgba(hex, alpha = 0.2) {
+                let c = hex.replace('#', '');
+                if (c.length === 3) {
+                  c = c.split('').map(x => x + x).join('');
+                }
+                const r = parseInt(c.substr(0, 2), 16);
+                const g = parseInt(c.substr(2, 2), 16);
+                const b = parseInt(c.substr(4, 2), 16);
+                return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+              }
+
+              // Light transparent background
+              metaBtn.style.backgroundColor = hexToRgba(m.tint, 0.2);
+              metaBtn.style.color = "#000";  // keep text/icon in the tint color
+              metaBtn.style.border = `1px solid ${m.tint}`;
+              metaBtn.style.transition = "background-color 0.2s, color 0.2s";
+
+              // Darker hover effect (increase alpha)
+              metaBtn.addEventListener("mouseenter", () => {
+                metaBtn.style.backgroundColor = hexToRgba(m.tint, 0.35);
+                metaBtn.style.color = "#fff";
+              });
+              metaBtn.addEventListener("mouseleave", () => {
+                metaBtn.style.backgroundColor = hexToRgba(m.tint, 0.2);
+                metaBtn.style.color = "#000";
+              });
+            }
+          }
+        });
+
+        sortDOM(); // sort by numbers we just applied
+      } catch { /* ignore */ }
+    }
+    function shadeColor(color, percent) {
+      let f = parseInt(color.slice(1),16),
+          t = percent<0?0:255,
+          p = percent<0?percent*-1:percent,
+          R = f>>16,
+          G = f>>8&0x00FF,
+          B = f&0x0000FF;
+      return "#" + (0x1000000 +
+        (Math.round((t-R)*p)+R)*0x10000 +
+        (Math.round((t-G)*p)+G)*0x100 +
+        (Math.round((t-B)*p)+B)).toString(16).slice(1);
+    }
+    // -------- Ordering helpers
+    function getBlocksWithOrder() {
+      return $$('.chapter-block').map(blk => {
+        const input = blk.querySelector('.order-input');
+        return { blk, input, name: blk.dataset.chapterName, num: +input.value || 0 };
+      });
+    }
+
+    function sortDOM() {
+      const items = getBlocksWithOrder().sort((a,b)=> a.num - b.num || a.name.localeCompare(b.name));
+      items.forEach(({blk}) => root.appendChild(blk));
+      // Normalize display numbers to 1..N
+      items.forEach((it, idx) => {
+        it.input.value = idx + 1;
+        it.input.dataset.prev = String(idx + 1);
+      });
+    }
+
+    function swapOrMove(changedInput) {
+      const blocks = getBlocksWithOrder();
+      const N = blocks.length;
+      const me = blocks.find(x => x.input === changedInput);
+      const prev = +(changedInput.dataset.prev || me.num || 1);
+      let target = clamp(+changedInput.value || prev, 1, N);
+
+      if (target === prev) { changedInput.value = target; return; }
+
+      const other = blocks.find(x => x !== me && x.num === target);
+      if (other) {
+        // swap
+        other.input.value = prev;
+        me.input.value = target;
+      } else {
+        // move me to target; shift others
+        const ordered = blocks.sort((a,b)=> a.num - b.num);
+        const idxPrev = ordered.indexOf(me);
+        ordered.splice(idxPrev, 1);
+        ordered.splice(target-1, 0, me);
+        ordered.forEach((it, i) => it.input.value = i+1);
+      }
+      sortDOM();
+      markDirty();
+    }
+
+    // -------- Expand/Collapse
+    root.addEventListener('click', (e) => {
+      const btn = e.target.closest('.toggle-btn');
+      if (!btn) return;
+      const sec = btn.closest('.chapter-block');
+      const body = sec.querySelector('.chapter-body');
+      const expanded = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      btn.querySelector('.material-symbols-outlined').textContent = expanded ? 'expand_more' : 'expand_less';
+      body.style.display = expanded ? 'none' : '';
+    });
+
+    // -------- Order inputs
+    root.addEventListener('focusin', (e) => {
+      const input = e.target.closest('.order-input'); if (!input) return;
+      input.dataset.prev = input.value; input.select();
+    });
+    root.addEventListener('keydown', (e) => {
+      const input = e.target.closest('.order-input'); if (!input) return;
+      if (e.key === 'Enter') { e.preventDefault(); swapOrMove(input); input.blur(); }
+    });
+    root.addEventListener('change', (e) => {
+      const input = e.target.closest('.order-input'); if (!input) return;
+      swapOrMove(input);
+    });
+
+    // -------- Dirty + Save
+    let dirty = false, saveTimer = null;
+    function markDirty(){ dirty = true; debounceSave(); }
+    function debounceSave(){ if (saveTimer) clearTimeout(saveTimer); saveTimer = setTimeout(()=>doSave('autosave'), 800); }
+
+    async function doSave(mode='manual') {
+      if (!dirty && mode !== 'manual') return;
+      // Build ordered list top→bottom; server uses 0-based order
+      const items = Array.from(root.querySelectorAll('.chapter-block')).map((blk, idx)=>({
+        name: blk.dataset.chapterName,
+        order: idx
+      }));
+      try{
+        const res = await fetch('/admin/chapters/reorder', {
+          method:'POST', credentials:'include',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(items)
+        });
+        if (!res.ok) throw new Error('Save failed');
+        dirty = false;
+        if (mode === 'manual') toast('Chapter order saved');
+      }catch{
+        toast('Could not save chapter order', false);
+      }
+    }
+
+    // Expose manual save for dashboard button
+    window.ChapterUI.saveOrder = () => doSave('manual');
+    saveBtn?.addEventListener('click', () => doSave('manual'));
+
+    // Initial numbering (1..N) and meta paint
+    $$('.chapter-block .order-input').forEach((input, i)=>{ input.value=i+1; input.dataset.prev=String(i+1); });
+    loadMeta();
+  };
+
+  // Auto-init once on the server-rendered include
+  if (document.getElementById('chaptersRoot')) {
+    window.ChapterUI.init(document);
+  }
+})();
+</script>
+<script>
+/* Minimal, self-contained delete binder for prompt_list.html */
+(function(){
+  const root = document.getElementById('chaptersRoot');
+  if (!root || root.dataset.deleteWired === '1') return;
+  root.dataset.deleteWired = '1';
+
+  function toast(msg){
+    if (typeof window.toast === 'function') return window.toast(msg);
+    // fallback
+    const t = document.createElement('div');
+    t.className = 'fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white text-sm rounded-full px-3 py-1.5 shadow z-[200]';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translate(-50%, 8px)'; }, 1200);
+    setTimeout(()=> t.remove(), 1600);
+  }
+
+  root.addEventListener('click', async (e) => {
+    const btn  = e.target.closest('.js-delete');
+    if (!btn) return;
+
+    const card = btn.closest('[data-role="prompt-card"]');
+    const pid  = card?.getAttribute('data-prompt-id');
+    if (!pid) return;
+
+    if (!confirm('Delete this prompt and all of its media? This cannot be undone.')) return;
+
+    btn.disabled = true;
+    try {
+      const r = await fetch(`/admin_delete_prompt/${encodeURIComponent(pid)}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      if (!r.ok) throw new Error(await r.text());
+
+      // Remove card from DOM
+      const sec = card.closest('.chapter-block');
+      card.remove();
+
+      // Update chapter count (or remove the chapter if empty)
+      if (sec) {
+        const countSpan = sec.querySelector('header .text-xs.text-stone-500');
+        const remaining = sec.querySelectorAll('[data-role="prompt-card"]').length;
+        if (countSpan) countSpan.textContent = `${remaining} prompts`;
+        if (remaining === 0) sec.remove();
+      }
+
+      toast('Prompt deleted');
+    } catch (err) {
+      console.error(err);
+      btn.disabled = false;
+      toast('Failed to delete prompt');
+    }
+  });
+})();
+</script>
+<script>
+/* Assign add/remove wiring for prompt_list.html */
+(function(){
+  const root = document.getElementById('chaptersRoot');
+  if (!root || root.dataset.assignWired === '1') return;
+  root.dataset.assignWired = '1';
+
+  // Remove assignment via chip ×
+  root.addEventListener('click', async (e) => {
+    const x = e.target.closest('.chip-assign .chip-x');
+    if (!x) return;
+    const chip = x.closest('.chip-assign');
+    const card = x.closest('[data-role="prompt-card"]');
+    if (!chip || !card) return;
+    const userId = chip.getAttribute('data-user-id');
+    const promptId = card.getAttribute('data-prompt-id');
+    try{
+      await fetch('/api/admin/pool/remove', {
+        method:'POST', credentials:'include', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ user_id: Number(userId), prompt_id: Number(promptId) })
+      });
+      chip.remove();
+    }catch(err){ console.warn('remove failed', err); }
+  });
+
+  // Simple debounced search helper
+  function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
+
+  // Add assignment via dropdown
+  root.addEventListener('input', debounce(async (e) => {
+    const input = e.target.closest('.assign-add');
+    if (!input) return;
+    const card = input.closest('[data-role="prompt-card"]');
+    const dd   = card.querySelector('.assign-dd');
+    const q = (input.value||'').trim();
+    dd.innerHTML = ''; dd.classList.add('hidden');
+    if (!q) return;
+    const pid = card.getAttribute('data-prompt-id');
+    try{
+      const r = await fetch(`/admin/users/search?q=${encodeURIComponent(q)}&exclude_prompt_id=${encodeURIComponent(pid)}`, { credentials:'include' });
+      if (!r.ok) return;
+      const items = await r.json();
+      if (!Array.isArray(items) || !items.length) return;
+      dd.innerHTML = items.map(u => `<div class="px-2 py-1 hover:bg-stone-100 cursor-pointer" data-user-id="${u.id}">${u.name || u.email}</div>`).join('');
+      dd.classList.remove('hidden');
+    }catch(err){ console.warn('search failed', err) }
+  }, 200));
+
+  // Click a result to assign
+  root.addEventListener('click', async (e) => {
+    const row = e.target.closest('.assign-dd > div[data-user-id]');
+    if (!row) return;
+    const dd = row.parentElement;
+    const card = dd.closest('[data-role="prompt-card"]');
+    const chips = card.querySelector('.assign-chips');
+    const pid = Number(card.getAttribute('data-prompt-id'));
+    const uid = Number(row.getAttribute('data-user-id'));
+    try{
+      await fetch('/api/admin/pool/add', {
+        method:'POST', credentials:'include', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ user_id: uid, prompt_id: pid })
+      });
+      // add chip
+      const span = document.createElement('span');
+      span.className = 'chip chip-assign chip-orange inline-flex items-center gap-1 px-2 py-0.5 rounded-full shadow-sm';
+      span.setAttribute('data-user-id', String(uid));
+      span.innerHTML = `<span class="truncate max-w-[9rem]">${row.textContent}</span><button class="chip-x text-[14px] leading-none" aria-label="Remove">×</button>`;
+      chips.appendChild(span);
+      // clear input and hide dd
+      const input = card.querySelector('.assign-add'); if (input) input.value='';
+      dd.classList.add('hidden'); dd.innerHTML='';
+    }catch(err){ console.warn('assign failed', err) }
+  });
+})();
+</script>
+

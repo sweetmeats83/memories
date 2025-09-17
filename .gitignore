@@ -1,0 +1,42 @@
+/c6221c2c932a,
+/798d79f9a763,
+/faec801f00b3,
+/43245f9e91f9,
+/templates.zip
+/25.2
+/ERROR
+/[internal]
+/addc09488082,
+/c66d93087670,
+/a6e192af9b54,
+/902e0ecaa9e0,
+/.env
+# Local environment and secrets
+.env
+.env.*
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs and dumps
+*.log
+core
+
+# Node artifacts
+node_modules/
+
+# Uploads (user-generated content)
+static/uploads/
+
+# OS/editor cruft
+.DS_Store
+.vscode/
+.idea/
+.continue/
+
+# Alembic migrations (ignored if you auto-create tables)
+alembic/
+alembic.ini

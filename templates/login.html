@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+
+
+<div class="flex flex-col items-center justify-center min-h-screen">        
+  <img src="{{ url_for('static', path='memorieslogo.png') }}?v=20250919" 
+         alt="Memories Logo" 
+         class="mx-auto mb-12 h-40 w-auto">
+
+  <div class="text-center rounded-lg bg-white/10 p-10 backdrop-blur-md shadow-lg inline-block  animate-fadeIn w-full max-w-md" style="position:relative">
+
+    <h1 class="text-4xl font-bold mb-3 tracking-wider flex items-center justify-center gap-2">
+      <span class="material-symbols-outlined">login</span> LOGIN
+    </h1>
+    <!-- Local toast/notice just above the form -->
+    <div id="loginToast" class="mb-4 hidden text-left">
+      <div id="loginToastInner" class="rounded-lg border px-3 py-2 text-sm"></div>
+    </div>
+    <form id="loginForm" class="space-y-6">
+      <!-- Email Field -->
+      <div class="relative">
+        <input type="email" name="email" id="email" required
+          class="peer w-full p-3 border-b-2 border-gray-300 bg-transparent placeholder-transparent focus:outline-none focus:border-orange-500 text-black">
+        <label for="email"
+          class="absolute left-3 -top-5 text-gray-700 text-sm transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-gray-400 peer-placeholder-shown:text-base peer-focus:-top-3.5 peer-focus:text-sm peer-focus:text-orange-500">
+          Email Address
+        </label>
+        <span class="material-symbols-outlined absolute right-2 top-3 text-gray-400">mail</span>
+      </div>
+
+      <!-- Password Field -->
+      <div class="relative">
+        <input type="password" name="password" id="password" required
+          class="peer w-full p-3 border-b-2 border-gray-300 bg-transparent placeholder-transparent focus:outline-none focus:border-orange-500 text-black">
+        <label for="password"
+          class="absolute left-3 -top-5 text-gray-700 text-sm transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-gray-400 peer-placeholder-shown:text-base peer-focus:-top-3.5 peer-focus:text-sm peer-focus:text-orange-500">
+          Password
+        </label>
+        <span class="material-symbols-outlined absolute right-2 top-3 text-gray-400">lock</span>
+      </div>
+
+      <!-- Login Button -->
+      <button type="submit"
+          class="inline-flex items-center gap-2 px-4 py-2 border border-black rounded-md text-black hover:bg-black hover:text-white transition">
+          <span class="material-icons-outlined text-base">login</span>Login
+      </button>
+      <!-- Forgot Password -->
+      <p class="mt-4 text-sm">
+        <a href="/reset_password" class="text-orange-600 hover:underline">Forgot password?</a>
+      </p>
+    </form>
+  </div>
+</div>
+
+<script>
+// Local toast above the form (override any global showNotification)
+function showNotification(message, kind){
+  const wrap = document.getElementById('loginToast');
+  const box  = document.getElementById('loginToastInner');
+  if (!wrap || !box) return;
+  wrap.classList.remove('hidden');
+  box.textContent = message || '';
+  const ok = (kind||'').toLowerCase()==='success';
+  box.className = 'rounded-lg border px-3 py-2 text-sm ' + (ok ? 'border-green-600 bg-green-100 text-green-800' : 'border-red-600 bg-red-100 text-red-800');
+  // ensure visible just above the form
+  wrap.scrollIntoView({behavior:'smooth', block:'center'});
+  if (ok) setTimeout(()=>{ wrap.classList.add('hidden'); }, 1800);
+}
+
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value.trim();
+
+  try {
+    const res = await fetch("/auth/jwt/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      credentials: "include",
+      body: new URLSearchParams({ username: email, password: password }),
+    });
+
+    if (res.ok) {
+      showNotification("✅ Login successful! Redirecting...", "success");
+      setTimeout(() => {
+        const p = new URLSearchParams(location.search); window.location.href = (p.get("next") || "/");
+      }, 1000);
+    } else {
+      showNotification("❌ Invalid email or password.", "error");
+    }
+  } catch (err) {
+    showNotification("⚠️ Network error. Please try again.", "error");
+  }
+});
+</script>
+{% endblock %}

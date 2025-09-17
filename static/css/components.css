@@ -1,0 +1,163 @@
+/* Buttons */
+.btn { display: inline-flex; align-items: center; gap: var(--space-2);
+  border: var(--line-w) solid var(--accent); border-radius: var(--radius);
+  background: #fff; color: var(--fg);
+  padding: var(--space-3) var(--space-4); font-weight: 700; cursor: pointer; transition: transform .02s ease-in;
+}
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn .icon { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+
+.btn-primary { background: #fff; }
+.btn-primary:hover { background: var(--muted); }
+.btn-ghost { background: transparent; }
+.btn-ghost:hover { background: var(--muted); }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { background: #ffe9ed; }
+.btn-success { border-color: var(--success); color: var(--success); }
+.btn-info    { border-color: var(--info);    color: var(--info); }
+.btn-sm { padding: var(--space-2) var(--space-3); font-size: var(--fs-1); }
+.btn-lg { padding: var(--space-4) var(--space-5); font-size: var(--fs-3); }
+.icon-btn { padding: var(--space-2); width: 40px; height: 40px; justify-content: center; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.toolbar .spacer { flex: 1; }
+
+details.collapsible { border: var(--line-w) solid var(--accent); border-radius: var(--radius); padding: var(--space-3); background: #fff; }
+details.collapsible > summary { cursor: pointer; list-style: none; font-weight: 700;
+  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-3)) var(--space-3);
+  padding: var(--space-3);
+  border-bottom: var(--line-w) solid var(--accent);
+}
+details.collapsible[open] > summary { background: var(--muted); }
+
+
+
+/* ---- Inline styles consolidated ---- */
+
+/* ===== Moved from admin_dashboard.html ===== */
+
+@keyframes fadeIn {
+  0% {opacity:0; transform: translateY(10px);}
+  100% {opacity:1; transform: translateY(0);}
+}
+.animate-fadeIn { animation: fadeIn 0.6s ease-out forwards; }
+
+/* Hover icons */
+.prompt-actions {
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+}
+.group:hover .prompt-actions {
+  opacity: 1;
+}
+#editModalContent, #confirmModal > div {
+  transition: all 0.2s ease;
+}
+/* Collapsible */
+.hidden { display: none; }
+
+
+/* ===== Moved from login.html ===== */
+
+@keyframes fadeIn {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn { animation: fadeIn 0.6s ease-out forwards; }
+
+
+/* ===== Moved from register.html ===== */
+
+@keyframes fadeIn {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn { animation: fadeIn 0.6s ease-out forwards; }
+
+
+/* ===== Moved from reset_password.html ===== */
+
+@keyframes fadeIn {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn { animation: fadeIn 0.6s ease-out forwards; }
+
+
+/* ===== Moved from set_password.html ===== */
+
+@keyframes fadeIn {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn { animation: fadeIn 0.6s ease-out forwards; }
+
+/* Keep cards visibly on top of the gradient */
+/* Light-mode card hardening */
+html:not(.dark) .card {
+  position: relative !important;
+  z-index: 20 !important;
+  background: #ffffff !important;
+  color: #000000 !important;
+  opacity: 1 !important;
+}
+
+/* Dark-mode glassy neon cards */
+html.dark .card {
+  position: relative;
+  z-index: 20;
+  color: var(--fg);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-stroke);
+  backdrop-filter: blur(10px) saturate(1.02);
+  -webkit-backdrop-filter: blur(10px) saturate(1.02);
+  box-shadow: var(--shadow-md), var(--shadow-neon);
+}
+html.dark .card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(180deg, var(--glass-highlight), transparent 55%);
+}
+
+/* Never let container be hidden by a stray Tailwind class */
+main, .container {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* Navbar & side nav outlines */
+.nav-bar { border-bottom: var(--line-w) solid #000 !important; background: transparent !important; }
+#sideNav, .side-nav { border-right: var(--line-w) solid #000 !important; }
+html.dark .nav-bar { border-bottom-color: rgba(255, 59, 193, 0.28) !important; }
+html.dark #sideNav, html.dark .side-nav { border-right-color: rgba(255, 59, 193, 0.28) !important; }
+
+/* Buttons in dark: neon outlines with subtle glow */
+html.dark .btn {
+  background: rgba(255,255,255,0.06);
+  color: var(--fg);
+  border-color: rgba(255, 59, 193, 0.4);
+  box-shadow: 0 0 0 rgba(0,0,0,0);
+}
+html.dark .btn:hover {
+  box-shadow: 0 0 10px rgba(255, 59, 193, 0.35), 0 0 26px rgba(124, 58, 237, 0.22);
+}
+html.dark .btn-primary {
+  background: linear-gradient(180deg, rgba(255, 59, 193, 0.22), rgba(124, 58, 237, 0.18));
+  border-color: rgba(255, 59, 193, 0.55);
+}
+html.dark .btn-ghost { background: transparent; border-color: rgba(255,255,255,0.22); }
+html.dark .btn-danger { border-color: var(--danger); color: var(--danger); }
+
+/* Particles must never go behind the page */
+#particles {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 5 !important;  /* content is z-20; navbar is z-50 */
+  pointer-events: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}

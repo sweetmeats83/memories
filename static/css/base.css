@@ -1,0 +1,59 @@
+/* Base site styles (coexists with Tailwind) */
+html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-sans); }
+.container { width: min(1100px, 100%); margin-inline: auto; padding: var(--space-5) var(--space-4); }
+.section { margin: var(--space-5) 0; }
+.card { border: var(--line-w) solid var(--accent); border-radius: var(--radius); background: var(--bg); padding: var(--space-4); box-shadow: var(--shadow-sm); }
+.card + .card { margin-top: var(--space-4); }
+label { font-weight: 600; margin-bottom: var(--space-2); display:block; }
+input[type="text"], input[type="email"], input[type="file"], textarea, select {
+  width: 100%; border: var(--line-w) solid var(--accent); border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4); background: #fffefe; font: inherit;
+}
+textarea { min-height: 160px; resize: vertical; }
+
+/* Extracted from previous inline <style> to preserve existing visuals */
+
+/* --- START: migrated from base.html inline <style> --- */
+body { font-family: 'Inter', sans-serif; transition: background 0.6s ease, color 0.6s ease; }
+    .font-kenia {
+        font-family: 'Kenia', cursive;
+    } 
+    .bg-gradient-warm {
+      /* Five-color corner-to-corner animated gradient (original feel) */
+      background: linear-gradient(135deg, #bd9259, #eaebc9, #f88791, #ff4b96, #fd94ce, #bba890);
+      background-size: 500% 500%;
+      animation: gradientMove 45s ease infinite;
+      will-change: background-position;
+    }
+    @keyframes gradientMove {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    .side-nav {
+      left: -280px;
+    }
+    .side-nav.open {
+      left: 0;
+    }
+
+
+
+
+    .avatar-circle {
+      background: rgba(0, 0, 0, 0.15);
+      color: black;
+      border-radius: 9999px;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 16px;
+      margin-left: auto;
+    }
+    .avatar-circle img { display:block; width:100%; height:100%; border-radius:inherit; object-fit:cover; }
+
+#particles { transform: none !important; }
+/* --- END migrated styles --- */

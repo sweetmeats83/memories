@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% set title = display_name ~ " – Chapter" %}
+{% block content %}
+
+<section class="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen">
+  <div class="mx-auto w-full max-w-[1400px] px-3 sm:px-6">
+
+    <div class="flex items-center gap-3 mt-6 mb-3">
+      <a href="/user_dashboard" class="pill">Back to Memories</a>
+      <h1 class="text-2xl font-semibold tracking-tight">{{ display_name }}</h1>
+      <span class="ml-auto text-sm opacity-70" id="chapterStatusBadge"></span>
+    </div>
+
+    <!-- Gated state -->
+    {% if not ready %}
+      <div class="border border-black rounded-xl bg-white/60 backdrop-blur-md shadow-xl p-4">
+        <div class="flex items-center gap-2">
+          <div class="pill bg-white hover:shadow-lg">Locked</div>
+          <p class="font-medium">Complete these prompts to unlock compilation:</p>
+        </div>
+        <ul class="mt-3 grid sm:grid-cols-2 gap-2">
+          {% for p in missing_prompts %}
+          <li class="border border-black rounded-lg bg-white/70 hover:bg-white transition p-2">
+            <div class="flex items-center justify-between gap-3">
+              <div class="text-sm">{{ p.text }}</div>
+              <a class="pill" href="/user_record/{{ p.id }}">Open</a>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% else %}
+
+      <!-- Ready state -->
+      <div class="flex flex-col lg:flex-row gap-4">
+
+        <!-- main / draft -->
+        <div class="flex-1 border border-black rounded-xl bg-white/60 backdrop-blur-md shadow-xl p-4">
+          <div class="flex items-center gap-3">
+            <button id="btnCompile" class="pill hover:shadow-lg">Compile Chapter</button>
+            <div id="spinner" class="hidden text-sm opacity-70">Compiling…</div>
+            <button id="btnRecompile" class="pill hidden">Re-compile</button>
+            <button id="btnPublish" class="pill hidden">Publish</button>
+          </div>
+
+          <article id="draftArea" class="prose max-w-none mt-4">
+            {% if latest_compilation %}
+              {{ latest_compilation.compiled_markdown | safe }}
+            {% else %}
+              <p class="opacity-70">No draft yet. Click “Compile Chapter”.</p>
+            {% endif %}
+          </article>
+        </div>
+
+        <!-- right rail / gaps -->
+        <aside class="w-full lg:w-[360px] border border-black rounded-xl bg-white/60 backdrop-blur-md shadow-xl p-4">
+          <h3 class="font-semibold mb-2">Proposed Follow-ups</h3>
+          <div id="gapChips" class="flex flex-wrap gap-2">
+            {% if latest_compilation and latest_compilation.gap_questions %}
+              {% for g in latest_compilation.gap_questions %}
+                <button class="pill" title="{{ g.why or '' }}">{{ g.question }}</button>
+              {% endfor %}
+            {% else %}
+              <div class="text-sm opacity-70">None yet.</div>
+            {% endif %}
+          </div>
+        </aside>
+
+      </div>
+    {% endif %}
+
+  </div>
+</section>
+
+<script defer src="/static/js/chapter_view.js"></script>
+<script>
+  window.CHAPTER_KEY = {{ chapter_key|tojson }};
+</script>
+{% endblock %}

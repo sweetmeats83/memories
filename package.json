@@ -1,0 +1,12 @@
+{
+  "name": "memories-app",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i ./static/css/tailwind.src.css -o ./static/css/tailwind.css --minify",
+    "watch:css": "tailwindcss -c tailwind.config.js -i ./static/css/tailwind.src.css -o ./static/css/tailwind.css -w"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.10"
+  }
+}
+

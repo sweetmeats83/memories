@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block content %}
+<script>
+  const urlParams = new URLSearchParams(location.search);
+  const weeklyToken = urlParams.get('token') || '';
+</script>
+    <a href="/user_dashboard"
+   class="pill select-none inline-flex items-center cursor-pointer"
+   role="button">
+  Back to Memories
+</a>
+<div class="max-w-3xl mx-auto mt-8 p-6 bg-white/30 backdrop-blur-sm rounded-lg shadow-xl border border-black/10">
+
+  <!-- Prompt -->
+  <section class="mb-6">
+    {% if prompt %}
+      <h1 id="prompt-text" class="font-baskerville text-black leading-tight text-[clamp(1.2rem,4vw,2rem)]">{{ prompt.text }}</h1>
+      {% if prompt.chapter %}
+        <p class="mt-1 text-sm opacity-70">Chapter: <span class="font-semibold">{{ prompt.chapter }}</span></p>
+      {% endif %}
+    {% else %}
+      <h1 class="font-baskerville text-black leading-tight text-[clamp(1.2rem,4vw,2rem)]">Start a new story</h1>
+      <p class="mt-1 text-sm opacity-70">Give it a title and assign it to a chapter (or create a new chapter).</p>
+    {% endif %}
+  </section>
+
+  <!-- Prompt-attached media (uniform tiles; lazy video posters) -->
+  {% set pmedia = prompt_media or [] %}
+  {% if prompt and pmedia %}
+    <section class="mb-6">
+      <div class="flex flex-wrap gap-3">
+        {% for media in prompt_media %}
+        {% set href = url_for('static', path='uploads/' ~ media.file_path) %}
+        {% set mt = (media.media_type or '')|lower %}
+        {% if 'image' in mt %}
+          <button type="button" class="thumb" data-kind="image" data-src="{{ href }}" aria-label="Open image">
+            <span class="thumb-bg" style="background-image:url('{{ href }}')"></span>
+          </button>
+        {% elif 'video' in mt %}
+          <button type="button" class="thumb" data-kind="video" data-src="{{ href }}" aria-label="Play video">
+            <span class="thumb-icon material-symbols-outlined">play_circle</span>
+          </button>
+        {% elif 'audio' in mt %}
+          <button type="button" class="thumb" data-kind="audio" data-src="{{ href }}" aria-label="Play audio">
+            <span class="thumb-icon material-symbols-outlined">graphic_eq</span>
+          </button>
+        {% endif %}
+      {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  <!-- Freeform (title + chapter/new) -->
+  {% if not prompt %}
+  <section class="grid gap-4 md:grid-cols-2">
+    <div class="md:col-span-2">
+      <label class="block text-sm font-medium mb-1">Title <span class="text-red-600">*</span></label>
+      <input type="text" name="title" id="ff-title" class="w-full border border-black rounded-lg px-3 py-2" placeholder="Give your story a name" required>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Assign to Chapter <span class="text-red-600">*</span></label>
+      <select name="chapter" id="ff-chapter" class="w-full border border-black rounded-lg px-3 py-2 bg-white" required>
+        <option value="" selected disabled>Choose an existing chapter…</option>
+        {% for ch in (chapters or []) %}
+          <option value="{{ ch }}">{{ ch }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div id="ff-new-wrap" style="display:none">
+      <label class="block text-sm font-medium mb-1">New Chapter Name <span class="text-red-600">*</span></label>
+      <input type="text" name="new_chapter" id="ff-new" class="w-full border border-black rounded-lg px-3 py-2" placeholder="e.g. Childhood Adventures">
+    </div>
+  </section>
+  {% endif %}
+
+  {% if not is_token_link %}
+    <!-- “Write your own” goes straight to /responses/ then /response/{id}/edit -->
+    <form id="write-form" method="post" action="/responses/" class="mt-4">
+      {% if prompt %}<input type="hidden" name="prompt_id" value="{{ prompt.id }}">{% endif %}
+      {% if not prompt %}
+        <input type="hidden" name="title">
+        <input type="hidden" name="chapter">
+      {% endif %}
+      <input type="hidden" name="response_text" value="">
+      <input id="weeklyTokenWrite" type="hidden" name="weekly_token" value="">
+      <button type="submit" id="write-btn" 
+        class="w-full px-6 py-4 rounded-xl border border-stone bg-red-200/60 text-black shadow-md shadow-black/50 inline-flex items-center justify-center gap-3 text-lg font-semibold transition-colors duration-200 hover:bg-black hover:text-white">
+        <span class="material-symbols-outlined">edit</span>
+        Write Your Own
+      </button>
+    </form>
+  {% endif %}
+
+  <!-- Recorder section (launches full-screen capture overlay) -->
+<!-- A small launcher UI on the page -->
+<section class="mt-6 rounded-2xl border border-red-200/80 bg-red-100/60 backdrop-blur-md p-4 shadow-md shadow-black/50">
+  <h3 class="font-semibold mb-2">Record your story</h3>
+  <p class="text-sm opacity-70 mb-3">tap Start then choose audio or video on the new screen.</p>
+
+
+  <button type="button" id="btn-record-primary"
+          class="w-full px-6 py-4 rounded-xl border border-red-100 bg-red-500/70 text-black shadow-md inline-flex items-center justify-center gap-3 text-lg font-semibold transition-colors duration-200 hover:bg-black hover:text-white">
+    <span class="material-symbols-outlined">fiber_manual_record</span>
+    Start
+  </button>
+</section>
+
+<!-- form that creates the Response server-side -->
+<form id="record-form" method="post" action="/responses/" enctype="multipart/form-data">
+  {% if prompt %}
+    <input type="hidden" name="prompt_id" value="{{ prompt.id }}">
+  {% else %}
+    <input type="hidden" name="title">
+    <input type="hidden" name="chapter">
+  {% endif %}
+  <input type="hidden" name="response_text" value="">
+  <input id="weeklyToken" type="hidden" name="weekly_token" value="">
+  <input id="primary_media_input" name="primary_media" type="file" accept="audio/*,video/*" class="hidden">
+</form>
+
+{% include "_record_overlay.html" %}
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const writeForm  = document.getElementById('write-form');
+  const recordForm = document.getElementById('record-form');
+
+  // Only needed on freeform pages (no prompt_id present)
+  const isFreeform = !document.querySelector('input[name="prompt_id"]');
+  if (!isFreeform) return;
+
+  const titleEl   = document.getElementById('ff-title');
+  const chapterEl = document.getElementById('ff-chapter');
+
+  function setHidden(form) {
+    if (!form) return;
+    const hTitle   = form.querySelector('input[name="title"]');
+    const hChapter = form.querySelector('input[name="chapter"]');
+    if (hTitle)   hTitle.value   = (titleEl?.value || '').trim();
+    if (hChapter) hChapter.value = (chapterEl?.value || '').trim();
+    // also propagate weekly token if present
+    const wtk = (new URLSearchParams(location.search)).get('token') || '';
+    const hiddenTok = form.querySelector('input[name="weekly_token"]');
+    if (hiddenTok) hiddenTok.value = wtk;
+  }
+
+  // keep both forms in sync as the user types/selects
+  function syncBoth() {
+    setHidden(writeForm);
+    setHidden(recordForm);
+  }
+
+  titleEl?.addEventListener('input',  syncBoth);
+  chapterEl?.addEventListener('change', syncBoth);
+
+  // run once on load (covers prefilled states)
+  syncBoth();
+
+  // Token-gate the "Write your own" submit if coming from emailed link
+  writeForm?.addEventListener('submit', async (e) => {
+    if (typeof gateWeeklyTokenUse === 'function'){
+      const ok = await gateWeeklyTokenUse();
+      if (!ok) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    }
+  }, { capture:true });
+
+  // (Optional) belt-and-suspenders: validate before submit
+  [writeForm, recordForm].forEach(form => {
+    form?.addEventListener('submit', (e) => {
+      const t = (titleEl?.value || '').trim();
+      const c = (chapterEl?.value || '').trim();
+      if (!t || !c) {
+        e.preventDefault();
+        alert(!t ? 'Please enter a title.' : 'Please choose a chapter.');
+        (!t ? titleEl : chapterEl)?.focus();
+        return;
+      }
+      syncBoth(); // ensure most recent values are mirrored
+    });
+  });
+});
+</script>
+<script>
+(() => {
+  const startBtn = document.getElementById('btn-record-primary');
+
+  // best-effort prompt text to show inside the overlay
+  function readPromptText(){
+    const a = document.getElementById('display-title')?.innerText;
+    const b = document.getElementById('prompt-text')?.innerText;
+    const c = document.querySelector('section h1')?.innerText;
+    return (a || b || c || '').trim();
+  }
+
+  startBtn?.addEventListener('click', async () => {
+    if (typeof gateWeeklyTokenUse === 'function'){
+      const ok = await gateWeeklyTokenUse();
+      if (!ok) return;
+    }
+    // If there’s a hidden prompt_id, this is a prompt-driven flow
+    const promptIdInput = document.querySelector('input[name="prompt_id"]');
+    const isPromptFlow = !!promptIdInput;
+
+    // Build baseFields required by POST /responses/
+    const baseFields = { response_text: '' };
+    if (isPromptFlow) {
+      baseFields.prompt_id = promptIdInput.value;
+    } else {
+      // Freeform: mirror the visible inputs
+      baseFields.title   = document.getElementById('ff-title')?.value || 'Untitled';
+      baseFields.chapter = document.getElementById('ff-chapter')?.value || '';
+    }
+
+    window.RecordOverlay.start({
+      kind: 'primary',
+      // let the overlay choose default by device; or force 'video' for mobile if you want
+      // mode: 'video',
+      primary: {
+        strategy: 'form',         // ← use XHR on user_record
+        xhrUrl: '/responses/',   // defaults to /responses/ anyway
+        baseFields
+      },
+      promptText: readPromptText()
+    });
+  });
+})();
+</script>
+
+<style>
+  /* Prompt media tiles */
+  .pm-tile{ width:112px; height:112px; position:relative; border-radius:1rem; overflow:hidden; background:rgba(255,255,255,.28); border:1px solid rgba(0,0,0,.1); display:grid; place-items:center; }
+  .pm-tile .pm-bg{ position:absolute; inset:0; background-size:cover; background-position:center; }
+  .pm-tile .pm-icon{ font-size:32px; color:#6b7280; }
+  .pm-tile.video{ backdrop-filter: blur(10px) saturate(1.12); -webkit-backdrop-filter: blur(10px) saturate(1.12); }
+
+  .active-pill{ background:#000; color:#fff; }
+
+  /* overlay accessibility helpers */
+  #captureOverlay:focus-visible { outline: none; }
+  #captureOverlay button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+</style>
+{% endblock %}
