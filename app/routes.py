@@ -30,6 +30,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from .media_pipeline import MediaPipeline, UserBucketsStrategy 
 from app.services.invite import new_token, invite_expiry, render_invite_email, send_email
+from app.services.scheduler import schedule_bulk_send, set_weekly_cron
+from app.services.scheduler import schedule_bulk_send
 from app.services.mailer import send_weekly_email
 from app.services.scheduler import schedule_bulk_send
 from app.services.assignment import tag_based_prompts, persist_suggestions
@@ -6929,6 +6931,37 @@ async def admin_weekly_schedule(payload: ScheduleReq, db: AsyncSession = Depends
     await schedule_bulk_send(payload.user_ids, payload.when)  # implemented in scheduler section
     return {"ok": True, "scheduled": len(payload.user_ids)}
 
+class RecurringReq(BaseModel):
+    user_ids: List[int]
+    days: List[int]  # 1=Mon .. 7=Sun
+    hour: int
+    minute: int
+    weeks: int = 12
+
+@router.post("/api/admin/weekly/schedule_recurring")
+async def admin_weekly_schedule_recurring(payload: RecurringReq, db: AsyncSession = Depends(get_db), admin=Depends(require_admin_user)):
+    tz_name = os.getenv("APP_TZ") or os.getenv("TZ") or "UTC"
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = None
+    today = datetime.now(tz).date() if tz else datetime.utcnow().date()
+    monday = today - timedelta(days=today.weekday())
+    total = 0
+    for w in range(max(1, min(payload.weeks, 52))):
+        week_start = monday + timedelta(days=7*w)
+        for d in sorted(set(int(x) for x in payload.days if 1 <= int(x) <= 7)):
+            target_date = week_start + timedelta(days=d-1)
+            dt_local = datetime.combine(target_date, datetime.min.time()).replace(hour=payload.hour, minute=payload.minute)
+            dt = dt_local.replace(tzinfo=tz) if tz else dt_local
+            now_cmp = datetime.now(tz) if tz else datetime.utcnow()
+            if dt <= now_cmp:
+                continue
+            await schedule_bulk_send(payload.user_ids, dt)
+            total += 1
+    return {"ok": True, "scheduled_windows": total}
+
 class SwapReq(BaseModel):
     user_id: int
     make_on_deck_current: bool = True
@@ -6970,6 +7003,17 @@ async def admin_weekly_choose(payload: ChooseReq, db: AsyncSession = Depends(get
     if prev:
         await expire_active_tokens(db, u.id, prev)
     await db.commit()
+    return {"ok": True}
+
+class CronReq(BaseModel):
+    days: List[int]  # 1=Mon .. 7=Sun
+    hour: int
+    minute: int
+    tz: Optional[str] = None
+
+@router.post("/api/admin/weekly/cron")
+async def admin_weekly_update_cron(payload: CronReq, admin=Depends(require_admin_user)):
+    set_weekly_cron(payload.days, payload.hour, payload.minute, payload.tz)
     return {"ok": True}
 
 class QueueReq(BaseModel):

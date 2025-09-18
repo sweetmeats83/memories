@@ -1,11 +1,13 @@
 # app/services/scheduler.py
 import os
+import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from sqlalchemy import select
 from app.models import User, WeeklyState
 from app.services.utils_weekly import get_or_refresh_active_token, _now
+from app.services.assignment import ensure_weekly_prompt
 from app.services.mailer import send_weekly_email
 from app.database import async_session_maker
 from datetime import datetime
@@ -15,6 +17,7 @@ except Exception:
     ZoneInfo = None  # Fallback handled below
 
 scheduler: AsyncIOScheduler | None = None
+logger = logging.getLogger(__name__)
 
 def start_scheduler():
     global scheduler
@@ -31,9 +34,24 @@ def start_scheduler():
             except Exception:
                 tz = None  # Let APScheduler use its default
     scheduler = AsyncIOScheduler(timezone=tz)
-    # Every weekday 9am local (adjust as desired)
-    scheduler.add_job(job_weekly_send_scan, CronTrigger(day_of_week="mon-fri", hour=9, minute=0))
+
+    # Schedule: configurable via WEEKLY_CRON (crontab format). Fallback: weekdays 09:00.
+    cron_expr = (os.getenv("WEEKLY_CRON") or "").strip()
+    try:
+        if cron_expr:
+            trigger = CronTrigger.from_crontab(cron_expr, timezone=tz)
+            logger.info("Weekly scheduler using WEEKLY_CRON='%s' tz=%s", cron_expr, tz_name)
+        else:
+            trigger = CronTrigger(day_of_week="mon-fri", hour=9, minute=0, timezone=tz)
+            logger.info("Weekly scheduler using default Mon-Fri 09:00 tz=%s (set WEEKLY_CRON to override)", tz_name)
+    except Exception:
+        # On invalid crontab, fall back to default
+        trigger = CronTrigger(day_of_week="mon-fri", hour=9, minute=0, timezone=tz)
+        logger.warning("Invalid WEEKLY_CRON; falling back to Mon-Fri 09:00")
+
+    scheduler.add_job(job_weekly_send_scan, trigger)
     scheduler.start()
+    logger.info("Weekly scheduler started")
 
 async def job_weekly_send_scan():
     async with async_session_maker() as db:
@@ -47,6 +65,12 @@ async def job_weekly_send_scan():
         )).scalars().all()
 
         for u in users:
+            # Ensure this user has a current (and on-deck) selection for this ISO week
+            try:
+                await ensure_weekly_prompt(db, u.id)
+                await db.flush()
+            except Exception:
+                pass
             # If no current but has on-deck, auto-promote on-deck to current
             if not u.weekly_current_prompt_id and u.weekly_on_deck_prompt_id:
                 u.weekly_current_prompt_id = u.weekly_on_deck_prompt_id
@@ -91,3 +115,51 @@ async def job_send_one(user_id: int):
         u.weekly_sent_at = _now()
         u.weekly_email_provider_id = provider_id
         await db.commit()
+
+# ---- Admin-adjustable cron (runtime) ----
+def _pick_tz(name: str | None):
+    tz = None
+    if ZoneInfo and name:
+        try:
+            tz = ZoneInfo(name)
+        except Exception:
+            try:
+                tz = ZoneInfo("Etc/UTC")
+            except Exception:
+                tz = None
+    return tz
+
+def set_weekly_cron(days: list[int], hour: int, minute: int, tz_name: str | None = None) -> None:
+    """Replace the weekly scan job using chosen days (1=Mon..7=Sun) and time.
+    This affects the running process; to persist across restarts, set WEEKLY_CRON/APP_TZ.
+    """
+    if not scheduler:
+        return
+    ds = sorted({int(d) for d in (days or []) if 1 <= int(d) <= 7}) or [1,2,3,4,5]
+    # compress to Cron day_of_week expression
+    parts = []
+    start = prev = None
+    for d in ds:
+        if start is None:
+            start = prev = d
+        elif d == prev + 1:
+            prev = d
+        else:
+            parts.append(str(start) if start==prev else f"{start}-{prev}")
+            start = prev = d
+    if start is not None:
+        parts.append(str(start) if start==prev else f"{start}-{prev}")
+    dow = ",".join(parts)
+    tz = _pick_tz(tz_name) or scheduler.timezone
+
+    # Remove existing weekly scan jobs
+    try:
+        for j in list(scheduler.get_jobs()):
+            func = getattr(j.func, "__name__", "")
+            if func == "job_weekly_send_scan":
+                scheduler.remove_job(j.id)
+    except Exception:
+        pass
+
+    job = scheduler.add_job(job_weekly_send_scan, CronTrigger(day_of_week=dow, hour=hour, minute=minute, timezone=tz))
+    logger.info("Updated weekly schedule: days=%s %02d:%02d tz=%s job=%s", dow, hour, minute, tz, job.id)

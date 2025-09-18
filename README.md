@@ -99,6 +99,9 @@ Capture the voices and stories of your family — especially elders — with a t
   - `SECRET` (JWT/session secret)
   - `RUN_DB_CREATE_ALL=1` (auto-create tables on first run)
   - `WEEKLY_TOKEN_HMAC` (long random string — required for secure token recording)
+  - `APP_TZ` (optional; falls back to `TZ`) — timezone for weekly scheduler
+  - `WEEKLY_CRON` (optional; crontab string) — when to send weekly prompts
+    - Examples: `0 9 * * 1-5` (Mon–Fri 09:00), `0 9 * * 1` (Mondays 09:00)
 - Email (optional)
   - `EMAIL_TRANSPORT=smtp | dummy`
   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`
@@ -129,9 +132,9 @@ Capture the voices and stories of your family — especially elders — with a t
 
 ## Roadmap (ideas)
 
-- Multi‑user groups with granular sharing by chapter or person
+- Multi-user groups with granular sharing by chapter or person
 - Export: printable book PDF and data export (JSON/ZIP)
-- Multi‑arch container images (amd64/arm64) published by CI
+- Multi-arch container images (amd64/arm64) published by CI
 - Optional vector search for semantic memory lookup
 
 ## Screenshots (coming soon) ✨
@@ -141,8 +144,9 @@ Capture the voices and stories of your family — especially elders — with a t
 > - Token recording view on mobile (just a big mic button and the prompt)
 > - People graph with connections and the info panel
 
+## Screenshots (coming soon) ✨
 
-- Multi‑user groups with granular sharing by chapter or person
-- Export: printable book PDF and data export (JSON/ZIP)
-- Multi‑arch container images (amd64/arm64) published by CI
-- Optional vector search for semantic memory lookup
+> Add screenshots/GIFs of:
+> - Dashboard with weekly prompt card and glassy response tiles
+> - Token recording view on mobile (just a big mic button and the prompt)
+> - People graph with connections and the info panel
