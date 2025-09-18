@@ -62,6 +62,7 @@ Capture the voices and stories of your family — especially elders — with a t
 5) Add people/tags, watch chapter completion grow, and build the family’s shared graph.
 
 ---
+![Demo of Memories app](memories.gif)
 
 ## Tech stack
 
