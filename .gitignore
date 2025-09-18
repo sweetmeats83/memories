@@ -40,3 +40,26 @@ static/uploads/
 # Alembic migrations (ignored if you auto-create tables)
 alembic/
 alembic.ini
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# SSH keys and credentials
+*.pem
+*.key
+*.ppk
+g
+g.pub
+
+# Editor or tooling prompt artifacts
+tmp_*.txt
