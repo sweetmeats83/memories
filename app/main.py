@@ -18,6 +18,29 @@ from fastapi.exceptions import HTTPException as FastAPIHTTPException
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from urllib.parse import quote
 
+
+logger = logging.getLogger(__name__)
+
+def _parse_cors_origins() -> list[str]:
+    """Pull an explicit allowlist from env instead of using `*`."""
+    raw = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+    if not raw:
+        # Keep sensible defaults for local development while forcing explicit origins in prod.
+        return [
+            "http://localhost:8000",
+            "http://localhost:8003",
+            "http://127.0.0.1:8000",
+        ]
+    # Support either comma-separated list or JSON array for convenience.
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+            return [str(o).strip() for o in parsed if str(o).strip()]
+        except json.JSONDecodeError:
+            logger.warning("Invalid JSON in CORS_ALLOW_ORIGINS; falling back to CSV parse")
+    return [seg.strip() for seg in raw.split(",") if seg.strip()]
+
+
 app = FastAPI(title="Memories App")
 templates = Jinja2Templates(directory="templates")
 # Static file serving
@@ -26,7 +49,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Enable CORS if needed
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Update for production
+    allow_origins=_parse_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,8 +72,11 @@ app.include_router(
     prefix="/users",
     tags=["users"]
 )
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+# Allow log level override via LOG_LEVEL while respecting existing handlers
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=LOG_LEVEL)
+logger.setLevel(LOG_LEVEL)
 
 # -----------------------------------------------------
 # Redirect unauthenticated HTML requests to /login
@@ -83,7 +109,7 @@ async def create_admin_user():
     admin_username = os.getenv("ADMIN_USERNAME", "admin")
 
     if not admin_email or not admin_password:
-        print("⚠️ ADMIN_EMAIL or ADMIN_PASSWORD not set in .env, skipping admin creation.")
+        logger.warning("ADMIN_EMAIL or ADMIN_PASSWORD not set; skipping admin bootstrap")
         return
 
     async with async_session_maker() as session:
@@ -99,16 +125,16 @@ async def create_admin_user():
             )
             session.add(user)
             await session.commit()
-            print(f"✅ Admin user created: {admin_email}")
+            logger.info("Admin user created for %s", admin_email)
         else:
-            print(f"ℹ️ Admin user already exists: {admin_email}")
+            logger.info("Admin user already exists for %s", admin_email)
 async def create_super_admin_user():
     super_email = os.getenv("SUPER_ADMIN_EMAIL")
     super_password = os.getenv("SUPER_ADMIN_PASSWORD")
     super_username = os.getenv("SUPER_ADMIN_USERNAME", "superadmin")
 
     if not super_email or not super_password:
-        print("⚠️ SUPER_ADMIN_EMAIL or SUPER_ADMIN_PASSWORD not set. Skipping super admin creation.")
+        logger.warning("SUPER_ADMIN_EMAIL or SUPER_ADMIN_PASSWORD not set; skipping super admin bootstrap")
         return
 
     async with async_session_maker() as session:
@@ -126,9 +152,9 @@ async def create_super_admin_user():
             )
             session.add(user)
             await session.commit()
-            print(f"✅ Super admin created: {super_email}")
+            logger.info("Super admin created for %s", super_email)
         else:
-            print(f"ℹ️ Super admin already exists: {super_email}")
+            logger.info("Super admin already exists for %s", super_email)
 
 async def _seed_tags_from_whitelist(db: AsyncSession, path: str) -> dict:
     """

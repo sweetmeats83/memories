@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import Depends
 from fastapi_users import FastAPIUsers
 from fastapi_users.manager import BaseUserManager, IntegerIDMixin
@@ -7,7 +8,22 @@ from fastapi_users.db import SQLAlchemyUserDatabase
 from .models import User
 from .database import get_db
 
-SECRET = os.getenv("SECRET", "CHANGE_ME_SECRET")
+
+logger = logging.getLogger(__name__)
+
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+SECRET = os.getenv("SECRET", "").strip()
+if not SECRET or SECRET == "CHANGE_ME_SECRET":
+    raise RuntimeError(
+        "SECRET environment variable must be set to a strong value; the default placeholder is not allowed."
+    )
 
 # -------------------------
 # Database Dependency
@@ -23,13 +39,13 @@ class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
     verification_token_secret = SECRET
 
     async def on_after_register(self, user: User, request=None):
-        print(f"✅ User {user.id} has registered.")
+        logger.info("User %s registered", user.id)
 
     async def on_after_forgot_password(self, user: User, token: str, request=None):
-        print(f"🔑 Password reset requested for user {user.id}. Token: {token}")
+        logger.info("Password reset requested for user %s", user.id)
 
     async def on_after_request_verify(self, user: User, token: str, request=None):
-        print(f"✉️ Verification requested for user {user.id}. Token: {token}")
+        logger.info("Verification email requested for user %s", user.id)
 
 async def get_user_manager(user_db=Depends(get_user_db)):
     yield UserManager(user_db)
@@ -39,9 +55,9 @@ async def get_user_manager(user_db=Depends(get_user_db)):
 # -------------------------
 cookie_transport = CookieTransport(
     cookie_name="session",
-    cookie_max_age=3600 * 24,   # 1 day
-    cookie_secure=False,        # Should be True in production (HTTPS)
-    cookie_httponly=True
+    cookie_max_age=3600 * 24,
+    cookie_secure=_bool_env("COOKIE_SECURE", default=False),
+    cookie_httponly=True,
 )
 
 def get_jwt_strategy() -> JWTStrategy:
