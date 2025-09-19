@@ -546,11 +546,19 @@
   // keep fresh
   refreshIfChanged();
   const POLL_MS = 4000;
-  let pollTimer = setInterval(refreshIfChanged, POLL_MS);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') { clearInterval(pollTimer); }
-    else { clearInterval(pollTimer); pollTimer = setInterval(refreshIfChanged, POLL_MS); refreshIfChanged(); }
+    if (document.visibilityState === 'hidden') {
+      stopAutoRefresh();
+    } else {
+      startAutoRefresh();
+    }
   });
+
+  window.SegmentsRefresh = {
+    start: startAutoRefresh,
+    stop: stopAutoRefresh,
+    refresh: refreshIfChanged,
+  };
 
   // used by the overlay after upload
   window.onSegmentUploaded = async function(segId){
@@ -1261,6 +1269,8 @@
     return JSON.stringify(list.map(s => ({ id:s.id, order:s.order_index, ready: !!(s.transcript && s.transcript.trim()) })));
   }
 
+  let lastSnapshot = '';
+
   function renderSegments(segs){
     if (!listEl) return;
     listEl.innerHTML = '';
@@ -1314,10 +1324,14 @@
   function startAutoRefresh(){
     stopAutoRefresh();
     refreshIfChanged();
-    pollTimer = setInterval(refreshIfChanged, POLL_MS);
+    window.__segmentsPollTimer = window.setInterval(refreshIfChanged, POLL_MS);
   }
   function stopAutoRefresh(){
-    if (pollTimer){ clearInterval(pollTimer); pollTimer=0; }
+    const timer = window.__segmentsPollTimer;
+    if (timer){
+      clearInterval(timer);
+      window.__segmentsPollTimer = null;
+    }
   }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') stopAutoRefresh();

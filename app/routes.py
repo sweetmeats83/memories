@@ -48,6 +48,7 @@ from app.services.chapter_compile import compile_chapter, chapter_status
 from app.services.kinship import classify_kinship
 from app.services.infer import infer_edges_for_person, commit_inferred_edges
 from app.schemas import ChapterCompilationDTO, ChapterStatusDTO
+from app.background import spawn
 # -----------------------------------------------------------------------------
 # TEMPLATES / SETUP
 # -----------------------------------------------------------------------------
@@ -315,7 +316,7 @@ async def _process_primary_async(response_id: int, tmp: FSPath, filename: str, c
             resp.primary_codec_video = art.codec_v
             await s.commit()
         if playable_rel:
-            asyncio.create_task(transcribe_and_update(response_id, playable_rel, False))
+            spawn(transcribe_and_update(response_id, playable_rel, False), name="transcribe_prompt_preview")
     finally:
         try: tmp.unlink(missing_ok=True)
         except: pass
@@ -2134,7 +2135,10 @@ async def create_response(
         pass
 
     # Background transcription
-    asyncio.create_task(transcribe_and_update(new_response.id, new_response.primary_media_url, bool(weekly_token)))
+    spawn(
+        transcribe_and_update(new_response.id, new_response.primary_media_url, bool(weekly_token)),
+        name="transcribe_response_primary",
+    )
 
     # Weekly bookkeeping unchanged…
     try:
@@ -3246,7 +3250,7 @@ async def admin_create_prompt(
                     logging.info(f"[prompt-fanout] Prompt {pid} queued for {n} user(s).")
                 except Exception:
                     logging.exception(f"[prompt-fanout] on_prompt_created failed for {pid}")
-        asyncio.create_task(_fanout(prompt.id))
+        spawn(_fanout(prompt.id), name="prompt_fanout")
     else:
         logging.info(f"[prompt-fanout] skipped for private-only prompt {prompt.id}")
     # ----- 6) Kick off fan‑out in the background (new session)
@@ -4669,9 +4673,16 @@ async def replace_primary(
         shutil.copyfileobj(primary_media.file, w)
 
     # Instead of calling PIPELINE.process_upload() here, queue it:
-    asyncio.create_task(_process_primary_async(
-        resp.id, tmp, primary_media.filename or "primary", primary_media.content_type, (user.username or str(user.id))
-    ))
+    spawn(
+        _process_primary_async(
+            resp.id,
+            tmp,
+            primary_media.filename or "primary",
+            primary_media.content_type,
+            (user.username or str(user.id)),
+        ),
+        name="reprocess_primary_media",
+    )
 
     # And immediately return JSON:
     return JSONResponse({"response": {"id": resp.id}, "queued": True})
@@ -4936,7 +4947,10 @@ async def add_response_segment(
     try:
         # pass back as "uploads/..." for the transcriber
         uploads_rel_for_tx = "uploads/" + seg.media_path
-        asyncio.create_task(transcribe_segment_and_update(seg.id, uploads_rel_for_tx))
+        spawn(
+            transcribe_segment_and_update(seg.id, uploads_rel_for_tx),
+            name="transcribe_segment_new",
+        )
     except Exception:
         pass
 
@@ -5058,7 +5072,10 @@ async def bootstrap_first_segment(
     # Background transcription so it shows up in the segments list
     try:
         uploads_rel = primary_rel if primary_rel.startswith("uploads/") else f"uploads/{primary_rel}"
-        asyncio.create_task(transcribe_segment_and_update(seg.id, uploads_rel))
+        spawn(
+            transcribe_segment_and_update(seg.id, uploads_rel),
+            name="transcribe_segment_bootstrap",
+        )
     except Exception:
         pass
 
@@ -6475,7 +6492,10 @@ async def admin_add_response_segment(
 
     try:
         uploads_rel_for_tx = "uploads/" + seg.media_path
-        asyncio.create_task(transcribe_segment_and_update(seg.id, uploads_rel_for_tx))
+        spawn(
+            transcribe_segment_and_update(seg.id, uploads_rel_for_tx),
+            name="transcribe_segment_admin_upload",
+        )
     except Exception:
         pass
 
@@ -6576,7 +6596,10 @@ async def admin_bootstrap_first_segment(
     await db.commit()
     try:
         uploads_rel = primary_rel if primary_rel.startswith("uploads/") else f"uploads/{primary_rel}"
-        asyncio.create_task(transcribe_segment_and_update(seg.id, uploads_rel))
+        spawn(
+            transcribe_segment_and_update(seg.id, uploads_rel),
+            name="transcribe_segment_admin_bootstrap",
+        )
     except Exception:
         pass
     return JSONResponse({"ok": True, "created": True, "segment_id": seg.id})

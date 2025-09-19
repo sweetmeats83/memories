@@ -384,7 +384,7 @@
     }
   }
 async function gateWeeklyTokenUse(){
-  if (!weeklyToken) return true;
+  if (typeof weeklyToken === 'undefined' || !weeklyToken) return true;
   const fd = new FormData(); fd.append('token', weeklyToken);
   const r = await fetch('/weekly/token/use', { method:'POST', body: fd, credentials:'include' });
   if (!r.ok){
@@ -395,13 +395,36 @@ async function gateWeeklyTokenUse(){
 }
 
   // --- Recording ---
-  function startRecording(){
-    if (weeklyToken) document.getElementById('weeklyToken').value = weeklyToken;
+  async function startRecording(){
+    if (typeof weeklyToken !== 'undefined' && weeklyToken) {
+      const hidden = document.getElementById('weeklyToken');
+      if (hidden) hidden.value = weeklyToken;
+    }
+    if (!stream) {
+      try {
+        await ensurePreview();
+      } catch (err) {
+        alert('Could not access microphone/camera. Please allow access and try again.');
+        console.warn(err);
+        return;
+      }
+    }
     if (!stream) return;
+    if (typeof MediaRecorder === 'undefined') {
+      alert('Recording is not supported in this browser. Please try the latest Chrome or Edge.');
+      console.warn('MediaRecorder API unavailable');
+      return;
+    }
     const mimeV='video/webm;codecs=vp9,opus', mimeA='audio/webm;codecs=opus';
     const want=(cfg.mode==='video')?mimeV:mimeA;
     const opts = MediaRecorder.isTypeSupported?.(want) ? { mimeType: want } : {};
-    rec = new MediaRecorder(stream, opts);
+    try {
+      rec = new MediaRecorder(stream, opts);
+    } catch (err) {
+      console.warn('MediaRecorder init failed', err);
+      alert('Could not start recorder. Please allow microphone/camera access and try again.');
+      return;
+    }
     chunks=[];
     rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
     rec.onstop = onStop;
@@ -415,9 +438,9 @@ async function gateWeeklyTokenUse(){
     if (recLabel) recLabel.textContent='Pause';
   }
 
-  function toggleRecord(){
+  async function toggleRecord(){
     if (!recording){
-      startRecording();
+      await startRecording();
       return;
     }
     if (!paused){

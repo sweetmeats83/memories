@@ -41,11 +41,29 @@ BASE_DIR = Path(__file__).resolve().parents[1]   # /app/app
 UPLOAD_DIR = BASE_DIR / "static" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("transcription.log")]
-)
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+_base_level = os.getenv("LOG_LEVEL", "INFO").upper()
+_transcription_level = os.getenv("TRANSCRIPTION_LOG_LEVEL", _base_level).upper()
+_transcription_log_path = os.getenv("TRANSCRIPTION_LOG_PATH", "logs/transcription.log")
+
+logger = logging.getLogger(__name__)
+logger.setLevel(_transcription_level)
+
+if not logger.handlers:
+    formatter = logging.Formatter(_LOG_FORMAT)
+    stream = logging.StreamHandler()
+    stream.setFormatter(formatter)
+    logger.addHandler(stream)
+
+    if _transcription_log_path:
+        log_path = Path(_transcription_log_path)
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(log_path)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        except OSError:
+            logger.warning("Unable to open transcription log file at %s", _transcription_log_path)
 
 # ---------------------------------------------------------------------------
 # Settings for Whisper (env-compatible)
@@ -229,7 +247,7 @@ def convert_to_wav(input_path: Path, target_sr: int = 16000, mono: bool = True) 
         "-vn", "-map", "a:0?",
         "-ar", str(target_sr), "-ac", ac, "-c:a", "pcm_s16le", "-f", "wav", str(out)
     ]
-    logging.info(f"🎯 ffmpeg: {input_path.name} → {out.name}")
+    logger.info("🎯 ffmpeg: %s → %s", input_path.name, out.name)
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except subprocess.CalledProcessError as e:
@@ -256,13 +274,13 @@ def _load_model() -> WhisperModel:
     try:
         dev, ctype = _compute_params(first)
         m = WhisperModel(MODEL_NAME, device=dev, compute_type=ctype)
-        logging.info(f"✅ Whisper '{MODEL_NAME}' on {dev} ({ctype})")
+        logger.info("✅ Whisper '%s' on %s (%s)", MODEL_NAME, dev, ctype)
         return m
     except Exception as e:
-        logging.warning(f"⚠️ Failed on {first}: {e}; falling back to CPU.")
+        logger.warning("⚠️ Failed on %s: %s; falling back to CPU.", first, e)
         dev, ctype = _compute_params("cpu")
         m = WhisperModel(MODEL_NAME, device=dev, compute_type=ctype)
-        logging.info(f"✅ Whisper '{MODEL_NAME}' on cpu ({ctype})")
+        logger.info("✅ Whisper '%s' on cpu (%s)", MODEL_NAME, ctype)
         return m
 
 
@@ -330,7 +348,7 @@ async def transcribe_file(filename_or_path: str | Path, db: Optional[AsyncSessio
         p = UPLOAD_DIR / rel
 
     if not p.exists():
-        logging.error(f"❌ File not found: {p}")
+        logger.error("❌ File not found: %s", p)
         return "[Transcription failed: file not found]"
 
     # initial prompt from vocab
@@ -340,7 +358,7 @@ async def transcribe_file(filename_or_path: str | Path, db: Optional[AsyncSessio
             words = await _collect_user_vocabulary(db, user_id)
             initial_prompt = _build_initial_prompt_from_vocab(words)
     except Exception as e:
-        logging.warning(f"⚠️ initial_prompt build failed: {e}")
+        logger.warning("⚠️ initial_prompt build failed: %s", e)
 
     try:
         wav = convert_to_wav(p)
@@ -353,7 +371,7 @@ async def transcribe_file(filename_or_path: str | Path, db: Optional[AsyncSessio
             pass
         return text or "[No clear speech detected in the recording.]"
     except Exception as e:
-        logging.exception("❌ Transcription error")
+        logger.exception("❌ Transcription error")
         return f"[Transcription failed: {e}]"
 
 
@@ -400,7 +418,7 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
 
         text = (_text_for_tagging(response) or "").strip()
         if not text:
-            logging.info("ℹ️ enrich_after_transcription: empty text; skip.")
+            logger.info("ℹ️ enrich_after_transcription: empty text; skip.")
             return
 
         # 1) auto-tag
@@ -420,7 +438,7 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
             if tag and tag not in response.tags:
                 response.tags.append(tag)
                 added += 1
-        logging.info(f"🏷️ Auto-tag added {added} tag(s) on response {response.id}")
+        logger.info("🏷️ Auto-tag added %s tag(s) on response %s", added, response.id)
 
         # 2) morph profile
         profile = (await db.execute(
@@ -474,7 +492,7 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
                         seen_person_ids.add(person.id)
         await db.commit()
     except Exception:
-        logging.exception("❌ enrich_after_transcription failed")
+        logger.exception("❌ enrich_after_transcription failed")
 
 
 # ---------------------------------------------------------------------------
