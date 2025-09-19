@@ -137,16 +137,4 @@ Capture the voices and stories of your family — especially elders — with a t
 - Multi-arch container images (amd64/arm64) published by CI
 - Optional vector search for semantic memory lookup
 
-## Screenshots (coming soon) ✨
 
-> Add screenshots/GIFs of:
-> - Dashboard with weekly prompt card and glassy response tiles
-> - Token recording view on mobile (just a big mic button and the prompt)
-> - People graph with connections and the info panel
-
-## Screenshots (coming soon) ✨
-
-> Add screenshots/GIFs of:
-> - Dashboard with weekly prompt card and glassy response tiles
-> - Token recording view on mobile (just a big mic button and the prompt)
-> - People graph with connections and the info panel
