@@ -57,6 +57,34 @@ async def response_view(
     )
 
 
-# Additional response-related endpoints will be moved here in subsequent steps.
+@router.get("/response/{response_id}/edit", response_class=HTMLResponse, name="edit_response_page")
+async def response_edit(
+    response_id: int,
+    request: Request,
+    user=Depends(require_authenticated_html_user),
+    db: AsyncSession = Depends(get_db),
+):
+    resp = (
+        await db.execute(
+            select(Response)
+            .options(selectinload(Response.prompt))
+            .where(Response.id == response_id, Response.user_id == user.id)
+        )
+    ).scalars().first()
+    if not resp:
+        raise HTTPException(status_code=404, detail="Response not found")
+
+    prompt_media = resp.prompt.media if resp.prompt else []
+
+    return templates.TemplateResponse(
+        "response_edit.html",
+        {
+            "request": request,
+            "user": user,
+            "response": resp,
+            "prompt_media": prompt_media,
+        },
+    )
+
 
 __all__ = ["router"]

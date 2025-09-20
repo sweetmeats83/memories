@@ -37,10 +37,6 @@ static/uploads/
 .idea/
 .continue/
 
-# Alembic migrations (ignored if you auto-create tables)
-alembic/
-alembic.ini
-
 # Python virtual environments
 .venv/
 venv/

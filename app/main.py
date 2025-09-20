@@ -8,6 +8,8 @@ from .database import init_db, async_session_maker
 from .routes import router
 from .routers.user import router as user_router
 from .routers.responses import router as responses_router
+from .routers.admin_prompts import router as admin_prompts_router
+from .routers.invites import router as invites_router
 from .users import fastapi_users, auth_backend
 from .models import User, Tag
 from .utils import get_current_user
@@ -63,6 +65,8 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(user_router)
 app.include_router(responses_router)
+app.include_router(admin_prompts_router)
+app.include_router(invites_router)
 
 # Authentication Routes
 app.include_router(

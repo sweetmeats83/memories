@@ -61,6 +61,7 @@ class User(Base):
     is_superuser = Column(Boolean, default=False)
     super_admin = Column(Boolean, default=False)
     must_change_password = Column(Boolean, default=False)
+    notify_new_responses = Column(Boolean, default=False, nullable=False)
     relationship_status = Column(String, nullable=True)  # ✅ renamed
     goals = Column(String, nullable=True)
     # ---- Weekly pointers & state ----
@@ -85,6 +86,17 @@ class User(Base):
     weekly_on_deck_prompt = relationship("Prompt", foreign_keys=[weekly_on_deck_prompt_id])
 
     responses = relationship("Response", back_populates="user", cascade="all, delete-orphan")
+    notification_watchers = relationship(
+        "ResponseNotificationTarget",
+        foreign_keys="ResponseNotificationTarget.owner_user_id",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    notification_subscriptions = relationship(
+        "ResponseNotificationTarget",
+        foreign_keys="ResponseNotificationTarget.watcher_user_id",
+        lazy="selectin",
+    )
 
 # ---------------------------
 # TAGS
@@ -227,6 +239,22 @@ class Response(Base):
         cascade="all, delete-orphan",
         back_populates="response",
         lazy="selectin",
+    )
+
+
+class ResponseNotificationTarget(Base):
+    __tablename__ = "response_notification_target"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    watcher_user_id = Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    owner = relationship("User", foreign_keys=[owner_user_id], back_populates="notification_watchers")
+    watcher = relationship("User", foreign_keys=[watcher_user_id], back_populates="notification_subscriptions")
+
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "watcher_user_id", name="uq_notification_owner_watcher"),
     )
 class SupportingMedia(Base):
     __tablename__ = "supporting_media"

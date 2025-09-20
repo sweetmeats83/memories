@@ -115,6 +115,64 @@
         <a class="pill" href="/onboarding">Re-run onboarding</a>
       </div>
     </section>
+
+    <!-- Notifications -->
+    <section class="rounded-xl border border-black/10 bg-white/70 p-4 md:col-span-2">
+      <h2 class="text-lg font-semibold mb-3">Notifications</h2>
+      <form method="post" action="/settings/notifications" class="space-y-3">
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="notify_new_responses" value="on" class="h-4 w-4" {% if notify_new_responses_enabled %}checked{% endif %}>
+          <span>Email me when someone creates a new response</span>
+        </label>
+        <div class="space-y-2">
+          <div class="text-sm font-medium">People to notify</div>
+          <div class="grid gap-2 sm:grid-cols-2">
+            {% for option in notification_options %}
+              <label class="flex items-start gap-2 text-sm border border-black/10 rounded-lg p-2 bg-white/60">
+                <input type="checkbox" name="watchers" value="{{ option.id }}" class="mt-1 h-4 w-4" {% if option.selected %}checked{% endif %}>
+                <span>
+                  <span class="font-medium">{{ option.label }}</span>
+                  {% if option.email and option.email.lower() != option.label.lower() %}
+                    <span class="block text-xs opacity-70">{{ option.email }}</span>
+                  {% endif %}
+                  <span class="block text-xs opacity-70">
+                    {% if option.notify_enabled %}Subscribed{% else %}Has notifications off{% endif %}
+                    {% if option.is_admin %}· Admin{% endif %}
+                  </span>
+                </span>
+              </label>
+            {% else %}
+              <div class="text-sm opacity-60">No other users available yet.</div>
+            {% endfor %}
+          </div>
+          <p class="text-xs opacity-70">Only users with notifications enabled will receive emails.</p>
+        </div>
+        <div class="pt-1">
+          <button class="pill">Save notification settings</button>
+        </div>
+      </form>
+      <div class="mt-4 text-sm">
+        <div class="font-medium mb-1">Who is notified</div>
+        {% if notification_watchers %}
+          <ul class="space-y-1">
+            {% for watcher in notification_watchers %}
+              <li class="flex flex-wrap items-center gap-2">
+                <span>{{ watcher.display }}</span>
+                {% if watcher.email and watcher.email.lower() != watcher.display.lower() %}
+                  <span class="opacity-60">&lt;{{ watcher.email }}&gt;</span>
+                {% endif %}
+                {% if watcher.is_admin %}
+                  <span class="chip chip-xs">Admin</span>
+                {% endif %}
+                <span class="text-xs opacity-70">{% if watcher.notify_enabled %}Notifications on{% else %}Notifications off{% endif %}</span>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="opacity-60">No one is currently subscribed to these notifications.</div>
+        {% endif %}
+      </div>
+    </section>
     
     <!-- Change password (moved lower for more separation) -->
     <section class="rounded-xl border border-black/10 bg-white/70 p-4 md:col-span-2">

@@ -1,0 +1,14 @@
+{{ recipient_name }},
+
+{{ author_name }} just created a new response{% if response_title %} titled "{{ response_title }}"{% endif %}.
+{% if prompt_title %}Prompt: {{ prompt_title }}
+{% endif %}{% if response_excerpt %}
+Excerpt:
+{{ response_excerpt }}
+{% endif %}
+Review it here: {{ response_url }}
+{% if link_expires %}
+This link is active until {{ link_expires }}.
+{% endif %}
+
+— The Memories Team
