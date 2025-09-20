@@ -2199,7 +2199,7 @@ async def create_response(
 # -----------------------------------------------------------------------------
 
 
-@router.get("/response/{response_id}", response_class=HTMLResponse)
+@router.get("/response/{response_id}", response_class=HTMLResponse, name="response_view")
 async def response_view(
     response_id: int,
     request: Request,
@@ -2241,7 +2241,7 @@ async def response_view(
 
 
 
-@router.get("/response/{response_id}/edit")
+@router.get("/response/{response_id}/edit", response_class=HTMLResponse, name="edit_response_page")
 async def edit_response_page(
     response_id: int,
     request: Request,

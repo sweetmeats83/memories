@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from .database import init_db, async_session_maker
 from .routes import router
+from .routers.user import router as user_router
+from .routers.responses import router as responses_router
 from .users import fastapi_users, auth_backend
 from .models import User, Tag
 from .utils import get_current_user
@@ -59,6 +61,8 @@ app.add_middleware(
 # Route Includes
 # ----------------------
 app.include_router(router)
+app.include_router(user_router)
+app.include_router(responses_router)
 
 # Authentication Routes
 app.include_router(

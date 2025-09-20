@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import Executor
+from functools import partial
 from typing import Awaitable, Callable, Optional, Any, Set
 
 logger = logging.getLogger(__name__)
@@ -47,3 +49,14 @@ def spawn(coro: Awaitable[Any], *, name: Optional[str] = None,
 
 
 __all__ = ["spawn"]
+
+
+async def run_sync(func: Callable[..., Any], *args: Any, loop: Optional[asyncio.AbstractEventLoop] = None,
+                   executor: Optional[Executor] = None, **kwargs: Any) -> Any:
+    """Execute blocking code in the default executor and await the result."""
+    event_loop = loop or asyncio.get_running_loop()
+    bound = partial(func, *args, **kwargs)
+    return await event_loop.run_in_executor(executor, bound)
+
+
+__all__.append("run_sync")

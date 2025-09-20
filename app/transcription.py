@@ -26,6 +26,7 @@ from app.models import (
 from app.services.auto_tag import suggest_tags_rule_based
 from app.services.assignment_core import morph_profile
 from app.settings.config import settings
+from app.background import run_sync
 
 # Optional people helpers (we degrade gracefully if missing)
 try:
@@ -361,7 +362,7 @@ async def transcribe_file(filename_or_path: str | Path, db: Optional[AsyncSessio
         logger.warning("⚠️ initial_prompt build failed: %s", e)
 
     try:
-        wav = convert_to_wav(p)
+        wav = await run_sync(convert_to_wav, p)
         text = _run_transcription(wav, force_lang="en", initial_prompt=initial_prompt)
         if not text or text.startswith("[No clear speech"):
             text = _run_transcription(wav, force_lang=None, initial_prompt=None)
