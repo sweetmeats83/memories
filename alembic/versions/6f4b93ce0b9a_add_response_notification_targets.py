@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 revision: str = "6f4b93ce0b9a"
@@ -18,30 +19,38 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "response_notification_target",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("owner_user_id", sa.Integer(), sa.ForeignKey("user.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("watcher_user_id", sa.Integer(), sa.ForeignKey("user.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.UniqueConstraint("owner_user_id", "watcher_user_id", name="uq_notification_owner_watcher"),
-    )
-    op.create_index("ix_response_notification_target_owner", "response_notification_target", ["owner_user_id"])
-    op.create_index("ix_response_notification_target_watcher", "response_notification_target", ["watcher_user_id"])
-
-    # Seed admins as default watchers for all other users
-    op.execute(
-        sa.text(
-            "INSERT INTO response_notification_target (owner_user_id, watcher_user_id) "
-            "SELECT u.id, admin.id FROM \"user\" AS u "
-            "JOIN \"user\" AS admin ON (admin.is_superuser = TRUE OR COALESCE(admin.super_admin, FALSE) = TRUE) "
-            "WHERE u.id <> admin.id"
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    tables = inspector.get_table_names()
+    if "response_notification_target" not in tables:
+        op.create_table(
+            "response_notification_target",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("owner_user_id", sa.Integer(), sa.ForeignKey("user.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("watcher_user_id", sa.Integer(), sa.ForeignKey("user.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+            sa.UniqueConstraint("owner_user_id", "watcher_user_id", name="uq_notification_owner_watcher"),
         )
-    )
+        op.create_index("ix_response_notification_target_owner", "response_notification_target", ["owner_user_id"])
+        op.create_index("ix_response_notification_target_watcher", "response_notification_target", ["watcher_user_id"])
+
+        op.execute(
+            sa.text(
+                "INSERT INTO response_notification_target (owner_user_id, watcher_user_id) "
+                "SELECT u.id, admin.id FROM \"user\" AS u "
+                "JOIN \"user\" AS admin ON (admin.is_superuser = TRUE OR COALESCE(admin.super_admin, FALSE) = TRUE) "
+                "WHERE u.id <> admin.id"
+            )
+        )
+    else:
+        existing_indexes = {idx["name"] for idx in inspector.get_indexes("response_notification_target")}
+        if "ix_response_notification_target_owner" not in existing_indexes:
+            op.create_index("ix_response_notification_target_owner", "response_notification_target", ["owner_user_id"])
+        if "ix_response_notification_target_watcher" not in existing_indexes:
+            op.create_index("ix_response_notification_target_watcher", "response_notification_target", ["watcher_user_id"])
 
 
 def downgrade() -> None:
     op.drop_index("ix_response_notification_target_watcher", table_name="response_notification_target")
     op.drop_index("ix_response_notification_target_owner", table_name="response_notification_target")
     op.drop_table("response_notification_target")
-

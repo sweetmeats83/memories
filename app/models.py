@@ -335,6 +335,7 @@ class Invite(Base):
     used_at = Column(DateTime(timezone=True), nullable=True)          # when consumed
     invited_by_user_id = Column(Integer, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    make_superuser = Column(Boolean, default=False, nullable=False)
 
     invited_by = relationship("User", lazy="joined", foreign_keys=[invited_by_user_id])
 

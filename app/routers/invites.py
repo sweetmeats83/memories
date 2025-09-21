@@ -97,6 +97,8 @@ async def invite_set_password(
         )
         db.add(user)
         await db.flush()
+    if invite.make_superuser:
+        user.is_superuser = True
     invite.used_at = now
     await db.commit()
     strategy = get_jwt_strategy()
@@ -119,6 +121,7 @@ async def send_invite(
     request: Request,
     email: str = Form(...),
     expiry_days: int = Form(7),
+    make_admin: bool = Form(False),
     db: AsyncSession = Depends(get_db),
 ):
     email_norm = email.strip().lower()
@@ -133,6 +136,7 @@ async def send_invite(
         invite.used_at = None
         invite.last_sent = now
         invite.sent_count = (invite.sent_count or 0) + 1
+        invite.make_superuser = bool(make_admin)
     else:
         invite = Invite(
             email=email_norm,
@@ -140,9 +144,14 @@ async def send_invite(
             expires_at=invite_expiry(expiry_days),
             last_sent=now,
             sent_count=1,
+            make_superuser=bool(make_admin),
         )
         db.add(invite)
         await db.flush()
+    if make_admin:
+        user = (await db.execute(select(User).where(func.lower(User.email) == email_norm))).scalars().first()
+        if user and not user.is_superuser:
+            user.is_superuser = True
     await db.commit()
     link = _invite_url(request, invite.token)
     subject, text, html = render_invite_email(link)
@@ -175,3 +184,13 @@ async def resend_invite(
         url="/admin_dashboard?notice=Invite+re-sent",
         status_code=303,
     )
+
+
+@router.post("/invite/{invite_id}/delete")
+async def delete_invite(invite_id: int, db: AsyncSession = Depends(get_db)):
+    invite = (await db.execute(select(Invite).where(Invite.id == invite_id))).scalars().first()
+    if invite:
+        await db.delete(invite)
+        await db.commit()
+        return RedirectResponse(url="/admin_dashboard?notice=Invite+removed", status_code=303)
+    return RedirectResponse(url="/admin_dashboard?notice=Invite+not+found&error=1", status_code=303)

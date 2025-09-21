@@ -379,9 +379,13 @@
         <!-- Invites -->
         <div class="rounded-2xl border border-black/10 bg-white/60 p-4">
           <h2 class="text-lg font-semibold mb-2">Invites</h2>
-          <form method="post" action="/invite" class="flex gap-2 mb-4">
+          <form method="post" action="/invite" class="grid gap-2 mb-4 md:grid-cols-[2fr_1fr_auto]">
             <input type="email" name="email" placeholder="Enter email" required class="border p-2 rounded w-full">
-            <button type="submit" class="btn inline-flex items-center gap-2">
+            <label class="flex items-center gap-2 text-sm font-medium">
+              <input type="checkbox" name="make_admin" value="on" class="h-4 w-4">
+              Make admin
+            </label>
+            <button type="submit" class="btn inline-flex items-center gap-2 justify-center">
               <span class="material-symbols-outlined text-base">person_add</span>Send Invite
             </button>
           </form>
@@ -392,6 +396,7 @@
                   <th class="p-2">Email</th>
                   <th class="p-2">Last Sent</th>
                   <th class="p-2">Resend Count</th>
+                  <th class="p-2">Admin?</th>
                   <th class="p-2">Action</th>
                 </tr>
               </thead>
@@ -402,9 +407,21 @@
                   <td class="p-2">{{ invite.last_sent or 'Never' }}</td>
                   <td class="p-2">{{ invite.sent_count or 0 }}</td>
                   <td class="p-2">
-                    <form method="post" action="/resend_invite/{{ invite.id }}">
-                      <button class="btn">Resend</button>
-                    </form>
+                    {% if invite.make_superuser %}
+                      <span class="chip chip-xs">Admin</span>
+                    {% else %}
+                      <span class="text-xs text-gray-500">No</span>
+                    {% endif %}
+                  </td>
+                  <td class="p-2">
+                    <div class="flex gap-2">
+                      <form method="post" action="/resend_invite/{{ invite.id }}">
+                        <button class="btn">Resend</button>
+                      </form>
+                      <form method="post" action="/invite/{{ invite.id }}/delete" onsubmit="return confirm('Remove this invite?');">
+                        <button class="btn btn-ghost" type="submit">Remove</button>
+                      </form>
+                    </div>
                   </td>
                 </tr>
                 {% else %}
