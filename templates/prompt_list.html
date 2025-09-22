@@ -429,19 +429,28 @@
     if (!input) return;
     const card = input.closest('[data-role="prompt-card"]');
     const dd   = card.querySelector('.assign-dd');
-    const q = (input.value||'').trim();
-    dd.innerHTML = ''; dd.classList.add('hidden');
-    if (!q) return;
+    if (!card || !dd) return;
+    const q = (input.value || '').trim();
+    dd.innerHTML = '';
+    dd.classList.add('hidden');
+    if (q.length < 2) return;
     const pid = card.getAttribute('data-prompt-id');
-    try{
-      const r = await fetch(`/admin/users/search?q=${encodeURIComponent(q)}&exclude_prompt_id=${encodeURIComponent(pid)}`, { credentials:'include' });
+    try {
+      const url = `/admin/users/search?q=${encodeURIComponent(q)}&exclude_prompt_id=${encodeURIComponent(pid)}`;
+      const r = await fetch(url, { credentials: 'include' });
       if (!r.ok) return;
-      const items = await r.json();
-      if (!Array.isArray(items) || !items.length) return;
-      dd.innerHTML = items.map(u => `<div class="px-2 py-1 hover:bg-stone-100 cursor-pointer" data-user-id="${u.id}">${u.name || u.email}</div>`).join('');
+      const payload = await r.json();
+      const items = Array.isArray(payload) ? payload : (payload.users || []);
+      if (!items.length) return;
+      dd.innerHTML = items.map(u => `
+        <div class="px-2 py-1 hover:bg-stone-100 cursor-pointer" data-user-id="${u.id}">
+          ${escapeHtml(u.name || u.email || '')}
+        </div>`).join('');
       dd.classList.remove('hidden');
-    }catch(err){ console.warn('search failed', err) }
-  }, 200));
+    } catch (err) {
+      console.warn('search failed', err);
+    }
+  }, 250));
 
   // Click a result to assign
   root.addEventListener('click', async (e) => {

@@ -83,7 +83,7 @@
                 transition-all duration-300 ease-in-out"
          aria-expanded="false" data-state="collapsed">
     <h3 class="font-semibold">Create Prompt</h3>
-    <form id="createPromptForm" action="/admin_create_prompt" enctype="multipart/form-data" class="space-y-3">
+    <form id="createPromptForm" action="/admin_create_prompt" method="post" enctype="multipart/form-data" class="space-y-3">
       <label class="block text-sm font-medium">Prompt Text</label>
       <textarea id="createPromptText" name="prompt_text" required class="create-textarea border p-2 rounded w-full resize-y transition-all duration-300 ease-in-out" rows="4" ></textarea>
 
@@ -105,11 +105,13 @@
 <div class="mt-3">
   <label class="block text-sm mb-1">Assign to user(s) (optional)</label>
   <div id="createAssignChips" class="flex flex-wrap gap-2 mb-2"></div>
-  <div class="relative">
-    <input id="createAssignInput" type="text" class="w-full rounded-md bg-black/20 border border-white/15 p-2" placeholder="Type to search users   " autocomplete="off">
-    <div id="createAssignDD" class="absolute z-20 mt-1 w-full rounded-md border border-stone-200 bg-white shadow hidden"></div>
-  </div>
+<div class="relative">
+  <input id="createAssignInput" type="text" class="w-full rounded-md bg-black/20 border border-white/15 p-2" placeholder="Type to search users   " autocomplete="off">
+  <div id="createAssignDD" class="absolute z-20 mt-1 w-full rounded-md border border-stone-200 bg-white shadow hidden"></div>
 </div>
+</div>
+
+<input type="hidden" id="createAssignIds" name="assign_user_ids" value="[]">
 
 <!-- Private flag -->
 <label class="mt-3 inline-flex items-center gap-2 select-none">
@@ -776,6 +778,7 @@ function escapeHtml(s){
     { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]
   ));
 }
+window.escapeHtml = escapeHtml;
 const escapeHTML = window.escapeHtml;
 /* ====================== Accordion (simple) ====================== */
 const AccordionManager = (() => {
@@ -847,6 +850,350 @@ const PromptUI = (() => {
   return { ensureInit: init, refreshPartial };
 })();
 window.PromptUI = PromptUI;
+
+/* ====================== Create Prompt: Tagify + suggestions ====================== */
+(() => {
+  const input = document.getElementById('createTags');
+  if (!input || input.__wiredTagify) return;
+  input.__wiredTagify = true;
+
+  const tf = new Tagify(input, {
+    enforceWhitelist: false,
+    dropdown: { enabled: 0, position: 'text' },
+    trim: true,
+    editTags: 1,
+    placeholder: 'Add tag…'
+  });
+
+  let ctl;
+  tf.on('input', async e => {
+    const q = (e.detail.value || '').trim();
+    if (!q) return;
+    try {
+      ctl?.abort();
+      ctl = new AbortController();
+      const r = await fetch(`/admin/tags?q=${encodeURIComponent(q)}`, { credentials: 'include', signal: ctl.signal });
+      if (!r.ok) return;
+      const list = await r.json();
+      tf.settings.whitelist = (list || []).map(t => ({ value: t.slug, label: t.name }));
+      tf.dropdown.show.call(tf, q);
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  function augmentWhitelist(slug) {
+    const wl = Array.isArray(tf.settings.whitelist) ? tf.settings.whitelist : [];
+    if (!wl.some(w => (w.value || w) === slug)) {
+      tf.settings.whitelist = [...wl, { value: slug }];
+    }
+  }
+
+  const btnSuggest = document.getElementById('btnSuggestTags');
+  const wrap = document.getElementById('suggestedTags');
+  const err = document.getElementById('suggestErr');
+  const promptTxt = document.getElementById('createPromptText');
+
+  btnSuggest?.addEventListener('click', async () => {
+    if (err) err.textContent = '';
+    const text = (promptTxt?.value || '').trim();
+    if (!text) {
+      if (wrap) wrap.innerHTML = '<span class="text-sm opacity-70">Add prompt text first.</span>';
+      return;
+    }
+    if (wrap) wrap.textContent = 'Fetching suggestions…';
+    try {
+      const payload = { text, word_count: text.split(/\s+/).filter(Boolean).length };
+      const r = await fetch('/api/auto_tag/preview', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!r.ok) throw new Error('preview failed');
+      const data = await r.json();
+      const tags = Array.isArray(data.tags) ? data.tags : [];
+      wrap.innerHTML = '';
+      if (!tags.length) {
+        wrap.innerHTML = '<span class="text-sm opacity-70">No suggestions.</span>';
+        return;
+      }
+      tags.forEach(({ value, score }) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs';
+        chip.textContent = `${value}${typeof score === 'number' ? ` (${score.toFixed(2)})` : ''}`;
+        chip.addEventListener('click', () => { augmentWhitelist(value); tf.addTags([value]); });
+        wrap.appendChild(chip);
+      });
+    } catch (e) {
+      console.error(e);
+      if (wrap) wrap.innerHTML = '';
+      if (err) err.textContent = 'Failed to fetch suggestions.';
+    }
+  });
+
+  input.tagify = tf;
+  window.createTagify = tf;
+})();
+
+/* ====================== Assign to users ====================== */
+(() => {
+  const chips = document.getElementById('createAssignChips');
+  const input = document.getElementById('createAssignInput');
+  const dd = document.getElementById('createAssignDD');
+  if (!chips || !input || !dd || input.__wiredAssign) return;
+  input.__wiredAssign = true;
+
+  const assigned = new Map();
+
+  function mkChip({ id, label }) {
+    const span = document.createElement('span');
+    span.className = 'chip chip-orange inline-flex items-center gap-1 px-2 py-0.5 rounded-full shadow-sm';
+    span.dataset.userId = id;
+    span.innerHTML = `<span class="truncate max-w-[12rem]">${escapeHtml(label)}</span>` +
+      '<button type="button" class="chip-x text-[14px]" aria-label="Remove">×</button>';
+    span.querySelector('.chip-x').addEventListener('click', () => {
+      assigned.delete(String(id));
+      span.remove();
+    });
+    return span;
+  }
+
+  async function searchUsers(q) {
+    const r = await fetch(`/admin/users/search?q=${encodeURIComponent(q)}`, { credentials: 'include' });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data) ? data : (data.users || []);
+  }
+
+  function hideDD() {
+    dd.classList.add('hidden');
+    dd.innerHTML = '';
+  }
+
+  let ctl;
+  input.addEventListener('input', async () => {
+    const q = input.value.trim();
+    if (q.length < 2) { hideDD(); return; }
+    try {
+      ctl?.abort();
+      ctl = new AbortController();
+      const users = await searchUsers(q);
+      dd.innerHTML = users.length
+        ? users.map(u => `
+            <button type="button" role="option" class="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                    data-id="${u.id}" data-label="${escapeHtml(u.name || u.email)}">
+              <div class="font-medium">${escapeHtml(u.name || u.email)}</div>
+              <div class="text-xs text-stone-600">${escapeHtml(u.email || '')}</div>
+            </button>`).join('')
+        : '<div class="px-3 py-2 text-sm text-gray-500">No matches</div>';
+      dd.classList.remove('hidden');
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  dd.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-id]');
+    if (!b) return;
+    const id = b.getAttribute('data-id');
+    const label = b.getAttribute('data-label') || '';
+    if (assigned.has(id)) { input.value = ''; hideDD(); return; }
+    assigned.set(id, { id, label });
+    chips.appendChild(mkChip({ id, label }));
+    input.value = '';
+    hideDD();
+  });
+
+  document.addEventListener('click', (ev) => {
+    if (!dd.contains(ev.target) && ev.target !== input) hideDD();
+  });
+
+  window.__createAssigned = assigned;
+})();
+
+/* ====================== Media picker for create prompt ====================== */
+(() => {
+  const grid = document.getElementById('createMediaGrid');
+  const drop = document.getElementById('createDrop');
+  const filesEl = document.getElementById('createFiles');
+  if (!grid || !drop || !filesEl || drop.__wiredMedia) return;
+  drop.__wiredMedia = true;
+
+  const picked = [];
+
+  function tempRibbon() {
+    const r = document.createElement('div');
+    r.textContent = 'TEMP';
+    r.className = 'absolute top-1 left-1 text-[10px] px-1 py-[1px] rounded bg-stone-800/80 text-white';
+    return r;
+  }
+
+  function addPreviewCard(file) {
+    const card = document.createElement('div');
+    card.className = 'relative group w-16 h-16 rounded border overflow-hidden bg-white';
+    grid.appendChild(card);
+    if (file?.type?.startsWith('image/')) {
+      const url = URL.createObjectURL(file);
+      const img = document.createElement('img');
+      img.className = 'w-full h-full object-cover';
+      img.onload = () => { card.__revoke && card.__revoke(); };
+      img.src = url;
+      card.appendChild(img);
+      card.__revoke = () => URL.revokeObjectURL(url);
+    } else {
+      const ext = (file?.name || '').split('.').pop() || 'FILE';
+      const ph = document.createElement('div');
+      ph.style.cssText = 'display:grid;place-items:center;width:100%;height:100%;font-size:.7rem;color:#555;background:#f3f4f6';
+      ph.textContent = ext.toUpperCase();
+      card.appendChild(ph);
+    }
+    card.appendChild(tempRibbon());
+    return card;
+  }
+
+  function addFiles(list) {
+    Array.from(list || []).forEach(f => {
+      const card = addPreviewCard(f);
+      picked.push({ file: f, card });
+    });
+  }
+
+  drop.addEventListener('click', () => filesEl.click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); });
+  drop.addEventListener('drop', e => { e.preventDefault(); addFiles(e.dataTransfer.files); });
+  filesEl.addEventListener('change', e => { addFiles(e.target.files); e.target.value = ''; });
+
+  window.__createPickedMedia = picked;
+})();
+
+/* ====================== Create prompt submit (ajax + assignments) ====================== */
+(() => {
+  const form = document.getElementById('createPromptForm');
+  if (!form || form.__wiredCreateSubmit) return;
+  form.__wiredCreateSubmit = true;
+
+  const msgEl = document.getElementById('promptMsg');
+  const btn = form.querySelector('button[type="submit"]');
+
+  function setBusy(on, label = '') {
+    if (!btn) return;
+    if (on) {
+      if (!btn.dataset.prevHtml) btn.dataset.prevHtml = btn.innerHTML;
+      btn.classList.add('is-loading');
+      btn.setAttribute('disabled', 'true');
+      if (label) btn.setAttribute('data-status', label);
+    } else {
+      btn.classList.remove('is-loading');
+      btn.removeAttribute('disabled');
+      if (btn.dataset.prevHtml) btn.innerHTML = btn.dataset.prevHtml;
+      btn.removeAttribute('data-status');
+    }
+  }
+
+  async function refreshPrompts() {
+    await window.PromptUI?.refreshPartial?.();
+  }
+
+  async function createAndGetId(fd, textSnippet) {
+    const base = form.getAttribute('action') || '/admin_create_prompt';
+    const url = base + (base.includes('?') ? '&' : '?') + 'ajax=1';
+
+    let res = await fetch(url, {
+      method: 'POST', body: fd, credentials: 'include',
+      headers: { Accept: 'application/json' }
+    });
+    if (res.ok) {
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        try {
+          const j = await res.json();
+          const id = j.id || j.prompt_id;
+          if (id) return String(id);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    }
+
+    res = await fetch(base, { method: 'POST', body: fd, credentials: 'include' });
+    if (!res.ok) throw new Error('create failed');
+
+    await refreshPrompts();
+    const cont = document.getElementById('promptListContainer') || document;
+    const cards = Array.from(cont.querySelectorAll('[data-role="prompt-card"]'))
+      .sort((a, b) => (+b.dataset.promptId || 0) - (+a.dataset.promptId || 0));
+    const sn = (textSnippet || '').trim().slice(0, 64).toLowerCase();
+    const hit = cards.find(c => (c.getAttribute('data-search') || '').toLowerCase().includes(sn));
+    return hit ? String(hit.dataset.promptId || '') : '';
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    setBusy(true, 'Creating…');
+    if (msgEl) {
+      msgEl.textContent = 'Creating…';
+      msgEl.className = 'text-xs text-stone-600';
+    }
+
+    try {
+      const text = document.getElementById('createPromptText')?.value || '';
+      const chapter = document.getElementById('createChapter')?.value || '';
+      const privateOnly = !!document.getElementById('createPrivateOnly')?.checked;
+      let tags = (window.createTagify?.value || []).map(v => v.value);
+      if (privateOnly && !tags.includes('scope:private')) tags = [...tags, 'scope:private'];
+
+      const assignedList = window.__createAssigned ? Array.from(window.__createAssigned.values()).map(({ id }) => Number(id)) : [];
+      const assignHidden = document.getElementById('createAssignIds');
+      if (assignHidden) assignHidden.value = JSON.stringify(assignedList);
+
+      const fd = new FormData();
+      fd.append('prompt_text', text);
+      fd.append('chapter', chapter);
+      fd.append('tags', JSON.stringify(tags));
+      fd.append('only_assigned', privateOnly ? '1' : '0');
+      fd.append('assign_user_ids', JSON.stringify(assignedList));
+      (window.__createPickedMedia || []).forEach(({ file }) => fd.append('media_files', file));
+
+      const promptId = await createAndGetId(fd, text);
+      if (msgEl) {
+        msgEl.textContent = 'Processing media…';
+        msgEl.className = 'text-xs text-amber-600';
+      }
+
+      await refreshPrompts();
+
+      if (msgEl) {
+        msgEl.textContent = 'Created ✓';
+        msgEl.className = 'text-xs text-green-700';
+      }
+      toast('Prompt created');
+
+      (window.__createPickedMedia || []).forEach(({ card }) => {
+        card.__revoke && card.__revoke();
+        card.remove();
+      });
+      if (Array.isArray(window.__createPickedMedia)) window.__createPickedMedia.length = 0;
+      form.reset();
+      window.createTagify?.removeAllTags?.();
+      if (window.__createAssigned) {
+        window.__createAssigned.clear();
+        const chipsNode = document.getElementById('createAssignChips');
+        if (chipsNode) chipsNode.innerHTML = '';
+      }
+      document.getElementById('suggestedTags')?.replaceChildren();
+    } catch (err) {
+      console.error(err);
+      if (msgEl) {
+        msgEl.textContent = 'Create failed';
+        msgEl.className = 'text-xs text-red-600';
+      }
+      alert('Failed to create prompt.');
+    } finally {
+      setBusy(false);
+    }
+  });
+})();
 
 /* ====================== Assignments UI ====================== */
 const AssignUI = (() => {

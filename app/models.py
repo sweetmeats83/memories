@@ -233,6 +233,8 @@ class Response(Base):
     primary_codec_audio = Column(String, nullable=True)
     primary_codec_video = Column(String, nullable=True)
     primary_wav_path = Column(String, nullable=True)  # relative to static/
+    processing_state = Column(String(20), nullable=False, default='ready')
+    processing_error = Column(Text, nullable=True)
     segments = relationship(
         "ResponseSegment",
         order_by="ResponseSegment.order_index.asc()",

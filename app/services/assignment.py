@@ -10,6 +10,7 @@ from app.models import (
     Prompt, Tag, PromptSuggestion, UserProfile, Response,
     UserWeeklyPrompt, UserWeeklySkip, UserPrompt, User
 )
+from app.utils import slugify as _slugify
 from app.services.assignment_core import score_prompt  # used by tag/bucket scoring
 
 
@@ -240,8 +241,12 @@ def _eligible(prompt, user_tag_weights: dict[str, float], *, user_id: int | None
     # spouse
     if {"husband", "wife", "spouse", "partner"} & rk:
         aliases.add("spouse")
+    if {"boyfriend", "girlfriend"} & rk:
+        aliases.add("spouse")
 
-    # grandparent
+    # parent / grandparent aliases
+    if {"mother", "father", "parent", "mom", "dad", "stepfather", "stepmother", "adopted father", "adopted mother"} & rk:
+        aliases.add("parent")
     if {"grandmother", "grandfather", "grandparent"} & rk:
         aliases.add("grandparent")
 
@@ -260,8 +265,8 @@ def _eligible(prompt, user_tag_weights: dict[str, float], *, user_id: int | None
     role_keys_norm = rk | aliases
     
     # Role-gated: for:<role>
-    simple_roles = {g[4:] for g in gates if ":" not in g[4:]}  # e.g., "for:grandmother" -> "grandmother"
-    if simple_roles & role_keys:
+    simple_roles = {g[4:].lower() for g in gates if ":" not in g[4:]}  # e.g., "for:Grandmother" -> "grandmother"
+    if simple_roles & role_keys_norm:
         return True
 
     # Person-gated: for:person:<slug>
@@ -289,6 +294,14 @@ async def _get_profile_weights(db: AsyncSession, user_id: int) -> dict[str, floa
         return {}
     tw = (prof.tag_weights or {}).get("tagWeights", {}) or {}
     weights = {str(k).lower(): v for k, v in tw.items()} if isinstance(tw, dict) else {}
+
+    try:
+        for role in prof.relation_roles or []:
+            slug = f"role:{_slugify(str(role))}" if role else None
+            if slug:
+                weights.setdefault(slug.lower(), 0.6)
+    except Exception:
+        pass
 
     # Inject gender preference (from onboarding/settings) as role:* for gating
     try:

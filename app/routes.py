@@ -59,7 +59,7 @@ from passlib.hash import bcrypt
 from pydantic import BaseModel
 from app.services.auto_tag import suggest_tags_rule_based, suggest_tags_for_prompt, _is_prompt_like
 from app.services.assignment_core import score_prompt
-from app.services.assignment import _eligible, _user_role_like_slugs, ensure_weekly_prompt, skip_current_prompt as _skip, get_on_deck_candidates, rotate_to_next_unanswered as _rotate
+from app.services.assignment import _eligible, _get_profile_weights, ensure_weekly_prompt, skip_current_prompt as _skip, get_on_deck_candidates, rotate_to_next_unanswered as _rotate
 from app.services.people import upsert_person_for_user, resolve_person
 from app.services.auto_tag import WHITELIST, reload_whitelist
 from sqlalchemy.dialects.postgresql import insert
@@ -70,6 +70,7 @@ from app.services.infer import infer_edges_for_person, commit_inferred_edges
 from app.schemas import ChapterCompilationDTO, ChapterStatusDTO
 from app.background import spawn
 templates = Jinja2Templates(directory='templates')
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -169,15 +170,34 @@ async def _ensure_response_owned(db: AsyncSession, response_id: int, user_id: in
         raise HTTPException(status_code=404, detail='Response not found')
     return resp
 
-async def _process_primary_async(response_id: int, tmp: FSPath, filename: str, content_type: str, user_slug: str):
+async def _process_primary_async(response_id: int, tmp: FSPath, filename: str, content_type: str, user_slug: str, weekly_token_used: bool):
     try:
+        async with async_session_maker() as s:
+            resp = await s.get(Response, response_id)
+            if resp:
+                resp.processing_state = 'processing'
+                resp.processing_error = None
+                await s.commit()
         loop = asyncio.get_running_loop()
-        art = await loop.run_in_executor(None, lambda: PIPELINE.process_upload(temp_path=tmp, logical='response', role='primary', user_slug_or_id=user_slug, prompt_id=None, response_id=response_id, media_id=None, original_filename=filename, content_type=content_type))
+        art = await loop.run_in_executor(
+            None,
+            lambda: PIPELINE.process_upload(
+                temp_path=tmp,
+                logical='response',
+                role='primary',
+                user_slug_or_id=user_slug,
+                prompt_id=None,
+                response_id=response_id,
+                media_id=None,
+                original_filename=filename,
+                content_type=content_type,
+            ),
+        )
+        playable_rel = (art.playable_rel or '').lstrip('/').replace('\\', '/')
         async with async_session_maker() as s:
             resp = await s.get(Response, response_id)
             if not resp:
                 return
-            playable_rel = (art.playable_rel or '').lstrip('/').replace('\\', '/')
             resp.primary_media_url = playable_rel[len('uploads/'):] if playable_rel.startswith('uploads/') else playable_rel
             resp.primary_thumbnail_path = art.thumb_rel
             resp.primary_mime_type = art.mime_type
@@ -189,13 +209,86 @@ async def _process_primary_async(response_id: int, tmp: FSPath, filename: str, c
             resp.primary_size_bytes = art.size_bytes
             resp.primary_codec_audio = art.codec_a
             resp.primary_codec_video = art.codec_v
+            resp.processing_state = 'ready'
+            resp.processing_error = None
             await s.commit()
+
+            exist = await s.execute(select(ResponseSegment.id).where(ResponseSegment.response_id == response_id))
+            if not exist.first():
+                primary_rel = (resp.primary_media_url or '').lstrip('/').replace('\\', '/')
+                if primary_rel.startswith('uploads/'):
+                    primary_rel = primary_rel[len('uploads/'):]
+                is_composite = primary_rel.startswith(f'responses/{response_id}/') and primary_rel.split('/')[-1].startswith('composite-')
+                if primary_rel and (not is_composite):
+                    seg0 = ResponseSegment(
+                        response_id=response_id,
+                        order_index=0,
+                        media_path=primary_rel,
+                        media_mime=resp.primary_mime_type or None,
+                        transcript=resp.transcription or '',
+                    )
+                    s.add(seg0)
+                    await s.commit()
+
         if playable_rel:
-            spawn(transcribe_and_update(response_id, playable_rel, False), name='transcribe_prompt_preview')
+            spawn(transcribe_and_update(response_id, playable_rel, weekly_token_used), name='transcribe_response_primary')
+        spawn(notify_new_response(response_id), name='notify_new_response')
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('Primary media processing failed for response %s: %s', response_id, exc)
+        async with async_session_maker() as s:
+            resp = await s.get(Response, response_id)
+            if resp:
+                resp.processing_state = 'failed'
+                resp.processing_error = str(exc)
+                await s.commit()
     finally:
         try:
             tmp.unlink(missing_ok=True)
-        except:
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _process_supporting_async(media_id: int, tmp: FSPath, filename: str, content_type: str, user_slug: str):
+    try:
+        loop = asyncio.get_running_loop()
+        art = await loop.run_in_executor(
+            None,
+            lambda: PIPELINE.process_upload(
+                temp_path=tmp,
+                logical='response',
+                role='supporting',
+                user_slug_or_id=user_slug,
+                prompt_id=None,
+                response_id=None,
+                media_id=media_id,
+                original_filename=filename,
+                content_type=content_type,
+            ),
+        )
+        async with async_session_maker() as s:
+            media = await s.get(SupportingMedia, media_id)
+            if not media:
+                return
+            playable_rel = (art.playable_rel or '').lstrip('/').replace('\\', '/')
+            media.file_path = playable_rel[len('uploads/'):] if playable_rel.startswith('uploads/') else playable_rel
+            media.thumbnail_url = art.thumb_rel
+            media.mime_type = art.mime_type
+            media.duration_sec = int(art.duration_sec or 0)
+            media.sample_rate = art.sample_rate
+            media.channels = art.channels
+            media.width = art.width
+            media.height = art.height
+            media.size_bytes = art.size_bytes
+            media.codec_audio = art.codec_a
+            media.codec_video = art.codec_v
+            media.wav_path = art.wav_rel
+            await s.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('Supporting media processing failed for media %s: %s', media_id, exc)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
             pass
 from app.services.assignment import ensure_weekly_prompt, skip_current_prompt, build_pool_for_user, _eligible, _iso_year_week
 
@@ -1127,21 +1220,44 @@ async def settings_profile_update(request: Request, display_name: Optional[str]=
     prof.birth_year = birth_year if birth_year else None
     prof.location = (location or '').strip() or None
 
-    def _csv(s: Optional[str]):
-        return [t.strip() for t in (s or '').split(',') if t.strip()]
-    prof.relation_roles = _csv(relation_roles) or None
-    prof.interests = _csv(interests) or None
+    def _parse_tag_input(raw: Optional[str]) -> list[str]:
+        text = (raw or '').strip()
+        if not text:
+            return []
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, list):
+            out: list[str] = []
+            for item in data:
+                if isinstance(item, str):
+                    v = item.strip()
+                    if v:
+                        out.append(v)
+                elif isinstance(item, dict):
+                    v = (item.get('value') or item.get('slug') or item.get('name') or '').strip()
+                    if v:
+                        out.append(v)
+            return out
+        return [t.strip() for t in text.split(',') if t.strip()]
+
+    prof.relation_roles = _parse_tag_input(relation_roles) or None
+    prof.interests = _parse_tag_input(interests) or None
     prof.bio = (bio or '').strip() or None
     tw = dict(prof.tag_weights or {'tagWeights': {}})
     weights = tw.setdefault('tagWeights', {})
     for r in prof.relation_roles or []:
-        key = f'role:{r}'
+        from .utils import slugify as _slugify_local
+        slug_val = _slugify_local(r)
+        if not slug_val:
+            continue
+        key = f'role:{slug_val}'
         try:
             weights[key] = max(float(weights.get(key, 0.0) or 0.0), 0.7)
         except Exception:
             weights[key] = 0.7
-    for p in _csv(places):
-        base = p
+    for base in _parse_tag_input(places):
         from .utils import slugify as _slugify_local
         slug = f'place:{_slugify_local(base)}'
         try:
@@ -1376,53 +1492,42 @@ async def create_response(prompt_id: int | None=Form(None), title: str | None=Fo
         with open(tmp, 'wb') as w:
             shutil.copyfileobj(upload.file, w)
         return tmp
+
+    pending_primary: tuple[FSPath, str, str | None] | None = None
     if primary_media and primary_media.filename:
         tmp = _save_temp(primary_media)
-        art = PIPELINE.process_upload(temp_path=tmp, logical='response', role='primary', user_slug_or_id=acting_user.username or str(acting_user.id), prompt_id=None, response_id=new_response.id, media_id=None, original_filename=primary_media.filename, content_type=primary_media.content_type)
-        playable_rel = art.playable_rel
-        new_response.primary_media_url = playable_rel[len('uploads/'):] if playable_rel.startswith('uploads/') else playable_rel
-        new_response.primary_thumbnail_path = art.thumb_rel
-        new_response.primary_mime_type = art.mime_type
-        new_response.primary_duration_sec = int(art.duration_sec or 0)
-        new_response.primary_sample_rate = art.sample_rate
-        new_response.primary_channels = art.channels
-        new_response.primary_width = art.width
-        new_response.primary_height = art.height
-        new_response.primary_size_bytes = art.size_bytes
-        new_response.primary_codec_audio = art.codec_a
-        new_response.primary_codec_video = art.codec_v
-        new_response.primary_wav_path = art.wav_rel
-        exist = await db.execute(select(ResponseSegment.id).where(ResponseSegment.response_id == new_response.id))
-        if not exist.first():
-            primary_rel = (new_response.primary_media_url or '').lstrip('/').replace('\\', '/')
-            if primary_rel.startswith('uploads/'):
-                primary_rel = primary_rel[len('uploads/'):]
-            is_composite = primary_rel.startswith(f'responses/{new_response.id}/') and primary_rel.split('/')[-1].startswith('composite-')
-            if primary_rel and (not is_composite):
-                seg0 = ResponseSegment(response_id=new_response.id, order_index=0, media_path=primary_rel, media_mime=new_response.primary_mime_type or None, transcript=new_response.transcription or '')
-                db.add(seg0)
+        new_response.processing_state = 'processing'
+        new_response.processing_error = None
+        pending_primary = (
+            tmp,
+            primary_media.filename or 'primary',
+            primary_media.content_type or 'application/octet-stream',
+        )
+    else:
+        new_response.processing_state = 'ready'
+        new_response.processing_error = None
+
+    pending_supporting: list[tuple[int, FSPath, str, str | None]] = []
     if supporting_media:
         for f in supporting_media:
             if not f or not f.filename:
                 continue
-            media = SupportingMedia(response_id=new_response.id, file_path='', media_type=f.content_type.split('/', 1)[0] if f.content_type else 'file')
+            media = SupportingMedia(
+                response_id=new_response.id,
+                file_path='',
+                media_type=f.content_type.split('/', 1)[0] if f.content_type else 'file',
+            )
             db.add(media)
             await db.flush()
             tmp = _save_temp(f)
-            art = PIPELINE.process_upload(temp_path=tmp, logical='response', role='supporting', user_slug_or_id=acting_user.username or str(acting_user.id), prompt_id=None, response_id=new_response.id, media_id=media.id, original_filename=f.filename, content_type=f.content_type)
-            playable_rel = art.playable_rel
-            media.file_path = playable_rel[len('uploads/'):] if playable_rel.startswith('uploads/') else playable_rel
-            media.thumbnail_url = art.thumb_rel
-            media.mime_type = art.mime_type
-            media.duration_sec = int(art.duration_sec or 0)
-            media.sample_rate = art.sample_rate
-            media.channels = art.channels
-            media.width = art.width
-            media.height = art.height
-            media.size_bytes = art.size_bytes
-            media.codec_audio = art.codec_a
-            media.codec_video = art.codec_v
-            media.wav_path = art.wav_rel
+            pending_supporting.append(
+                (
+                    media.id,
+                    tmp,
+                    f.filename or f'supporting-{media.id}',
+                    f.content_type or 'application/octet-stream',
+                )
+            )
     await db.refresh(new_response, attribute_names=['prompt', 'tags'])
     text_for_tagging = _text_for_tagging(new_response)
     if text_for_tagging.strip():
@@ -1440,7 +1545,32 @@ async def create_response(prompt_id: int | None=Form(None), title: str | None=Fo
             await enrich_after_transcription(db, new_response)
     except Exception:
         pass
-    spawn(transcribe_and_update(new_response.id, new_response.primary_media_url, bool(weekly_token)), name='transcribe_response_primary')
+    if pending_primary:
+        tmp, fname, ctype = pending_primary
+        spawn(
+            _process_primary_async(
+                new_response.id,
+                tmp,
+                fname,
+                ctype,
+                acting_user.username or str(acting_user.id),
+                bool(weekly_token),
+            ),
+            name='process_response_primary',
+        )
+    else:
+        spawn(notify_new_response(new_response.id), name='notify_new_response')
+    for media_id, tmp, fname, ctype in pending_supporting:
+        spawn(
+            _process_supporting_async(
+                media_id,
+                tmp,
+                fname,
+                ctype,
+                acting_user.username or str(acting_user.id),
+            ),
+            name=f'process_supporting_media_{media_id}',
+        )
     try:
         if prompt_id:
             y, w = _iso_year_week()
@@ -1451,7 +1581,6 @@ async def create_response(prompt_id: int | None=Form(None), title: str | None=Fo
                 await _rotate_to_next_unanswered(db, acting_user.id)
     except Exception:
         pass
-    spawn(notify_new_response(new_response.id), name='notify_new_response')
     if weekly_token:
         await mark_completed_and_close(db, weekly_token)
         try:
@@ -1461,7 +1590,9 @@ async def create_response(prompt_id: int | None=Form(None), title: str | None=Fo
         await db.commit()
         html = '\n        <section class="fixed inset-0 grid place-items-center bg-black/70">\n          <div class="bg-white/95 rounded-2xl p-6 max-w-md text-center">\n            <h2 class="text-xl font-semibold mb-2">Thanks for sharing your story!</h2>\n            <p class="mb-4 text-slate-700">We saved it for you. If you’d like to read or edit it later, please log in.</p>\n            <div class="flex justify-center gap-2">\n              <a href="/login" class="btn">Go to Login</a>\n              <a href="/" class="btn btn-ghost">Close</a>\n            </div>\n          </div>\n        </section>\n        '
         return templates.TemplateResponse('thank_you.html', {'request': request, 'user': None})
-    return RedirectResponse(url=f'/response/{new_response.id}/edit', status_code=303)
+    if new_response.processing_state == 'ready':
+        return RedirectResponse(url=f'/response/{new_response.id}/edit', status_code=303)
+    return RedirectResponse(url=f'/response/{new_response.id}/processing', status_code=303)
 
 @router.get('/response/{response_id}', response_class=HTMLResponse, name='response_view')
 async def response_view(response_id: int, request: Request, user=Depends(require_authenticated_html_user), db: AsyncSession=Depends(get_db)):
@@ -1469,6 +1600,8 @@ async def response_view(response_id: int, request: Request, user=Depends(require
     resp = (await db.execute(q)).scalars().first()
     if not resp:
         raise HTTPException(status_code=404, detail='Response not found')
+    if getattr(resp, 'processing_state', 'ready') != 'ready':
+        return RedirectResponse(url=f'/response/{response_id}/processing', status_code=303)
     prompt_media = list(resp.prompt.media) if resp.prompt and resp.prompt.media else []
     supporting_media = list(resp.supporting_media or [])
     segments = list(resp.segments or [])
@@ -1480,10 +1613,44 @@ async def edit_response_page(response_id: int, request: Request, user=Depends(re
     response = (await db.execute(select(Response).options(selectinload(Response.prompt), selectinload(Response.tags)).where(Response.id == response_id, Response.user_id == user.id))).scalars().first()
     if not response:
         raise HTTPException(status_code=404, detail='Response not found')
+    if getattr(response, 'processing_state', 'ready') != 'ready':
+        return RedirectResponse(url=f'/response/{response_id}/processing', status_code=303)
     supporting_media = (await db.execute(select(SupportingMedia).where(SupportingMedia.response_id == response_id))).scalars().all()
     pm_res = await db.execute(select(PromptMedia).where(PromptMedia.prompt_id == response.prompt_id))
     prompt_media = pm_res.scalars().all()
     return templates.TemplateResponse('response_edit.html', {'request': request, 'user': user, 'response': response, 'supporting_media': supporting_media, 'prompt_media': prompt_media})
+
+
+@router.get('/response/{response_id}/processing', response_class=HTMLResponse, name='response_processing_page')
+async def response_processing_page(response_id: int, request: Request, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    response = (await db.execute(select(Response).where(Response.id == response_id, Response.user_id == user.id))).scalars().first()
+    if not response:
+        raise HTTPException(status_code=404, detail='Response not found')
+    state = getattr(response, 'processing_state', 'ready')
+    if state == 'ready':
+        return RedirectResponse(url=f'/response/{response_id}/edit', status_code=303)
+    ctx = {
+        'request': request,
+        'user': user,
+        'response_id': response_id,
+        'state': state,
+        'error': getattr(response, 'processing_error', None),
+        'redirect_url': f'/response/{response_id}/edit',
+    }
+    return templates.TemplateResponse('response_processing.html', ctx)
+
+
+@router.get('/api/responses/{response_id}/status')
+async def api_response_status(response_id: int, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    response = (await db.execute(select(Response).where(Response.id == response_id, Response.user_id == user.id))).scalars().first()
+    if not response:
+        raise HTTPException(status_code=404, detail='Response not found')
+    return {
+        'id': response_id,
+        'state': getattr(response, 'processing_state', 'ready'),
+        'error': getattr(response, 'processing_error', None),
+        'redirect_url': f'/response/{response_id}/edit',
+    }
 
 @router.post('/response/{response_id}/edit')
 async def save_transcription(response_id: int, transcription: str=Form(...), title: str | None=Form(None), user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
@@ -1573,6 +1740,15 @@ async def share_response_view(token: str, request: Request, db: AsyncSession=Dep
     resp = (await db.execute(select(Response).options(selectinload(Response.prompt).selectinload(Prompt.media), selectinload(Response.tags), selectinload(Response.supporting_media), selectinload(Response.segments)).where(Response.id == share.response_id))).scalars().first()
     if not resp:
         raise HTTPException(status_code=404, detail='Response not found')
+    if getattr(resp, 'processing_state', 'ready') != 'ready':
+        return templates.TemplateResponse(
+            'response_processing_public.html',
+            {
+                'request': request,
+                'message': 'This response is still processing. Please try again in a few minutes.',
+            },
+            status_code=202,
+        )
     ctx = {'request': request, 'user': None, 'response': resp, 'prompt_media': list(resp.prompt.media) if resp.prompt and resp.prompt.media else [], 'supporting_media': list(resp.supporting_media or []), 'segments': list(resp.segments or []), 'is_token_link': True, 'share_token': token}
     return templates.TemplateResponse('response_view.html', ctx)
 
@@ -1886,7 +2062,7 @@ async def on_prompt_created(db: AsyncSession, prompt_id: int) -> None:
     """
     try:
         from app.models import Prompt, UserProfile, UserPrompt
-        from app.services.assignment import _eligible, _user_role_like_slugs
+        from app.services.assignment import _eligible, _get_profile_weights
         prompt = await db.get(Prompt, prompt_id)
         if not prompt:
             logging.warning('[prompt-fanout] Prompt %s not found', prompt_id)
@@ -1907,8 +2083,8 @@ async def on_prompt_created(db: AsyncSession, prompt_id: int) -> None:
         profiles = list((await db.execute(select(UserProfile))).scalars().all())
         to_assign = []
         for prof in profiles:
-            user_slugs = _user_role_like_slugs(prof)
-            if _eligible(prompt, user_slugs):
+            weights = await _get_profile_weights(db, prof.user_id)
+            if _eligible(prompt, weights, user_id=prof.user_id):
                 to_assign.append(prof.user_id)
         if not to_assign:
             logging.info('[prompt-fanout] Prompt %s matched 0 users', prompt_id)
@@ -1925,7 +2101,17 @@ async def on_prompt_created(db: AsyncSession, prompt_id: int) -> None:
         logging.exception('[prompt-fanout] on_prompt_created failed for %s', prompt_id)
 
 @router.post('/admin_create_prompt')
-async def admin_create_prompt(request: Request, prompt_text: str=Form(...), chapter: str=Form(...), tags: str=Form('[]'), media_files: list[UploadFile] | None=File(None), only_assigned: int | bool=Form(0), user=Depends(require_admin_user), db: AsyncSession=Depends(get_db)):
+async def admin_create_prompt(
+    request: Request,
+    prompt_text: str=Form(...),
+    chapter: str=Form(...),
+    tags: str=Form('[]'),
+    media_files: list[UploadFile] | None=File(None),
+    only_assigned: int | bool=Form(0),
+    assign_user_ids: str=Form('[]'),
+    user=Depends(require_admin_user),
+    db: AsyncSession=Depends(get_db),
+):
     """
     Create a prompt (with tags + optional media), then fan-out to eligible users
     via on_prompt_created in the background.
@@ -1959,6 +2145,20 @@ async def admin_create_prompt(request: Request, prompt_text: str=Form(...), chap
     prompt.tags = resolved
     db.add(prompt)
     await db.flush()
+    assigned_ids: list[int] = []
+    try:
+        parsed_assign = json.loads(assign_user_ids) if assign_user_ids else []
+        if isinstance(parsed_assign, list):
+            for raw in parsed_assign:
+                try:
+                    val = int(raw)
+                    if val > 0:
+                        assigned_ids.append(val)
+                except (TypeError, ValueError):
+                    continue
+    except Exception:
+        assigned_ids = []
+
     if media_files:
         for file in media_files:
             if not file or not file.filename:
@@ -1984,6 +2184,20 @@ async def admin_create_prompt(request: Request, prompt_text: str=Form(...), chap
             new_media.codec_video = art.codec_v
             new_media.wav_path = art.wav_rel
     await db.commit()
+
+    if assigned_ids:
+        for uid in assigned_ids:
+            exists = (
+                await db.execute(
+                    select(UserPrompt).where(
+                        UserPrompt.user_id == uid,
+                        UserPrompt.prompt_id == prompt.id,
+                    )
+                )
+            ).scalars().first()
+            if not exists:
+                db.add(UserPrompt(user_id=uid, prompt_id=prompt.id))
+        await db.commit()
     if not only_assigned:
 
         async def _fanout(pid: int):
@@ -2009,7 +2223,17 @@ async def admin_create_prompt(request: Request, prompt_text: str=Form(...), chap
     return RedirectResponse(url='/admin_dashboard', status_code=303)
 
 @router.post('/admin_update_prompt/{prompt_id}')
-async def admin_update_prompt(prompt_id: int, request: Request, prompt_text: str=Form(...), chapter: str=Form(...), tags: str=Form('[]'), media_files: list[UploadFile]=File(None), user=Depends(require_admin_user), db: AsyncSession=Depends(get_db)):
+async def admin_update_prompt(
+    prompt_id: int,
+    request: Request,
+    prompt_text: str=Form(...),
+    chapter: str=Form(...),
+    tags: str=Form('[]'),
+    media_files: list[UploadFile]=File(None),
+    assign_user_ids: str=Form('[]'),
+    user=Depends(require_admin_user),
+    db: AsyncSession=Depends(get_db),
+):
     res0 = await db.execute(select(Prompt).where(Prompt.id == prompt_id))
     prompt = res0.scalars().first()
     if not prompt:
@@ -2044,6 +2268,20 @@ async def admin_update_prompt(prompt_id: int, request: Request, prompt_text: str
     if not prompt:
         raise HTTPException(status_code=404, detail='Prompt not found')
     prompt.tags[:] = resolved
+    assigned_ids: list[int] = []
+    try:
+        parsed_assign = json.loads(assign_user_ids) if assign_user_ids else []
+        if isinstance(parsed_assign, list):
+            for raw in parsed_assign:
+                try:
+                    val = int(raw)
+                    if val > 0:
+                        assigned_ids.append(val)
+                except (TypeError, ValueError):
+                    continue
+    except Exception:
+        assigned_ids = []
+
     if media_files:
         for file in media_files:
             if not file or not file.filename:
@@ -2069,6 +2307,39 @@ async def admin_update_prompt(prompt_id: int, request: Request, prompt_text: str
             new_media.codec_video = art.codec_v
             new_media.wav_path = art.wav_rel
     await db.commit()
+
+    existing_assignments = (
+        await db.execute(
+            select(UserPrompt).where(UserPrompt.prompt_id == prompt_id)
+        )
+    ).unique().scalars().all()
+    existing_ids = {up.user_id for up in existing_assignments}
+    target_ids = set(assigned_ids)
+
+    to_remove = existing_ids - target_ids
+    to_add = target_ids - existing_ids
+
+    if to_remove:
+        await db.execute(
+            delete(UserPrompt)
+            .where(UserPrompt.prompt_id == prompt_id)
+            .where(UserPrompt.user_id.in_(to_remove))
+        )
+
+    for uid in to_add:
+        db.add(UserPrompt(user_id=uid, prompt_id=prompt_id))
+
+    if to_remove or to_add:
+        await db.commit()
+
+    async def _refanout(pid: int):
+        async with async_session_maker() as s:
+            try:
+                await on_prompt_created(s, pid)
+            except Exception:
+                logging.exception('[prompt-refanout] on_prompt_created failed for %s', pid)
+
+    spawn(_refanout(prompt_id), name='prompt_refanout')
     wants_json = request.query_params.get('ajax') == '1' or 'application/json' in (request.headers.get('accept') or '') or request.headers.get('x-requested-with') == 'XMLHttpRequest'
     if wants_json:
         return {'ok': True, 'prompt_id': prompt_id}

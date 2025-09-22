@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-xl mx-auto mt-16 p-6 bg-white/70 backdrop-blur rounded-2xl border border-black/10 text-center">
+  <h1 class="text-2xl font-semibold">We&apos;re preparing your story</h1>
+  <p class="mt-2 text-sm text-slate-600">Large uploads can take a few minutes. You can keep this tab open and we&apos;ll take you to the editor when everything is ready.</p>
+
+  <div class="mt-8 space-y-4">
+    <div class="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+      <div class="h-full w-full bg-slate-500 animate-pulse"></div>
+    </div>
+    <p id="statusMessage" class="text-sm text-slate-700">Current status: {{ state|capitalize }}</p>
+    <p id="errorMessage" class="text-sm text-red-600">{% if error %}{{ error }}{% endif %}</p>
+  </div>
+
+  <p class="mt-6 text-xs text-slate-500">You can safely close this window—we&apos;ll save your progress automatically.</p>
+</div>
+
+<script>
+  (function(){
+    const statusEl = document.getElementById('statusMessage');
+    const errorEl = document.getElementById('errorMessage');
+    const responseId = {{ response_id }};
+    const redirectUrl = {{ redirect_url|tojson }};
+    let active = true;
+
+    async function poll(){
+      try {
+        const res = await fetch(`/api/responses/${responseId}/status`, { cache: 'no-store' });
+        if (!res.ok) throw new Error('status fetch failed');
+        const data = await res.json();
+        statusEl.textContent = `Current status: ${data.state.charAt(0).toUpperCase() + data.state.slice(1)}`;
+        if (data.error) {
+          errorEl.textContent = data.error;
+        }
+        if (data.state === 'ready') {
+          window.location.href = data.redirect_url || redirectUrl;
+          active = false;
+          return;
+        }
+        if (data.state === 'failed') {
+          errorEl.textContent = data.error || 'Processing failed. Please try uploading again or contact support.';
+          statusEl.textContent = 'Current status: Failed';
+          active = false;
+          return;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+      if (active) {
+        setTimeout(poll, 4000);
+      }
+    }
+
+    setTimeout(poll, 2500);
+  })();
+</script>
+{% endblock %}

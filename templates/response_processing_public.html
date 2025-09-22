@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-md mx-auto mt-16 p-6 bg-white/70 backdrop-blur rounded-2xl border border-black/10 text-center">
+  <h1 class="text-xl font-semibold mb-2">This story is still processing</h1>
+  <p class="text-sm text-slate-600">{{ message or 'Please check back in a few minutes once the upload has finished.' }}</p>
+</div>
+{% endblock %}

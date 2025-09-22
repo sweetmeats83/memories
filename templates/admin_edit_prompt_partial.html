@@ -14,6 +14,7 @@
 
   <label class="block text-sm font-medium">Tags</label>
   <input id="editTags" name="tags" class="w-full border rounded p-2 mb-3" placeholder="Add tags…" />
+  <script type="application/json" id="editTagsSeed">{{ (tag_list or []) | tojson | safe }}</script>
 
 {% set total = (assigned_users|length) if assigned_users is defined else 0 %}
 {% set answered = (assigned_users|selectattr('answered')|list|length) if assigned_users is defined else 0 %}
@@ -50,6 +51,8 @@
   </div>
   <p class="text-xs text-gray-500 mt-1">Click × to remove. Green-ring chips have answered.</p>
 </div>
+
+<input type="hidden" id="editAssignIds" name="assign_user_ids" value="{{ (assigned_users | map(attribute='id') | list) | tojson | safe }}">
 
   <!-- Media -->
   <div class="text-sm font-medium mb-2">Media</div>
@@ -100,28 +103,58 @@
   (function initTagify(){
     const el = document.getElementById('editTags');
     if (!el) return;
+
+    if (!window.Tagify) {
+      setTimeout(initTagify, 120);
+      return;
+    }
+
+    if (el.__tagified) {
+      editTagify = el.__tagified;
+      return;
+    }
+
     editTagify = new Tagify(el, {
-      maxTags: 25, trim: true, duplicates: false, delimiters: ",",
-      dropdown: { enabled: 0, maxItems: 12, highlightFirst: true },
+      tagTextProp: 'label',
+      maxTags: 25,
+      trim: true,
+      duplicates: false,
+      delimiters: ",",
+      dropdown: { enabled: 1, maxItems: 12, highlightFirst: true, closeOnSelect: false },
       originalInputValueFormat: values => JSON.stringify(values.map(v => v.value))
     });
+    el.__tagified = editTagify;
 
-    // seed tags
-    const seed = {{ (tag_list or []) | tojson | safe }};
-    if (seed?.length) editTagify.addTags(seed.map(t => t.name));
+    try {
+      const seedEl = document.getElementById('editTagsSeed');
+      const seed = seedEl ? JSON.parse(seedEl.textContent || '[]') : [];
+      if (Array.isArray(seed) && seed.length) {
+        editTagify.addTags(seed.map(t => ({ value: t.slug || t.name, label: t.name || t.slug })));
+      }
+    } catch (err) {
+      console.warn('tag seed parse failed', err);
+    }
 
-    // async suggestions
     let ctl;
     editTagify.on('input', async e => {
-      const v = e.detail.value?.trim(); if (!v) return;
-      if (ctl) ctl.abort(); ctl = new AbortController();
+      const v = (e.detail.value || '').trim();
+      if (v.length < 2) {
+        editTagify.dropdown.hide();
+        return;
+      }
+      if (ctl) ctl.abort();
+      ctl = new AbortController();
       try {
-        const r = await fetch(`/admin/tags?q=${encodeURIComponent(v)}`, { credentials:'include', signal: ctl.signal });
+        const r = await fetch(`/admin/tags?q=${encodeURIComponent(v)}`, { credentials: 'include', signal: ctl.signal });
         if (!r.ok) return;
         const list = await r.json();
-        editTagify.settings.whitelist = list.map(t => ({ value: t.name, slug: t.slug }));
-        editTagify.dropdown.show.call(editTagify, v);
-      } catch {}
+        editTagify.settings.whitelist = (list || []).map(t => ({ value: t.slug, label: t.name || t.slug }));
+        if (editTagify.settings.whitelist.length) {
+          editTagify.dropdown.show.call(editTagify, v);
+        }
+      } catch (err) {
+        console.warn('tag suggest failed', err);
+      }
     });
   })();
 
@@ -132,6 +165,7 @@
     const dd    = document.getElementById('assignDD');
     const elCount = document.getElementById('assignCount');
     const elAns   = document.getElementById('assignAnswered');
+    const hidden  = document.getElementById('editAssignIds');
 
     function escapeHTML(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -140,6 +174,13 @@
       const answered = chips.querySelectorAll('.chip-assign[data-answered="1"]').length;
       if (elCount) elCount.textContent = total;
       if (elAns)   elAns.textContent = answered;
+      updateHidden();
+    }
+
+    function updateHidden(){
+      if (!hidden) return;
+      const ids = Array.from(chips.querySelectorAll('[data-user-id]')).map(el => Number(el.getAttribute('data-user-id')));
+      hidden.value = JSON.stringify(ids);
     }
 
     function mkChip(label, uid, answered){
@@ -165,6 +206,7 @@
         chips.dataset.hydrated = 'true';
         bindChipRemovers();
         recalcCounts();
+        updateHidden();
       }catch{}
     }
 
@@ -208,7 +250,9 @@
                             </button>`).join('')
           : `<div class="px-3 py-2 text-sm text-gray-500">No matches</div>`;
         dd.classList.remove('hidden');
-      }catch{}
+      } catch (err) {
+        console.error('assign search failed', err);
+      }
     });
 
     dd.addEventListener('click', async (e)=>{
@@ -216,16 +260,20 @@
       const uid = b.getAttribute('data-id');
       const label = b.getAttribute('data-label') || '';
       if (chips.querySelector(`[data-user-id="${CSS.escape(uid)}"]`)) { input.value=''; hideDD(); return; }
-      const r = await fetch('/api/admin/pool/add', {
-        method:'POST', credentials:'include',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ prompt_id: Number(pid), user_id: Number(uid) })
-      });
-      if (r.ok){
-        chips.appendChild(mkChip(label, uid, /*answered=*/false));
-        bindChipRemovers();
-        recalcCounts();
-        input.value=''; hideDD();
+      try {
+        const r = await fetch('/api/admin/pool/add', {
+          method:'POST', credentials:'include',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ prompt_id: Number(pid), user_id: Number(uid) })
+        });
+        if (r.ok){
+          chips.appendChild(mkChip(label, uid, /*answered=*/false));
+          bindChipRemovers();
+          recalcCounts();
+          input.value=''; hideDD();
+        }
+      } catch (err) {
+        console.error('assign add failed', err);
       }
     });
 
@@ -263,7 +311,9 @@
       } else {
         alert('Failed to delete media.');
       }
-    }catch(e){ console.error(e); }
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   // Tagify-based per-media assignees in modal
@@ -283,21 +333,43 @@
         if (!mediaId) return;
         const raw = card.getAttribute('data-assignees') || '[]';
         let seed = [];
-        try { seed = JSON.parse(raw) || []; } catch {}
+        try { seed = JSON.parse(raw) || []; } catch (err) { console.warn('assign seed parse failed', err); }
         const tagify = new Tagify(input, { dropdown:{ enabled:0, maxItems:10 }, whitelist:[], originalInputValueFormat: (vals)=> JSON.stringify(vals.map(v=>({ id:v.uid, label:v.value })))});
         if (seed && seed.length) tagify.addTags(seed.map(u => ({ value:(u.name||u.email||''), uid:Number(u.id) })));
         let ctl;
         tagify.on('input', async (e)=>{
           const v = (e.detail.value||'').trim(); if (v.length<2) return tagify.dropdown.hide();
-          try{ ctl?.abort(); ctl=new AbortController(); const items = await searchUsers(v); tagify.settings.whitelist = items; tagify.dropdown.show(v);}catch{}
+          try{
+            ctl?.abort(); ctl=new AbortController();
+            const items = await searchUsers(v);
+            tagify.settings.whitelist = items;
+            tagify.dropdown.show(v);
+          } catch (err) {
+            console.error('media assign search failed', err);
+          }
         });
         tagify.on('add', async (e)=>{
           const d = e.detail?.data || {}; if (typeof d.uid==='undefined') return;
-          try{ const r=await fetch(`/admin/prompt_media/${encodeURIComponent(mediaId)}/assignees/add`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:Number(d.uid)})}); if(!r.ok) throw 0;}catch{ tagify.removeTags(d.value); }
+          try{
+            const r=await fetch(`/admin/prompt_media/${encodeURIComponent(mediaId)}/assignees/add`,{
+              method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:Number(d.uid)})
+            });
+            if(!r.ok) throw new Error('assign failed');
+          } catch (err) {
+            console.error(err);
+            tagify.removeTags(d.value);
+          }
         });
         tagify.on('remove', async (e)=>{
           const d = e.detail?.data || {}; if (typeof d.uid==='undefined') return;
-          try{ const r=await fetch(`/admin/prompt_media/${encodeURIComponent(mediaId)}/assignees/remove`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:Number(d.uid)})}); if(!r.ok) throw 0;}catch{}
+          try{
+            const r=await fetch(`/admin/prompt_media/${encodeURIComponent(mediaId)}/assignees/remove`,{
+              method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:Number(d.uid)})
+            });
+            if(!r.ok) throw new Error('remove failed');
+          } catch (err) {
+            console.error(err);
+          }
         });
       });
     }
