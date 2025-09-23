@@ -85,6 +85,8 @@
 /* Preview regions */
 #liveVideo{
   display:none; width:100%; max-height:56vh; background:#000;
+  object-fit: cover;
+  transform: scaleX(-1); /* mirror preview so it feels natural */
 }
 #audioView{ display:none; place-items:center; padding:16px 18px 10px; }
 #audioMeter{

@@ -6,8 +6,7 @@
     (function(){
       try {
         var saved = localStorage.getItem('theme');
-        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        var theme = (saved === 'light' || saved === 'dark') ? saved : (prefersDark ? 'dark' : 'light');
+        var theme = (saved === 'dark') ? 'dark' : 'light';
         var root = document.documentElement;
         root.setAttribute('data-theme', theme);
         if (theme === 'dark') root.classList.add('dark');
@@ -161,8 +160,7 @@
     (function(){
       try {
         const saved = localStorage.getItem('theme');
-        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const theme = (saved === 'light' || saved === 'dark') ? saved : (prefersDark ? 'dark' : 'light');
+        const theme = (saved === 'dark') ? 'dark' : 'light';
         const root = document.documentElement;
         root.setAttribute('data-theme', theme);
         if (theme === 'dark') root.classList.add('dark'); else root.classList.remove('dark');

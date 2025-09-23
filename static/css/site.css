@@ -86,12 +86,53 @@ html.dark input[type="file"],
 html.dark textarea,
 html.dark select {
   background: rgba(255,255,255,0.06) !important;
-  color: var(--fg) !important;
+  color: var(--fg);
   border: 1px solid rgba(255, 59, 193, 0.28) !important;
   outline: none;
 }
 html.dark input::placeholder,
 html.dark textarea::placeholder { color: rgba(232, 230, 255, 0.55); }
+
+/* Respect explicit light surfaces in dark mode */
+html.dark input.bg-white,
+html.dark textarea.bg-white,
+html.dark select.bg-white,
+html.dark input[class*="bg-white"],
+html.dark textarea[class*="bg-white"],
+html.dark select[class*="bg-white"] {
+  background: rgba(255,255,255,0.94) !important;
+  color: #111 !important;
+  border-color: rgba(17,24,39,0.35) !important;
+  caret-color: #111;
+}
+
+/* Quill editor adjustments so light canvas stays readable in dark mode */
+html.dark .ql-toolbar.ql-snow,
+html.dark .ql-container.ql-snow {
+  background: rgba(255,255,255,0.94);
+  border-color: rgba(17,24,39,0.35);
+  color: #111;
+}
+html.dark .ql-toolbar.ql-snow .ql-stroke,
+html.dark .ql-toolbar.ql-snow .ql-stroke * {
+  stroke: #111;
+}
+html.dark .ql-toolbar.ql-snow .ql-fill {
+  fill: #111;
+}
+html.dark .ql-toolbar.ql-snow .ql-picker-label,
+html.dark .ql-toolbar.ql-snow .ql-picker-item,
+html.dark .ql-toolbar.ql-snow .ql-picker-options {
+  color: #111;
+}
+html.dark .ql-editor {
+  background: rgba(255,255,255,0.98);
+  color: #111;
+  caret-color: #111;
+}
+html.dark .ql-editor.ql-blank::before {
+  color: rgba(17,17,17,0.4);
+}
 
 /* Focus ring neon glow */
 html.dark :is(input, textarea, select, button, .btn):focus-visible {
