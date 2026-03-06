@@ -30,7 +30,7 @@ from app.background import run_sync
 
 # Optional people helpers (we degrade gracefully if missing)
 try:
-    from app.services.people import extract_name_spans, role_hint_near, resolve_person, link_mention
+    from app.services.people import extract_name_spans, role_hint_near, resolve_person, link_mention, llm_extract_people
     _PEOPLE_ENABLED = True
 except Exception:
     _PEOPLE_ENABLED = False
@@ -460,37 +460,54 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
             people_text = ((getattr(response, "response_text", "") or "").strip()
                         or (getattr(response, "transcription", "") or "").strip())
             if people_text:
-                # Gather user's known aliases/display names to boost NER
-                aliases: list[str] = []
+                # Gather known display names to help the LLM match to existing tree
+                known_names: list[str] = []
                 try:
-                    people = (await db.execute(
+                    tree_people = (await db.execute(
                         select(Person).where(Person.owner_user_id == response.user_id)
                     )).scalars().all()
-                    alias_rows: list[str] = []
-                    if people:
-                        pids = [p.id for p in people]
-                        alias_rows = (await db.execute(
-                            select(PersonAlias.alias).where(PersonAlias.person_id.in_(pids))
-                        )).scalars().all()
-                    for p in (people or []):
+                    for p in (tree_people or []):
                         if p.display_name:
-                            aliases.append(p.display_name)
-                    aliases.extend([a for a in alias_rows or []])
+                            known_names.append(p.display_name)
                 except Exception:
-                    aliases = []
+                    tree_people = []
 
-                name_spans = extract_name_spans(people_text, aliases=aliases)
-                seen_person_ids = set()
-                for surface, s, e in name_spans:
+                # Try LLM extraction first; fall back to spaCy/regex if it returns nothing
+                extractions = await llm_extract_people(people_text, known_names=known_names)
+
+                if not extractions:
+                    # Fallback: use spaCy/regex spans + role_hint_near
+                    aliases = known_names[:]
+                    try:
+                        if tree_people:
+                            pids = [p.id for p in tree_people]
+                            alias_rows = (await db.execute(
+                                select(PersonAlias.alias).where(PersonAlias.person_id.in_(pids))
+                            )).scalars().all()
+                            aliases.extend(list(alias_rows))
+                    except Exception:
+                        pass
+                    name_spans = extract_name_spans(people_text, aliases=aliases)
+                    extractions = [
+                        {"name": surface, "role": role_hint_near(people_text, s, e)}
+                        for surface, s, e in name_spans
+                    ]
+
+                seen_person_ids: set[int] = set()
+                for item in extractions:
+                    surface = (item.get("name") or "").strip()
+                    role = item.get("role") or None
+                    if not surface:
+                        continue
                     person = await resolve_person(db, response.user_id, surface)
-                    role = role_hint_near(people_text, s, e)
-                    await link_mention(
-                        db, response.id, person,
-                        alias_used=surface, start_char=s, end_char=e,
-                        confidence=0.75, role_hint=role
-                    )
                     if person.id not in seen_person_ids:
                         seen_person_ids.add(person.id)
+                        await link_mention(
+                            db, response.id, person,
+                            alias_used=surface, start_char=None, end_char=None,
+                            confidence=0.85, role_hint=role
+                        )
+                logger.info("People extraction: %d people linked on response %s", len(seen_person_ids), response.id)
         await db.commit()
     except Exception:
         logger.exception("❌ enrich_after_transcription failed")

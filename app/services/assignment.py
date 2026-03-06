@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.models import (
-    Prompt, Tag, PromptSuggestion, UserProfile, Response,
+    Prompt, Tag, UserProfile, Response,
     UserWeeklyPrompt, UserWeeklySkip, UserPrompt, User
 )
 from app.utils import slugify as _slugify
@@ -421,23 +421,6 @@ async def tag_based_prompts(db: AsyncSession, tag_slugs: list[str], limit: int =
     )
     return list((await db.execute(q)).scalars().unique().all())
 
-async def persist_suggestions(db: AsyncSession, user_id: int, suggestions: list[dict], source: str):
-    """Persist AI-curated suggestions (unmapped to Prompt for now)."""
-    rows = []
-    for s in suggestions:
-        rows.append(PromptSuggestion(
-            user_id=user_id,
-            prompt_id=None,
-            source=source,
-            title=s.get("title"),
-            text=s["text"],
-            tags=s.get("tags"),
-            status="pending",
-            rationale_json={"rationale": s.get("rationale")},
-        ))
-    db.add_all(rows)
-    await db.commit()
-    return rows
 
 async def assign_for_onboarding(db: AsyncSession, user_id: int, limit: int = 10) -> list[UserWeeklyPrompt]:
     """

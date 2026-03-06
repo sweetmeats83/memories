@@ -134,13 +134,6 @@ async def require_admin_user(
     return user
 
 
-async def require_super_admin(user: models.UP = Depends(require_authenticated_user)):
-    if not user or not (user.is_superuser or getattr(user, "super_admin", False)):
-        raise HTTPException(status_code=403, detail="Super admin access required")
-    await _attach_profile_avatar(user)
-    return user
-
-
 def clean_filename(name: str) -> str:
     name = os.path.basename(name)
     name = re.sub(r"[^\w\-_.]", "_", name)

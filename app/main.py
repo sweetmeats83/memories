@@ -10,6 +10,7 @@ from .routers.user import router as user_router
 from .routers.responses import router as responses_router
 from .routers.admin_prompts import router as admin_prompts_router
 from .routers.invites import router as invites_router
+from .routers.people import router as people_router
 from .users import fastapi_users, auth_backend
 from .models import User, Tag
 from .utils import get_current_user
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.exceptions import HTTPException as FastAPIHTTPException
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from urllib.parse import quote
+from app.services.scheduler import start_scheduler
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,7 @@ app.add_middleware(
 # ----------------------
 # Route Includes
 # ----------------------
+app.include_router(people_router)
 app.include_router(router)
 app.include_router(user_router)
 app.include_router(responses_router)
@@ -136,33 +139,6 @@ async def create_admin_user():
             logger.info("Admin user created for %s", admin_email)
         else:
             logger.info("Admin user already exists for %s", admin_email)
-async def create_super_admin_user():
-    super_email = os.getenv("SUPER_ADMIN_EMAIL")
-    super_password = os.getenv("SUPER_ADMIN_PASSWORD")
-    super_username = os.getenv("SUPER_ADMIN_USERNAME", "superadmin")
-
-    if not super_email or not super_password:
-        logger.warning("SUPER_ADMIN_EMAIL or SUPER_ADMIN_PASSWORD not set; skipping super admin bootstrap")
-        return
-
-    async with async_session_maker() as session:
-        result = await session.execute(select(User).where(User.email == super_email))
-        existing = result.scalars().first()
-
-        if not existing:
-            user = User(
-                email=super_email,
-                hashed_password=bcrypt.hash(super_password),
-                username=super_username,
-                is_superuser=True,
-                super_admin=True,   # ✅ flag for dev/testing
-                is_active=True
-            )
-            session.add(user)
-            await session.commit()
-            logger.info("Super admin created for %s", super_email)
-        else:
-            logger.info("Super admin already exists for %s", super_email)
 
 async def _seed_tags_from_whitelist(db: AsyncSession, path: str) -> dict:
     """
@@ -235,8 +211,8 @@ async def on_startup():
     from . import models  # Required for SQLAlchemy model detection
     await init_db()
     await create_admin_user()
-    await create_super_admin_user() 
     await _seed_tags_startup()
+    start_scheduler()
 # ----------------------
 # Home Redirect Route
 # ----------------------
@@ -294,12 +270,3 @@ def app_logout(response: Response):
                         path="/", domain=domain)
     return resp
 
-#--------------------------------
-#  WEEKLY PROMPT SCHEDUALER
-#--------------------------------
-
-# app/main.py (or wherever FastAPI app is created)
-from app.services.scheduler import start_scheduler
-@app.on_event("startup")
-async def _startup():
-    start_scheduler()

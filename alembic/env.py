@@ -24,11 +24,18 @@ from app import models  # noqa: E402,F401  # ensure model metadata is loaded
 
 def _database_url() -> str:
     raw = os.getenv("DATABASE_URL", "").strip()
-    if raw.startswith("postgresql+psycopg"):
-        return raw.replace("postgresql+psycopg", "postgresql+asyncpg", 1)
-    if raw:
-        return raw
-    return config.get_main_option("sqlalchemy.url")
+    if not raw:
+        return config.get_main_option("sqlalchemy.url")
+    # Normalise any postgresql:// variant to use asyncpg driver
+    if raw.startswith("postgresql+psycopg2://"):
+        return raw.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+    if raw.startswith("postgresql+psycopg://"):
+        return raw.replace("postgresql+psycopg://", "postgresql+asyncpg://", 1)
+    if raw.startswith("postgresql://") or raw.startswith("postgres://"):
+        return raw.replace("postgres://", "postgresql+asyncpg://", 1).replace(
+            "postgresql://", "postgresql+asyncpg://", 1
+        )
+    return raw
 
 
 db_url = _database_url()

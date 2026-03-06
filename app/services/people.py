@@ -1,9 +1,11 @@
-import re
+import re, json, logging
 from typing import Optional, Iterable, Tuple
 from sqlalchemy import select, func
 from app.models import ResponsePerson, PersonShare, KinMembership, Person, PersonAlias
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.utils import slugify
+
+logger = logging.getLogger(__name__)
 ROLE_WORDS = {
     # GRANDPARENTS
     "grandmother": ["grandma","grandmother","granny","gran","nana","nanna","nonna","abuela","oma","lola","yiayia","yaya","bubbe"],
@@ -150,34 +152,59 @@ def guess_role_hint(text_around_name: str) -> Optional[str]:
 async def resolve_person(db, user_id: int, display_or_alias: str) -> Person:
     name = (display_or_alias or "").strip()
     if not name:
-        # defensive fallback: create a placeholder
         p = Person(owner_user_id=user_id, display_name="(Unknown)")
         db.add(p)
         await db.flush()
         return p
 
-    # 1) Alias exact (case-insensitive) WITH join to Person for owner filter
+    name_lower = name.lower()
+
+    # 1) Alias exact (case-insensitive)
     alias_row = await db.scalar(
         select(PersonAlias)
         .join(Person, Person.id == PersonAlias.person_id)
-        .where(func.lower(PersonAlias.alias) == func.lower(name))
+        .where(func.lower(PersonAlias.alias) == name_lower)
         .where(Person.owner_user_id == user_id)
         .limit(1)
     )
     if alias_row:
         return await db.get(Person, alias_row.person_id)
 
-    # 2) Person display_name exact (case-insensitive) for this owner
+    # 2) Person display_name exact (case-insensitive)
     person = await db.scalar(
         select(Person)
-        .where(func.lower(Person.display_name) == func.lower(name))
+        .where(func.lower(Person.display_name) == name_lower)
         .where(Person.owner_user_id == user_id)
         .limit(1)
     )
     if person:
         return person
 
-    # 3) Create new person + seed alias (mark as inferred from mention)
+    # 3) Fuzzy: name is a whole-word substring of a known display_name or vice versa
+    #    e.g. "Rosa" matches "Rosa Gomez", "Grandma Rosa"
+    all_persons = (await db.execute(
+        select(Person).where(Person.owner_user_id == user_id)
+    )).scalars().all()
+    for p in all_persons:
+        dn = (p.display_name or "").lower()
+        # whole-word containment in either direction
+        if re.search(rf"\b{re.escape(name_lower)}\b", dn) or re.search(rf"\b{re.escape(dn)}\b", name_lower):
+            await add_alias_if_new(db, p.id, name)
+            return p
+
+    # 4) Fuzzy: check aliases for substring matches
+    alias_rows = (await db.execute(
+        select(PersonAlias)
+        .join(Person, Person.id == PersonAlias.person_id)
+        .where(Person.owner_user_id == user_id)
+    )).scalars().all()
+    for ar in alias_rows:
+        al = (ar.alias or "").lower()
+        if re.search(rf"\b{re.escape(name_lower)}\b", al) or re.search(rf"\b{re.escape(al)}\b", name_lower):
+            await add_alias_if_new(db, ar.person_id, name)
+            return await db.get(Person, ar.person_id)
+
+    # 5) Create new person + seed alias (mark as inferred from mention)
     p = Person(owner_user_id=user_id, display_name=name, meta={"inferred": True})
     db.add(p)
     await db.flush()
@@ -243,12 +270,68 @@ def extract_name_spans(text: str, aliases: list[str] | None = None) -> list[tupl
 
     return [(txt, s, e) for (s,e,txt) in merged]
 
-def role_hint_near(text: str, start: int, end: int, window: int = 24) -> str | None:
+def role_hint_near(text: str, start: int, end: int, window: int = 80) -> str | None:
     """
     Looks ±window chars around a mention for role words (grandma, uncle, etc.).
     """
     around = text[max(0, start-window): min(len(text), end+window)]
     return guess_role_hint(around)
+
+
+_LLM_EXTRACT_SYSTEM = """You extract people mentioned in a personal story or memoir response.
+Given the story text and a list of people already in the narrator's family tree,
+identify each distinct person mentioned (by name, nickname, or relational role like "my mom" or "Uncle Dave").
+
+Return STRICT JSON only:
+{
+  "people": [
+    {"name": "the name or role used in the text", "role": "their relationship to the narrator, or null"}
+  ]
+}
+
+Rules:
+- Include both proper names AND role-based references ("Mom", "Uncle Dave", "my grandmother Rosa")
+- For role-only references with no name (e.g. "my dad"), use the role word as the name value
+- If the same person is mentioned multiple ways, pick the most specific name
+- Do NOT include the narrator themselves
+- Limit to 20 people maximum
+- If no people are mentioned, return {"people": []}"""
+
+
+async def llm_extract_people(text: str, known_names: list[str] | None = None) -> list[dict]:
+    """
+    Use the LLM to extract (name, role) pairs from a response/transcript.
+    Returns a list of dicts: [{"name": str, "role": str | None}, ...]
+    Falls back to empty list on any error so callers can degrade gracefully.
+    """
+    if not text or not text.strip():
+        return []
+    try:
+        from app.llm_client import your_chat_completion
+        user_payload = {
+            "story": text.strip(),
+            "known_family_tree": known_names or [],
+        }
+        raw = await your_chat_completion(
+            system=_LLM_EXTRACT_SYSTEM,
+            user=json.dumps(user_payload, ensure_ascii=False),
+            response_format="json",
+            temperature=0.1,
+        )
+        data = json.loads(raw)
+        people = data.get("people") or []
+        result = []
+        for p in people:
+            n = (p.get("name") or "").strip()
+            r = (p.get("role") or None)
+            if r:
+                r = r.strip() or None
+            if n:
+                result.append({"name": n, "role": r})
+        return result
+    except Exception:
+        logger.debug("llm_extract_people failed; caller will fall back", exc_info=True)
+        return []
 
 async def add_alias_if_new(db: AsyncSession, person_id: int, alias: str) -> None:
     a = (alias or "").strip()

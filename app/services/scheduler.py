@@ -1,5 +1,6 @@
 # app/services/scheduler.py
 import os
+import glob
 import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,7 +11,7 @@ from app.services.utils_weekly import get_or_refresh_active_token, _now
 from app.services.assignment import ensure_weekly_prompt
 from app.services.mailer import send_weekly_email
 from app.database import async_session_maker
-from datetime import datetime
+from datetime import datetime, timedelta
 try:
     from zoneinfo import ZoneInfo  # Python 3.9+
 except Exception:
@@ -50,21 +51,50 @@ def start_scheduler():
         logger.warning("Invalid WEEKLY_CRON; falling back to Mon-Fri 09:00")
 
     scheduler.add_job(job_weekly_send_scan, trigger)
+
+    # Clean up orphaned _tmp_* upload files every 6 hours
+    scheduler.add_job(job_cleanup_tmp_uploads, CronTrigger(hour="*/6"))
+
     scheduler.start()
     logger.info("Weekly scheduler started")
 
 async def job_weekly_send_scan():
     async with async_session_maker() as db:
         # Fetch users eligible to send. If a user has only on-deck, auto-promote it.
+        now = _now()
+        curr_iso = now.isocalendar()[:2]
+        stale_cutoff = now - timedelta(days=5)
         users = (await db.execute(
             select(User).where(
                 User.is_active == True,
-                User.weekly_state.in_([WeeklyState.not_sent, WeeklyState.queued]),
+                User.weekly_state.in_([
+                    WeeklyState.not_sent,
+                    WeeklyState.queued,
+                    WeeklyState.sent,
+                    WeeklyState.expired,
+                ]),
                 (User.weekly_current_prompt_id.isnot(None)) | (User.weekly_on_deck_prompt_id.isnot(None))
             )
         )).scalars().all()
 
         for u in users:
+            # If we already sent this ISO week, don't resend yet.
+            if u.weekly_state == WeeklyState.sent and u.weekly_sent_at:
+                try:
+                    sent_iso = u.weekly_sent_at.isocalendar()[:2]
+                    if sent_iso == curr_iso:
+                        continue
+                except Exception:
+                    if u.weekly_sent_at >= stale_cutoff:
+                        continue
+                # mark as ready to send again
+                u.weekly_state = WeeklyState.queued
+                u.weekly_queued_at = now
+
+            if u.weekly_state == WeeklyState.expired:
+                u.weekly_state = WeeklyState.queued
+                u.weekly_queued_at = now
+
             # Ensure this user has a current (and on-deck) selection for this ISO week
             try:
                 await ensure_weekly_prompt(db, u.id)
@@ -90,6 +120,23 @@ async def job_weekly_send_scan():
             u.weekly_email_provider_id = provider_id
 
         await db.commit()
+
+async def job_cleanup_tmp_uploads():
+    """Delete _tmp_* files in static/uploads older than 4 hours."""
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static", "uploads")
+    pattern = os.path.join(base, "_tmp_*")
+    cutoff = datetime.utcnow().timestamp() - (4 * 3600)
+    removed = 0
+    for path in glob.glob(pattern):
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+                removed += 1
+        except Exception:
+            pass
+    if removed:
+        logger.info("Cleaned up %d orphaned _tmp_* upload files", removed)
+
 
 async def schedule_bulk_send(user_ids: list[int], when: datetime):
     # store as scheduled APScheduler date jobs

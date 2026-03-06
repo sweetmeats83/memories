@@ -196,7 +196,7 @@
   <nav class="h-14 grid grid-cols-[auto,1fr,auto] sm:grid-cols-3 items-center px-4 gap-2">
     <!-- Left: Home + Brand -->
     <div class="flex items-center gap-3">
-      {% set is_admin = (user and (user.is_superuser or user.__dict__.get('super_admin'))) %}
+      {% set is_admin = (user and user.is_superuser) %}
       {% set home_href = '/admin_dashboard' if is_admin else '/user_dashboard' %}
       <a href="{{ home_href }}"><img src="{{ url_for('static', path='memories.png') }}?v=20250919" alt="Memories Logo" class="h-8 w-auto"></a>
       <a href="{{ home_href }}" class="nav-title font-kenia text-lg sm:text-2xl select-none dark:text-zinc-100">MEMORIES</a>

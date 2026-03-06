@@ -59,7 +59,6 @@ class User(Base):
     )
     is_active = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False)
-    super_admin = Column(Boolean, default=False)
     must_change_password = Column(Boolean, default=False)
     notify_new_responses = Column(Boolean, default=False, nullable=False)
     relationship_status = Column(String, nullable=True)  # ✅ renamed
@@ -358,18 +357,6 @@ class UserProfile(Base):
     tag_weights   = Column(MutableDict.as_mutable(JSON), default=dict, nullable=False)
     privacy_prefs = Column(MutableDict.as_mutable(JSON), default=dict, nullable=False)
     
-class PromptSuggestion(Base):
-    __tablename__ = "prompt_suggestion"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)
-    prompt_id = Column(Integer, ForeignKey("prompt.id", ondelete="SET NULL"), nullable=True)
-    source = Column(String(16), nullable=False)         # 'tag_match' | 'llm'
-    title = Column(String(200), nullable=True)
-    text = Column(Text, nullable=False)
-    tags = Column(JSON, nullable=True)                  # list[str]
-    status = Column(String(16), default="pending")      # pending|approved|rejected
-    rationale_json = Column(JSON, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class ChapterMeta(Base):
     __tablename__ = "chapter_meta"

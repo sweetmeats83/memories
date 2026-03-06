@@ -160,18 +160,6 @@ class UserProfileUpdate(BaseModel):
     consent_flags: dict | None = None
     bio: str | None = None
 
-class PromptSuggestionRead(BaseModel):
-    id: int
-    user_id: int
-    prompt_id: int | None
-    source: str
-    title: str | None
-    text: str
-    tags: list[str] | None
-    status: str
-    rationale_json: dict | None
-    created_at: datetime
-    class Config: from_attributes = True
 # --- NEW: Response Segment Schemas ---------------------------------------
 class ResponseSegmentRead(BaseModel):
     id: int

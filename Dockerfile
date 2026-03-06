@@ -36,6 +36,9 @@ RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.
 # Expose port (change if your app uses a different port)
 EXPOSE 8000
 
-# Run the app (adjust to your startup command)
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 

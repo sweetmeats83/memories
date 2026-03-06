@@ -232,7 +232,7 @@ async def user_dashboard(
     user=Depends(require_authenticated_html_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not user or (not getattr(user, "super_admin", False) and not user.is_active):
+    if not user or not user.is_active:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     stmt = (

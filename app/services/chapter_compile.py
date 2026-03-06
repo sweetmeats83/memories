@@ -136,8 +136,6 @@ async def compile_chapter(
     db: AsyncSession,
     chapter_id: str | int,
     user_id: int,
-    *,
-    model: str = "gpt-X"  # compatibility knob; we pass through to DTO but we actually call OLLAMA_MODEL
 ) -> ChapterCompilationDTO:
     chapter_key, display = await _resolve_chapter_key(db, chapter_id)
 
