@@ -1124,10 +1124,29 @@
     const files = [...input.files];
     const placeholders = addPlaceholders(files);
 
-    const fd = new FormData();
-    files.forEach(f => fd.append('media_files', f));
+    const threshold = (typeof ChunkedUploader !== 'undefined')
+      ? ChunkedUploader.LARGE_FILE_THRESHOLD : Infinity;
+
+    const smallFiles = files.filter(f => f.size <= threshold);
+    const largeFiles = files.filter(f => f.size > threshold);
 
     try {
+      // Chunk-upload large files first, collect staged_ids
+      const stagedIds = [];
+      for (let i = 0; i < largeFiles.length; i++) {
+        const f = largeFiles[i];
+        const uploader = new ChunkedUploader(f);
+        const staged_id = await uploader.upload();
+        stagedIds.push(staged_id);
+      }
+
+      const fd = new FormData();
+      smallFiles.forEach(f => fd.append('media_files', f));
+      if (stagedIds.length) fd.append('staged_ids', JSON.stringify(stagedIds));
+
+      // Need at least one field — if only staged_ids, the form still needs a name
+      if (!smallFiles.length && !stagedIds.length) return;
+
       const res = await fetch(form.action, {
         method: 'POST',
         body: fd,

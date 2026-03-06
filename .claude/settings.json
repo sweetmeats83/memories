@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(///WILDSPACE/compose/memories3/app/**)"
+    ]
+  }
+}

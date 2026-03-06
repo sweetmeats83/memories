@@ -464,11 +464,30 @@ async function gateWeeklyTokenUse(){
 
   // --- Upload paths ---
   async function uploadSegment(blob){
-    const fd = new FormData();
     const mime = (cfg.mode==='video') ? 'video/webm' : 'audio/webm';
-    fd.append('file', new File([blob], `segment-${Date.now()}.webm`, { type: mime }));
+    const filename = `segment-${Date.now()}.webm`;
+    const file = new File([blob], filename, { type: mime });
     const base = (window.EDITOR_API_BASE && cfg.responseId) ? window.EDITOR_API_BASE : `/response/${cfg.responseId}`;
     const url = `${base}/segments`;
+
+    if (typeof ChunkedUploader !== 'undefined' && blob.size > ChunkedUploader.LARGE_FILE_THRESHOLD) {
+      showVeil('Uploading…');
+      const uploader = new ChunkedUploader(file, {
+        onProgress(done, total) {
+          if (veilTitle) veilTitle.textContent = `Uploading… ${Math.round(done / total * 100)}%`;
+        }
+      });
+      const staged_id = await uploader.upload();
+      if (veilTitle) veilTitle.textContent = 'Processing…';
+      const fd = new FormData();
+      fd.append('staged_id', staged_id);
+      const r = await fetch(url, { method: 'POST', body: fd, credentials: 'include' });
+      if (!r.ok) throw new Error(await r.text().catch(() => `HTTP ${r.status}`));
+      return r.json();
+    }
+
+    const fd = new FormData();
+    fd.append('file', file);
     const r = await fetch(url, { method:'POST', body: fd, credentials:'include' });
     if (!r.ok) throw new Error(await r.text().catch(()=>`HTTP ${r.status}`));
     return r.json(); // { segment:{id} }
@@ -502,6 +521,34 @@ async function gateWeeklyTokenUse(){
     const mime = (cfg.mode==='video') ? 'video/webm' : 'audio/webm';
     const file = new File([blob], `primary-${Date.now()}.webm`, { type: mime });
 
+    if (typeof ChunkedUploader !== 'undefined' && blob.size > ChunkedUploader.LARGE_FILE_THRESHOLD) {
+      showVeil('Uploading…');
+      const uploader = new ChunkedUploader(file, {
+        onProgress(done, total) {
+          if (veilTitle) veilTitle.textContent = `Uploading… ${Math.round(done / total * 100)}%`;
+        }
+      });
+      const staged_id = await uploader.upload();
+      // Inject staged_id into form and clear the file input
+      let stagedInput = form.querySelector('input[name="primary_staged_id"]');
+      if (!stagedInput) {
+        stagedInput = document.createElement('input');
+        stagedInput.type = 'hidden';
+        stagedInput.name = 'primary_staged_id';
+        form.appendChild(stagedInput);
+      }
+      stagedInput.value = staged_id;
+      input.value = '';
+      if (veilTitle) veilTitle.textContent = 'Saving…';
+      await new Promise(r => requestAnimationFrame(r));
+      await new Promise(r => setTimeout(r, 60));
+      if (typeof window.RecordOverlayOnBeforeSubmit === 'function') {
+        try { await window.RecordOverlayOnBeforeSubmit(); } catch {}
+      }
+      form.requestSubmit();
+      return;
+    }
+
     const dt = new DataTransfer();
     dt.items.add(file);
     input.files = dt.files;
@@ -510,7 +557,7 @@ async function gateWeeklyTokenUse(){
     await new Promise(r => requestAnimationFrame(r));
     await new Promise(r => setTimeout(r, 60));
     if (typeof window.RecordOverlayOnBeforeSubmit === 'function') {
-    try { await window.RecordOverlayOnBeforeSubmit(); } catch {}
+      try { await window.RecordOverlayOnBeforeSubmit(); } catch {}
     }
     // Submit (browser will navigate). We do NOT hide the veil or close overlay here.
     form.requestSubmit();
@@ -587,14 +634,27 @@ async function gateWeeklyTokenUse(){
   async function uploadPrimaryViaXHR(blob){
     const url  = (cfg.primary && cfg.primary.xhrUrl) || '/responses/';
     const mime = (cfg.mode==='video') ? 'video/webm' : 'audio/webm';
+    const filename = `primary-${Date.now()}.webm`;
+    const file = new File([blob], filename, { type: mime });
     const fd   = new FormData();
-
-    // file
-    fd.append('primary_media', new File([blob], `primary-${Date.now()}.webm`, { type: mime }));
 
     // base fields from caller
     const base = (cfg.primary && cfg.primary.baseFields) || {};
     for (const [k,v] of Object.entries(base)) fd.append(k, v);
+
+    if (typeof ChunkedUploader !== 'undefined' && blob.size > ChunkedUploader.LARGE_FILE_THRESHOLD) {
+      showVeil('Uploading…');
+      const uploader = new ChunkedUploader(file, {
+        onProgress(done, total) {
+          if (veilTitle) veilTitle.textContent = `Uploading… ${Math.round(done / total * 100)}%`;
+        }
+      });
+      const staged_id = await uploader.upload();
+      fd.append('primary_staged_id', staged_id);
+      if (veilTitle) veilTitle.textContent = 'Saving…';
+    } else {
+      fd.append('primary_media', file);
+    }
 
     const r = await fetch(url, { method:'POST', body: fd, credentials:'include' });
     if (!r.ok) throw new Error(await r.text().catch(()=>`HTTP ${r.status}`));

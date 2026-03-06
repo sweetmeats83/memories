@@ -11,6 +11,8 @@ from .routers.responses import router as responses_router
 from .routers.admin_prompts import router as admin_prompts_router
 from .routers.invites import router as invites_router
 from .routers.people import router as people_router
+from .routers.weekly import router as weekly_router
+from .routers.upload import router as upload_router
 from .users import fastapi_users, auth_backend
 from .models import User, Tag
 from .utils import get_current_user
@@ -64,7 +66,9 @@ app.add_middleware(
 # ----------------------
 # Route Includes
 # ----------------------
+app.include_router(upload_router)
 app.include_router(people_router)
+app.include_router(weekly_router)
 app.include_router(router)
 app.include_router(user_router)
 app.include_router(responses_router)
