@@ -26,11 +26,6 @@ from .models import (
     ChapterMeta,
     prompt_tags,
     Person,
-    RelationshipEdge,
-    ResponsePerson,
-    KinGroup,
-    KinMembership,
-    PersonShare,
     UserPrompt,
     WeeklyToken,
     WeeklyTokenStatus,
@@ -41,10 +36,10 @@ from .models import (
     ResponseShare,
 )
 from .utils import require_authenticated_user, require_admin_user, slugify, slug_person, slug_role, slug_place, require_authenticated_html_user, get_current_user
-from .schemas import PromptRead, ResponseSegmentRead, ReorderSegmentsRequest
+from .schemas import ResponseSegmentRead, ReorderSegmentsRequest
 from .transcription import transcribe_file, enrich_after_transcription
-from .llm_client import polish_text, OllamaError, curate_prompts_for_user
-from .users import current_active_user, get_jwt_strategy, cookie_transport, SECRET
+from .llm_client import polish_text, OllamaError
+from .users import current_active_user, cookie_transport, SECRET
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from .media_pipeline import MediaPipeline, UserBucketsStrategy
@@ -54,22 +49,18 @@ from app.services.notifications import notify_new_response
 from app.services.assignment import tag_based_prompts
 from passlib.hash import bcrypt
 from pydantic import BaseModel
-from app.services.auto_tag import suggest_tags_rule_based, suggest_tags_for_prompt, _is_prompt_like
+from app.services.auto_tag import suggest_tags_rule_based, suggest_tags_for_prompt, _is_prompt_like, WHITELIST
+from app.services.assignment_core import score_prompt
+from app.services.assignment import _eligible, _get_profile_weights, ensure_weekly_prompt, skip_current_prompt as _skip, get_on_deck_candidates, rotate_to_next_unanswered as _rotate
+from app.services.people import upsert_person_for_user
+from app.services.utils_weekly import get_or_refresh_active_token, _now, mark_opened, mark_clicked, mark_completed_and_close, expire_active_tokens
+from app.services.chapter_compile import compile_chapter, chapter_status
+from app.schemas import ChapterCompilationDTO, ChapterStatusDTO
+from app.background import spawn
 
 async def suggest_prompt_tags(prompt_text: str, chapter: str | None, k: int, db) -> list[dict]:
     pairs = await suggest_tags_for_prompt(prompt_text, word_count=len(prompt_text.split()))
     return [{'label': slug.split(':')[-1].replace('-', ' ').title(), 'slug': slug, 'confidence': round(score, 2), 'source': 'kw'} for slug, score in pairs[:k]]
-from app.services.assignment_core import score_prompt
-from app.services.assignment import _eligible, _get_profile_weights, ensure_weekly_prompt, skip_current_prompt as _skip, get_on_deck_candidates, rotate_to_next_unanswered as _rotate
-from app.services.people import upsert_person_for_user, resolve_person
-from app.services.auto_tag import WHITELIST, reload_whitelist
-from sqlalchemy.dialects.postgresql import insert
-from app.services.utils_weekly import get_or_refresh_active_token, _now, mark_opened, mark_clicked, mark_used, mark_completed_and_close, parse_token, expire_active_tokens
-from app.services.chapter_compile import compile_chapter, chapter_status
-from app.services.kinship import classify_kinship
-from app.services.infer import infer_edges_for_person, commit_inferred_edges
-from app.schemas import ChapterCompilationDTO, ChapterStatusDTO
-from app.background import spawn
 templates = Jinja2Templates(directory='templates')
 logger = logging.getLogger(__name__)
 router = APIRouter()
