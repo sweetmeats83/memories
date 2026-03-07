@@ -589,7 +589,7 @@ function openMedia(kind, src){
 
 <!-- Push notification opt-in (only shown when push is supported and not yet granted) -->
 {% if user %}
-<div id="pushPromptBanner" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-3 px-5 py-3 rounded-2xl border border-black/20 bg-white/90 backdrop-blur shadow-lg text-sm max-w-sm w-[90vw]">
+<div id="pushPromptBanner" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-[9000] flex items-center gap-3 px-5 py-3 rounded-2xl border border-black/20 bg-white/90 backdrop-blur shadow-lg text-sm max-w-sm w-[90vw]">
   <span class="material-symbols-outlined text-[22px] shrink-0">notifications</span>
   <span class="flex-1">Get reminders to record your memories.</span>
   <button id="pushEnableBtn" class="shrink-0 rounded-full bg-black text-white px-3 py-1 text-xs font-semibold">Enable</button>
@@ -603,12 +603,26 @@ function openMedia(kind, src){
   // Register service worker
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 
-  const STORAGE_KEY = 'push_dismissed_v1';
+  // localStorage keys — survive refreshes and container rebuilds
+  const SUBSCRIBED_KEY = 'push_subscribed_v1';
+  const DISMISSED_KEY  = 'push_dismissed_v1';
+
+  function isLocallyKnownSubscribed() {
+    try { return !!localStorage.getItem(SUBSCRIBED_KEY); } catch { return false; }
+  }
+  function markLocallySubscribed() {
+    try { localStorage.setItem(SUBSCRIBED_KEY, '1'); } catch {}
+    try { localStorage.removeItem(DISMISSED_KEY); } catch {}
+  }
+  function isDismissed() {
+    try { return !!localStorage.getItem(DISMISSED_KEY); } catch { return false; }
+  }
 
   function shouldShowBanner() {
     if (Notification.permission === 'granted') return false;
     if (Notification.permission === 'denied') return false;
-    try { if (sessionStorage.getItem(STORAGE_KEY)) return false; } catch {}
+    if (isLocallyKnownSubscribed()) return false;
+    if (isDismissed()) return false;
     return true;
   }
 
@@ -627,12 +641,13 @@ function openMedia(kind, src){
       applicationServerKey: key,
     });
 
-    await fetch('/api/push/subscribe', {
+    const resp = await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify(sub.toJSON()),
     });
+    if (resp.ok) markLocallySubscribed();
   }
 
   document.addEventListener('DOMContentLoaded', function() {
@@ -640,8 +655,26 @@ function openMedia(kind, src){
     const enableBtn = document.getElementById('pushEnableBtn');
     const dismissBtn = document.getElementById('pushDismissBtn');
 
+    // Portal to body so no ancestor stacking context can bury it
+    if (banner && banner.parentElement !== document.body) {
+      document.body.appendChild(banner);
+    }
+
     if (shouldShowBanner()) {
-      banner.classList.remove('hidden');
+      // Quick server-side check: if DB already has a subscription for this
+      // account (e.g. saved from another device), suppress banner and sync local flag.
+      fetch('/api/push/has-subscription', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.has_subscription) {
+            markLocallySubscribed();
+          } else {
+            banner.classList.remove('hidden');
+          }
+        })
+        .catch(() => {
+          banner.classList.remove('hidden');
+        });
     }
 
     enableBtn?.addEventListener('click', async function() {
@@ -656,7 +689,7 @@ function openMedia(kind, src){
 
     dismissBtn?.addEventListener('click', function() {
       banner.classList.add('hidden');
-      try { sessionStorage.setItem(STORAGE_KEY, '1'); } catch {}
+      try { localStorage.setItem(DISMISSED_KEY, '1'); } catch {}
     });
 
     // If already granted, silently ensure subscribed

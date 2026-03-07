@@ -71,6 +71,22 @@ async def push_subscribe(
     return {"ok": True}
 
 
+@router.get("/api/push/has-subscription")
+async def push_has_subscription(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Return whether the current user has any active push subscription in the DB."""
+    if not user:
+        return {"has_subscription": False}
+    row = (
+        await db.execute(
+            select(PushSubscription).where(PushSubscription.user_id == user.id).limit(1)
+        )
+    ).scalars().first()
+    return {"has_subscription": bool(row)}
+
+
 @router.delete("/api/push/unsubscribe")
 async def push_unsubscribe(
     payload: dict = Body(...),
