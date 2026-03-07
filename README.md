@@ -6,6 +6,8 @@ A private family storytelling platform. The core idea: send a link to an elder, 
 
 It is not a social network. It is for a small, private group — one admin, a handful of storytellers.
 
+![Memories app demo](memories.gif)
+
 ---
 
 ## What it does
@@ -26,7 +28,7 @@ Optional. If you run the GPU image (Dockerfile) with a CUDA-capable host, faster
 An interactive canvas showing family members and relationships. You can add people, draw edges between them (parent, spouse, sibling, etc.), and the app infers additional relationships automatically. A gold path line traces how two people are related through the actual genealogical chain. Kinship labels (great-grandaunt, second cousin, etc.) are computed from the graph structure.
 
 **Admin tools**
-Manage prompts, assign them to users, view all responses, and impersonate users for troubleshooting. Tag responses, track chapter completion, search across everything.
+Manage prompts, assign them to users, view all responses, and edit responses on behalf of users (scoped response editing — not account takeover; every admin edit is logged with an audit trail). Tag responses, track chapter completion, search across everything.
 
 ---
 
