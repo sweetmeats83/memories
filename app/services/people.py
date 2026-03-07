@@ -129,6 +129,13 @@ ROLE_WORDS = {
     "mentor": ["coach","mentor","teacher"],
     "neighbor": ["neighbor","neighbour"],
 }
+# Flat list of role-word prefixes, longest-first so "great-grandmother" matches before "grandmother"
+_ROLE_PREFIXES: list[str] = sorted(
+    {w.lower() for words in ROLE_WORDS.values() for w in words},
+    key=len, reverse=True,
+)
+
+
 def _split_display_name(display_name: str) -> tuple[str | None, str | None]:
     """
     Very small heuristic: split the last token as family_name, the rest as given_name.
@@ -149,7 +156,37 @@ def guess_role_hint(text_around_name: str) -> Optional[str]:
                 return role
     return None
 
-async def resolve_person(db, user_id: int, display_or_alias: str) -> Person:
+def _role_matches(stored: str | None, hint: str | None) -> bool:
+    """True when two role strings are the same or one contains the other (handles 'cousin' vs 'cousin')."""
+    if not stored or not hint:
+        return False
+    s, h = stored.lower().strip(), hint.lower().strip()
+    return s == h or s in h or h in s
+
+
+async def _llm_pick(candidates: list, mention: str, context_text: str | None) -> "Person | None":
+    """Call the LLM disambiguator and return the winning Person, or None."""
+    try:
+        from app.llm_client import disambiguate_person_mention
+        cand_dicts = [
+            {"id": p.id, "name": p.display_name, "role": (p.meta or {}).get("role_hint")}
+            for p in candidates
+        ]
+        winner_id = await disambiguate_person_mention(mention, cand_dicts, context_text=context_text)
+        if winner_id is not None:
+            return next((p for p in candidates if p.id == winner_id), None)
+    except Exception:
+        pass
+    return None
+
+
+async def resolve_person(
+    db,
+    user_id: int,
+    display_or_alias: str,
+    role_hint: str | None = None,
+    context_text: str | None = None,
+) -> "Person | None":
     name = (display_or_alias or "").strip()
     if not name:
         p = Person(owner_user_id=user_id, display_name="(Unknown)")
@@ -180,29 +217,79 @@ async def resolve_person(db, user_id: int, display_or_alias: str) -> Person:
     if person:
         return person
 
-    # 3) Fuzzy: name is a whole-word substring of a known display_name or vice versa
-    #    e.g. "Rosa" matches "Rosa Gomez", "Grandma Rosa"
+    # Load all persons and aliases once; reused across all fuzzy passes below.
     all_persons = (await db.execute(
         select(Person).where(Person.owner_user_id == user_id)
     )).scalars().all()
-    for p in all_persons:
-        dn = (p.display_name or "").lower()
-        # whole-word containment in either direction
-        if re.search(rf"\b{re.escape(name_lower)}\b", dn) or re.search(rf"\b{re.escape(dn)}\b", name_lower):
-            await add_alias_if_new(db, p.id, name)
-            return p
-
-    # 4) Fuzzy: check aliases for substring matches
     alias_rows = (await db.execute(
         select(PersonAlias)
         .join(Person, Person.id == PersonAlias.person_id)
         .where(Person.owner_user_id == user_id)
     )).scalars().all()
-    for ar in alias_rows:
-        al = (ar.alias or "").lower()
-        if re.search(rf"\b{re.escape(name_lower)}\b", al) or re.search(rf"\b{re.escape(al)}\b", name_lower):
-            await add_alias_if_new(db, ar.person_id, name)
-            return await db.get(Person, ar.person_id)
+
+    def _collect_fuzzy(search_lc: str) -> list:
+        """Return every Person whose display_name or alias contains search_lc as a whole word."""
+        seen: set[int] = set()
+        hits: list = []
+        for p in all_persons:
+            dn = (p.display_name or "").lower()
+            if re.search(rf"\b{re.escape(search_lc)}\b", dn) or re.search(rf"\b{re.escape(dn)}\b", search_lc):
+                if p.id not in seen:
+                    hits.append(p); seen.add(p.id)
+        for ar in alias_rows:
+            al = (ar.alias or "").lower()
+            if re.search(rf"\b{re.escape(search_lc)}\b", al) or re.search(rf"\b{re.escape(al)}\b", search_lc):
+                if ar.person_id not in seen:
+                    seen.add(ar.person_id)
+                    # fetch person object (already loaded in all_persons if owner matches)
+                    found = next((p for p in all_persons if p.id == ar.person_id), None)
+                    if found:
+                        hits.append(found)
+        return hits
+
+    async def _disambiguate(candidates: list, mention: str, effective_role: str | None) -> "Person | None":
+        """Role check → LLM → give up."""
+        if len(candidates) == 1:
+            return candidates[0]
+        # 1) Role stored on person
+        if effective_role:
+            role_matched = [p for p in candidates if _role_matches((p.meta or {}).get("role_hint"), effective_role)]
+            if len(role_matched) == 1:
+                return role_matched[0]
+        # 2) LLM reads the surrounding context
+        winner = await _llm_pick(candidates, mention, context_text)
+        return winner  # None if LLM is also uncertain
+
+    # 3) Fuzzy on the full name as given ("Rosa", "Josh", "Grandma Rosa")
+    candidates = _collect_fuzzy(name_lower)
+    if candidates:
+        winner = await _disambiguate(candidates, name, role_hint)
+        if winner:
+            await add_alias_if_new(db, winner.id, name)
+            return winner
+        # Multiple matches and couldn't disambiguate — fall through to role-prefix stripping
+        # before creating a new person; if that also fails, return None.
+        if not any(name_lower.startswith(p + " ") for p in _ROLE_PREFIXES):
+            return None  # no prefix to strip; truly ambiguous
+
+    # 4b) Role-prefix stripping: "cousin Josh" → bare "Josh"
+    #     Lets the role word itself serve as a disambiguation signal even if the caller
+    #     didn't pass role_hint.
+    for prefix in _ROLE_PREFIXES:
+        if name_lower.startswith(prefix + " "):
+            bare_lc = name_lower[len(prefix) + 1:]
+            if not bare_lc:
+                continue
+            bare_name = name[len(prefix) + 1:]
+            candidates = _collect_fuzzy(bare_lc)
+            if candidates:
+                effective_role = role_hint or prefix
+                winner = await _disambiguate(candidates, bare_name, effective_role)
+                if winner:
+                    await add_alias_if_new(db, winner.id, name)
+                    return winner
+                return None  # multiple matches, couldn't resolve
+            break  # recognised the prefix but no person found — create new below
 
     # 5) Create new person + seed alias (mark as inferred from mention)
     p = Person(owner_user_id=user_id, display_name=name, meta={"inferred": True})

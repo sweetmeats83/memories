@@ -152,30 +152,32 @@ def _format_descendant_term(steps: int) -> str:
 
 def _format_aunt_uncle_term(younger_steps: int) -> str:
     """
-    Label for the older side relative to the younger side.
-    When the older side is 1 step from MRCA and the younger side is 2 steps, it's 'aunt/uncle'.
-    Each additional step on the younger side adds a 'great-'.
-    Mapping: 2 -> aunt/uncle; 3 -> grandaunt/uncle; 4 -> great-grandaunt/uncle; ...
+    Label for the older side (alter) relative to the younger side (ego).
+    younger_steps = ego's distance from MRCA.
+    Mapping: 2 -> aunt/uncle; 3 -> grandaunt/uncle; 4 -> great-grandaunt/uncle; 5 -> great-great-grandaunt/uncle; ...
     """
     if younger_steps <= 2:
         return "aunt/uncle"
     if younger_steps == 3:
         return "grandaunt/uncle"
+    # younger_steps=4 -> great-grandaunt/uncle; 5 -> great-great-grandaunt/uncle; ...
     greats = younger_steps - 3
-    return ("great-" * (greats - 1)) + "grandaunt/uncle"
+    return ("great-" * greats) + "grandaunt/uncle"
 
 
 def _format_niece_nephew_term(younger_steps: int) -> str:
     """
-    Label for the younger side relative to the older side, parameterized by the younger side's distance.
+    Label for the younger side (alter) relative to the older side (ego).
+    younger_steps = alter's distance from MRCA.
     Mapping: 2 -> niece/nephew; 3 -> grandniece/nephew; 4 -> great-grandniece/nephew; ...
     """
     if younger_steps <= 2:
         return "niece/nephew"
     if younger_steps == 3:
         return "grandniece/nephew"
+    # younger_steps=4 -> great-grandniece/nephew; 5 -> great-great-grandniece/nephew; ...
     greats = younger_steps - 3
-    return ("great-" * (greats - 1)) + "grandniece/nephew"
+    return ("great-" * greats) + "grandniece/nephew"
 
 
 def _gendered_variant(neutral: str, alter_gender: Optional[str]) -> Optional[str]:
@@ -183,28 +185,25 @@ def _gendered_variant(neutral: str, alter_gender: Optional[str]) -> Optional[str
         return None
     g = alter_gender
     m = {
-        "parent": "father",
-        "grandparent": "grandfather",
-        "child": "son",
-        "grandchild": "grandson",
-        "sibling": "brother",
+        "parent": "father" if g == "male" else "mother",
+        "grandparent": "grandfather" if g == "male" else "grandmother",
+        "child": "son" if g == "male" else "daughter",
+        "grandchild": "grandson" if g == "male" else "granddaughter",
+        "sibling": "brother" if g == "male" else "sister",
         "aunt/uncle": "uncle" if g == "male" else "aunt",
+        "niece/nephew": "nephew" if g == "male" else "niece",
         "grandaunt/uncle": "granduncle" if g == "male" else "grandaunt",
         "grandniece/nephew": "grandnephew" if g == "male" else "grandniece",
     }
-    # handle great- chains by replacing base token
-    if neutral.startswith("great-") and neutral.endswith("grandparent"):
+    # handle great- chains by replacing the base token (suffix replacement preserves "great-" prefixes)
+    if neutral.endswith("grandparent"):
         return neutral.replace("grandparent", "grandfather" if g == "male" else "grandmother")
-    if neutral.startswith("great-") and neutral.endswith("grandchild"):
+    if neutral.endswith("grandchild"):
         return neutral.replace("grandchild", "grandson" if g == "male" else "granddaughter")
     if neutral.endswith("grandaunt/uncle"):
-        return neutral.replace(
-            "grandaunt/uncle", "granduncle" if g == "male" else "grandaunt"
-        )
+        return neutral.replace("grandaunt/uncle", "granduncle" if g == "male" else "grandaunt")
     if neutral.endswith("grandniece/nephew"):
-        return neutral.replace(
-            "grandniece/nephew", "grandnephew" if g == "male" else "grandniece"
-        )
+        return neutral.replace("grandniece/nephew", "grandnephew" if g == "male" else "grandniece")
     return m.get(neutral)
 
 

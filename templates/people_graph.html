@@ -103,6 +103,59 @@
     #panel .rh-e  { top: 0; right: -4px; width: 8px; height: 100%; cursor: ew-resize; }
     #panel .rh-s  { left: 0; bottom: -4px; width: 100%; height: 8px; cursor: ns-resize; }
     #panel .rh-se { right: -6px; bottom: -6px; width: 14px; height: 14px; cursor: nwse-resize; }
+
+    /* ── Dark mode overrides ─────────────────────────────────────────── */
+    html.dark .graph-tip {
+      background: rgba(8,10,24,0.95);
+      color: #f4f0ff;
+      border-color: rgba(255,45,120,0.50);
+      box-shadow: 0 0 16px rgba(255,45,120,0.22);
+    }
+    html.dark .graph-card {
+      background: rgba(8,10,24,0.82);
+      border-color: rgba(255,45,120,0.38);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.55), 0 0 24px rgba(255,45,120,0.14);
+    }
+    html.dark .graph-card::before {
+      background: linear-gradient(135deg, rgba(255,45,120,0.08) 0%, transparent 60%);
+    }
+    html.dark .graph-input {
+      background: rgba(255,255,255,0.06);
+      color: #f4f0ff;
+      border-color: rgba(255,45,120,0.40);
+      box-shadow: none;
+    }
+    html.dark .graph-input::placeholder { color: rgba(244,240,255,0.40); }
+    html.dark .graph-btn {
+      background: rgba(255,45,120,0.12);
+      color: #f4f0ff;
+      border-color: rgba(255,45,120,0.45);
+      box-shadow: 0 0 10px rgba(255,45,120,0.18);
+    }
+    html.dark .graph-btn:hover {
+      background: rgba(255,45,120,0.22);
+      box-shadow: 0 0 18px rgba(255,45,120,0.38), 0 0 36px rgba(124,58,237,0.20);
+    }
+    html.dark #pv_edges,
+    html.dark #p_edges {
+      border-color: rgba(255,45,120,0.30);
+    }
+    html.dark #pgSearchDD {
+      background: rgba(8,10,24,0.97);
+      border-color: rgba(255,45,120,0.38);
+      color: #f4f0ff;
+      box-shadow: 0 0 20px rgba(255,45,120,0.18);
+    }
+    html.dark #empty { color: rgba(200,194,255,0.65); }
+    html.dark #pv_photo,
+    html.dark #p_photo_img { border-color: rgba(255,45,120,0.40); }
+    html.dark #pv_connect,
+    html.dark #pv_deceased { border-color: rgba(255,45,120,0.40); color: rgba(200,194,255,0.80); }
+    html.dark #p_delete_person {
+      border-color: rgba(239,68,68,0.60) !important;
+      background: rgba(239,68,68,0.15) !important;
+      color: #ff6b6b !important;
+    }
   </style>
 
   <!-- Top toolbar (beneath site navbar) -->
@@ -239,7 +292,7 @@
   </div>
 
 
-<script type="module" src="{{ url_for('static', path='js/people_graph.js') }}?v=20250919"></script>
+<script type="module" src="{{ url_for('static', path='js/people_graph.js') }}?v=20260307c"></script>
 
 </section>
 

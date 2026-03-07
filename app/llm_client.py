@@ -367,6 +367,65 @@ async def generate_followup_question(story: str, *, style: str = "gentle", max_t
     return (q.splitlines()[0].strip().rstrip(".") + "?") if q else "Could you share a little more about that?"
 
 
+# ---------- person disambiguation ----------
+
+async def disambiguate_person_mention(
+    mention: str,
+    candidates: list[dict],
+    context_text: str | None = None,
+) -> int | None:
+    """
+    When multiple people in the relationship chart share the same name, use the LLM to
+    pick the right one from surrounding context.
+
+    candidates: [{"id": int, "name": str, "role": str | None}, ...]
+    Returns the matched person's id, or None if the LLM is uncertain.
+    """
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]["id"]
+
+    numbered = "\n".join(
+        f"{i + 1}. {c['name']}" + (f" (relationship: {c['role']})" if c.get("role") else "")
+        for i, c in enumerate(candidates)
+    )
+    excerpt = (context_text or "")[:800].strip()
+    context_block = f'\n\nStory excerpt:\n"""\n{excerpt}\n"""' if excerpt else ""
+
+    prompt = (
+        "A narrator mentions the name or reference below in their personal memoir. "
+        "Using only what appears in the text, decide which person from the list is most "
+        "likely being referenced.\n\n"
+        f'Mention: "{mention}"{context_block}\n\n'
+        f"People in narrator's relationship chart with a similar name:\n{numbered}\n\n"
+        f"Reply with ONLY the number (1–{len(candidates)}) of the correct person, "
+        "or \"unknown\" if the text does not provide enough information to decide."
+    )
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0.0, "num_predict": 8},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(f"{OLLAMA_BASE_URL}/api/generate", json=payload)
+            r.raise_for_status()
+            raw = (r.json() or {}).get("response", "").strip()
+    except Exception:
+        return None
+
+    m = re.search(r'\b(\d+)\b', raw)
+    if m:
+        idx = int(m.group(1)) - 1
+        if 0 <= idx < len(candidates):
+            return candidates[idx]["id"]
+    return None
+
+
 # Keep the exact signature you proposed, but implemented here to use the helpers above.
 async def make_llm_followup_prompt(db, user_id: int, response_id: int, style: str, max_tokens: int) -> int:
     """

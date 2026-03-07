@@ -6,13 +6,17 @@
 <script src="https://cdn.jsdelivr.net/npm/@yaireo/tagify"></script>
 <style>
   /* minimal extras for this page */
-  html.dark body.text-black { color: #111 !important; }
   .btn-outline{display:inline-flex;align-items:center;gap:.5rem;padding:.5rem 1rem;border:1px solid #000;border-radius:.5rem;background:transparent;color:#000;transition:background .15s,color .15s,transform .06s}
   .btn-outline:hover{background:#000;color:#fff}
   .btn-outline:active{transform:translateY(1px)}
+  html.dark .btn-outline{border-color:rgba(255,45,120,.5);color:var(--fg)}
+  html.dark .btn-outline:hover{background:rgba(255,45,120,.2);color:#fff}
   .tile-glass{background:rgba(255,255,255,.65);backdrop-filter:blur(6px);border:1px solid #000;border-radius:.5rem;box-shadow:0 .5rem 1rem rgba(0,0,0,.05)}
+  html.dark .tile-glass{background:var(--glass-bg);border-color:var(--glass-stroke);box-shadow:var(--shadow-neon)}
   .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid #000;border-radius:.5rem;background:rgba(255,255,255,.9)}
   .icon-btn:hover{background:#000;color:#fff}
+  html.dark .icon-btn{background:rgba(255,255,255,.07);border-color:rgba(255,45,120,.45);color:var(--fg)}
+  html.dark .icon-btn:hover{background:rgba(255,45,120,.25);color:#fff}
 
   .primary-audio{width:100%}
   .primary-video{width:100%;display:block;aspect-ratio:16/9;background:#000}

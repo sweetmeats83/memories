@@ -1,99 +1,152 @@
 /* Global site styles (light defaults + dark overrides) */
 
-/* Color tokens for 5‑color rotation (light/dark override below) */
+/* ─── Light mode gradient tokens ─────────────────────────────────────── */
 :root {
-  --g1: #ffbd7a; /* warm peach */
-  --g2: #fc80ab; /* soft pink */
-  --g3: #76f7b8; /* mint */
-  --g4: #80acf8; /* pale blue */
-  --g5: #fd8383; /* light coral */
-}
-html.dark {
-  --g1: #0f1220; /* deep indigo */
-  --g2: #1a0f29; /* plum night */
-  --g3: #111827; /* midnight */
-  --g4: #221435; /* eggplant */
-  --g5: #2a0f24; /* wine */
+  --g1: #ffbd7a;
+  --g2: #fc80ab;
+  --g3: #76f7b8;
+  --g4: #80acf8;
+  --g5: #fd8383;
 }
 
-/* Light gradient for body background used by base.html */
-/* Ensure base stacking context so pseudo background can sit behind */
+/* Light gradient stacking context */
 html, body { min-height: 100%; }
 body { position: relative; isolation: isolate; }
-
-/* Light mode: rely on original .bg-gradient-warm in base.css */
 body.bg-gradient-warm::before { content: none !important; }
+body.bg-gradient-warm::after  { content: none !important; }
 
-body.bg-gradient-warm::after { content: none !important; }
-
-/* Dark mode: five‑color linear gradient slowly moving corner to corner */
+/* ─── Dark mode: neon noir background ────────────────────────────────── */
+/*
+ * Deep space base + four large neon bloom orbs (pink, violet, cyan, blue).
+ * The background-position animation drifts them slowly so the colour wash
+ * shifts without being distracting.
+ */
 html.dark .bg-gradient-warm {
-  /* Dark neon wash with gentle motion */
-  background: radial-gradient(1200px 800px at 10% 10%, rgba(255, 59, 193, 0.10), transparent 60%),
-              radial-gradient(900px 700px at 90% 20%, rgba(124, 58, 237, 0.12), transparent 60%),
-              radial-gradient(700px 700px at 80% 85%, rgba(34, 211, 238, 0.08), transparent 60%),
-              linear-gradient(135deg, var(--g1), var(--g2), var(--g3), var(--g4), var(--g5));
-  background-size: 400% 400%;
-  animation: gradientMove 60s ease infinite;
+  background-color: #06080f;
+  background-image:
+    /* top-left: hot pink bloom */
+    radial-gradient(ellipse 90vw 70vh at 8% 8%,  rgba(255, 20, 100, 0.22) 0%, transparent 62%),
+    /* top-right: electric violet bloom */
+    radial-gradient(ellipse 80vw 80vh at 92% 12%, rgba(120, 40, 240, 0.28) 0%, transparent 60%),
+    /* bottom-right: cyan bloom */
+    radial-gradient(ellipse 70vw 65vh at 88% 90%, rgba(0, 200, 255, 0.18)  0%, transparent 58%),
+    /* bottom-left: deep magenta bloom */
+    radial-gradient(ellipse 60vw 60vh at 12% 90%, rgba(220, 40, 140, 0.16) 0%, transparent 58%),
+    /* centre: faint indigo core so the middle doesn't go pure black */
+    radial-gradient(ellipse 50vw 50vh at 50% 50%, rgba(80, 20, 180, 0.10)  0%, transparent 55%);
+  background-size: 200% 200%;
+  animation: neonDrift 90s ease-in-out infinite alternate;
 }
 
-/* Improve legibility for Tailwind text-black utility in dark mode */
-/* Force readable foreground even if Tailwind applies text-black */
+@keyframes neonDrift {
+  0%   { background-position: 0%   0%; }
+  25%  { background-position: 100% 15%; }
+  50%  { background-position: 60%  100%; }
+  75%  { background-position: 10%  80%; }
+  100% { background-position: 80%  40%; }
+}
+
+/* ─── Global dark text / body ────────────────────────────────────────── */
 html.dark body.text-black { color: var(--fg) !important; }
+html.dark body            { color: var(--fg); }
 
-/* Global text in dark */
-html.dark body { color: var(--fg); }
+/* ─── Dust motes — tone down in dark so they read as distant stars ───── */
+html.dark #motes { opacity: 0.28; filter: brightness(1.4) saturate(0); }
 
-/* Limit neon links to prose/reading areas, not card wrappers */
+/* ─── Scrollbar (webkit) ─────────────────────────────────────────────── */
+html.dark ::-webkit-scrollbar              { width: 8px; height: 8px; }
+html.dark ::-webkit-scrollbar-track        { background: #06080f; }
+html.dark ::-webkit-scrollbar-thumb        { background: rgba(255, 45, 120, 0.38); border-radius: 4px; }
+html.dark ::-webkit-scrollbar-thumb:hover  { background: rgba(255, 45, 120, 0.60); }
+
+/* ─── Text selection ─────────────────────────────────────────────────── */
+html.dark ::selection { background: rgba(255, 45, 120, 0.42); color: #fff; }
+
+/* ─── Links ──────────────────────────────────────────────────────────── */
 html.dark .prose-text a,
 html.dark .page-column a { color: var(--accent); text-decoration: none; }
 html.dark .prose-text a:hover,
-html.dark .page-column a:hover { text-shadow: 0 0 8px rgba(255, 59, 193, 0.45); }
-
-/* Ensure block-level link wrappers keep inherited text color */
+html.dark .page-column a:hover { text-shadow: 0 0 10px rgba(255, 45, 120, 0.55); }
 html.dark a.block { color: inherit; text-shadow: none; }
-html.dark ::selection { background: rgba(255, 59, 193, 0.35); color: #fff; }
 
-/* Header subtle adjustments in dark mode */
+/* ─── Header ─────────────────────────────────────────────────────────── */
 html.dark header {
-  background: rgba(10, 12, 20, 0.55);
-  border-color: rgba(255, 59, 193, 0.28);
-  box-shadow: var(--shadow-neon);
+  background: rgba(6, 8, 18, 0.68);
+  border-color: rgba(255, 45, 120, 0.35);
+  box-shadow: 0 0 24px rgba(255, 45, 120, 0.18), 0 0 60px rgba(124, 58, 237, 0.14);
+  backdrop-filter: blur(14px);
 }
 
-/* Brand title in dark: neon pink */
 html.dark .nav-title {
   color: var(--accent);
-  text-shadow: 0 0 8px rgba(255, 59, 193, 0.45);
+  text-shadow: 0 0 10px rgba(255, 45, 120, 0.55), 0 0 28px rgba(255, 45, 120, 0.25);
 }
 
-/* Tagify base tweaks (kept minimal to avoid fighting inline styles) */
-html.dark .tagify { background: rgba(17,24,39,0.6); color: #e5e7eb; }
-html.dark .tagify__dropdown { background: #0f141a; color: #e5e7eb; }
-
-/* Player card surface minor dark variant */
-html.dark .player-card { background: rgba(17,24,39,0.6); border-color: #374151; }
-
-/* Respect reduced motion */
-@media (prefers-reduced-motion: reduce) {
-  html.dark .bg-gradient-warm { animation: none; }
+/* ─── Pill component ─────────────────────────────────────────────────── */
+html.dark .pill {
+  background: rgba(255, 45, 120, 0.10);
+  border-color: rgba(255, 45, 120, 0.40);
+  color: var(--fg);
+}
+html.dark .pill:hover {
+  background: rgba(255, 45, 120, 0.22);
+  color: #fff;
+  box-shadow: 0 0 14px rgba(255, 45, 120, 0.40), 0 4px 14px rgba(0,0,0,0.35);
+}
+html.dark .pill.is-selected {
+  background: rgba(255, 45, 120, 0.28);
+  border-color: rgba(255, 45, 120, 0.70);
+  color: #fff;
+  box-shadow: 0 0 16px rgba(255, 45, 120, 0.55);
 }
 
-/* Inputs/selects in dark */
+/* ─── Tagify ─────────────────────────────────────────────────────────── */
+html.dark .tagify {
+  background: rgba(6, 8, 20, 0.70);
+  border-color: rgba(255, 45, 120, 0.40) !important;
+  color: var(--fg);
+}
+html.dark .tagify__tag {
+  background: rgba(255, 45, 120, 0.14);
+  border: 1px solid rgba(255, 45, 120, 0.45);
+  color: var(--fg);
+}
+html.dark .tagify__tag:hover { background: rgba(255, 45, 120, 0.28); }
+html.dark .tagify__tag > div::before { box-shadow: none; background: transparent; }
+html.dark .tagify__dropdown {
+  background: rgba(8, 10, 22, 0.97);
+  border: 1px solid rgba(255, 45, 120, 0.38);
+  box-shadow: 0 0 24px rgba(255, 45, 120, 0.22);
+  color: var(--fg);
+}
+html.dark .tagify__dropdown__item--active,
+html.dark .tagify__dropdown__item:hover {
+  background: rgba(255, 45, 120, 0.18);
+  color: #fff;
+}
+
+/* ─── Player card ────────────────────────────────────────────────────── */
+html.dark .player-card {
+  background: rgba(8, 10, 22, 0.72);
+  border-color: rgba(255, 45, 120, 0.35);
+  box-shadow: 0 0 18px rgba(255, 45, 120, 0.16);
+}
+
+/* ─── Inputs / selects ───────────────────────────────────────────────── */
 html.dark input[type="text"],
 html.dark input[type="email"],
 html.dark input[type="file"],
 html.dark textarea,
 html.dark select {
-  background: rgba(255,255,255,0.06) !important;
+  background: rgba(255,255,255,0.05) !important;
   color: var(--fg);
-  border: 1px solid rgba(255, 59, 193, 0.28) !important;
+  border: 1px solid rgba(255, 45, 120, 0.35) !important;
   outline: none;
 }
 html.dark input::placeholder,
-html.dark textarea::placeholder { color: rgba(232, 230, 255, 0.55); }
+html.dark textarea::placeholder { color: rgba(244, 240, 255, 0.45); }
 
-/* Respect explicit light surfaces in dark mode */
+/* Explicit light surfaces stay readable */
 html.dark input.bg-white,
 html.dark textarea.bg-white,
 html.dark select.bg-white,
@@ -106,7 +159,13 @@ html.dark select[class*="bg-white"] {
   caret-color: #111;
 }
 
-/* Quill editor adjustments so light canvas stays readable in dark mode */
+/* ─── Focus ring ─────────────────────────────────────────────────────── */
+html.dark :is(input, textarea, select, button, .btn):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(147, 51, 234, 0.65), 0 0 0 5px rgba(255, 45, 120, 0.30);
+}
+
+/* ─── Quill editor (keep canvas light so text is always readable) ──── */
 html.dark .ql-toolbar.ql-snow,
 html.dark .ql-container.ql-snow {
   background: rgba(255,255,255,0.94);
@@ -114,27 +173,102 @@ html.dark .ql-container.ql-snow {
   color: #111;
 }
 html.dark .ql-toolbar.ql-snow .ql-stroke,
-html.dark .ql-toolbar.ql-snow .ql-stroke * {
-  stroke: #111;
-}
-html.dark .ql-toolbar.ql-snow .ql-fill {
-  fill: #111;
-}
+html.dark .ql-toolbar.ql-snow .ql-stroke * { stroke: #111; }
+html.dark .ql-toolbar.ql-snow .ql-fill { fill: #111; }
 html.dark .ql-toolbar.ql-snow .ql-picker-label,
 html.dark .ql-toolbar.ql-snow .ql-picker-item,
-html.dark .ql-toolbar.ql-snow .ql-picker-options {
-  color: #111;
-}
-html.dark .ql-editor {
-  background: rgba(255,255,255,0.98);
-  color: #111;
-  caret-color: #111;
-}
-html.dark .ql-editor.ql-blank::before {
-  color: rgba(17,17,17,0.4);
+html.dark .ql-toolbar.ql-snow .ql-picker-options { color: #111; }
+html.dark .ql-editor { background: rgba(255,255,255,0.98); color: #111; caret-color: #111; }
+html.dark .ql-editor.ql-blank::before { color: rgba(17,17,17,0.4); }
+
+/* ─── Reduced motion ─────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  html.dark .bg-gradient-warm { animation: none; }
 }
 
-/* Focus ring neon glow */
-html.dark :is(input, textarea, select, button, .btn):focus-visible {
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.55), 0 0 0 6px rgba(255, 59, 193, 0.28);
+/* ═══════════════════════════════════════════════════════════════════════
+   TAILWIND CLASS OVERRIDES — dark mode contrast fixes
+   These patch hardcoded Tailwind utilities used across templates so that
+   text stays readable and surfaces stay dark without editing 24 files.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Text: dark shades → light foreground ────────────────────────────── */
+html.dark .text-black,
+html.dark .text-gray-900, html.dark .text-gray-800,
+html.dark .text-zinc-900, html.dark .text-zinc-800,
+html.dark .text-stone-900, html.dark .text-stone-800,
+html.dark .text-slate-900, html.dark .text-slate-800 {
+  color: var(--fg) !important;
+}
+
+html.dark .text-gray-700, html.dark .text-gray-600,
+html.dark .text-zinc-700, html.dark .text-zinc-600,
+html.dark .text-stone-700, html.dark .text-stone-600,
+html.dark .text-slate-700, html.dark .text-slate-600 {
+  color: var(--muted-fg) !important;
+}
+
+html.dark .text-gray-500, html.dark .text-zinc-500,
+html.dark .text-stone-500, html.dark .text-slate-500 {
+  color: rgba(200, 194, 255, 0.65) !important;
+}
+
+html.dark .text-gray-400, html.dark .text-zinc-400,
+html.dark .text-stone-400, html.dark .text-slate-400 {
+  color: rgba(200, 194, 255, 0.45) !important;
+}
+
+/* ── Opaque white surfaces → dark glass ──────────────────────────────── */
+/* Exclude inputs/Quill — those have their own rules with higher specificity */
+html.dark .bg-white:not(input):not(textarea):not(select) {
+  background-color: var(--glass-bg) !important;
+  color: var(--fg) !important;
+}
+
+/* ── Semi-transparent whites ≥ 40% → dark glass (invisible otherwise) ── */
+html.dark .bg-white\/40, html.dark .bg-white\/50,
+html.dark .bg-white\/60, html.dark .bg-white\/70,
+html.dark .bg-white\/80, html.dark .bg-white\/85,
+html.dark .bg-white\/90, html.dark .bg-white\/95 {
+  background-color: rgba(8, 10, 24, 0.72) !important;
+  color: var(--fg) !important;
+}
+
+/* ── Light gray/stone panel surfaces → dark ─────────────────────────── */
+html.dark .bg-gray-50,  html.dark .bg-gray-100,
+html.dark .bg-stone-50, html.dark .bg-stone-100,
+html.dark .bg-slate-50, html.dark .bg-slate-100,
+html.dark .bg-zinc-50,  html.dark .bg-zinc-100 {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  color: var(--fg) !important;
+}
+
+/* ── Light borders → subtle neon-tinted ─────────────────────────────── */
+html.dark .border-gray-200, html.dark .border-gray-300,
+html.dark .border-stone-200, html.dark .border-stone-300,
+html.dark .border-slate-200, html.dark .border-slate-300,
+html.dark .border-zinc-200, html.dark .border-zinc-300 {
+  border-color: rgba(255, 45, 120, 0.22) !important;
+}
+
+html.dark .border-black\/10, html.dark .border-black\/20 {
+  border-color: rgba(255, 45, 120, 0.20) !important;
+}
+
+/* ── Hover: light-bg hover states → dark tint ───────────────────────── */
+html.dark .hover\:bg-white:hover,
+html.dark .hover\:bg-gray-100:hover,
+html.dark .hover\:bg-stone-100:hover,
+html.dark .hover\:bg-zinc-100:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ── Notification toast ──────────────────────────────────────────────── */
+html.dark #toast-container > *,
+html.dark [id^="toast"],
+html.dark .notification-toast {
+  background: rgba(8, 10, 24, 0.92) !important;
+  border-color: rgba(255, 45, 120, 0.35) !important;
+  color: var(--fg) !important;
+  box-shadow: 0 0 20px rgba(255, 45, 120, 0.18) !important;
 }

@@ -499,7 +499,11 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
                     role = item.get("role") or None
                     if not surface:
                         continue
-                    person = await resolve_person(db, response.user_id, surface)
+                    person = await resolve_person(db, response.user_id, surface, role_hint=role, context_text=people_text)
+                    if person is None:
+                        # Ambiguous match (e.g., multiple people named Josh) — skip to avoid wrong link
+                        logger.debug("resolve_person: ambiguous match for %r (role=%r); skipping link", surface, role)
+                        continue
                     if person.id not in seen_person_ids:
                         seen_person_ids.add(person.id)
                         await link_mention(
@@ -629,6 +633,10 @@ async def transcribe_and_update(response_id: int, media_relpath: str, user_id: O
                 if ml in alias_set:
                     matched.append(m); continue
                 if " " in ml and ml.split(" ",1)[0] in alias_set:
+                    matched.append(m); continue
+                # Also match when ml is a whole-word subset of a known alias
+                # e.g. "Josh" matches alias "Josh Lopeman"
+                if any(re.search(rf"\b{re.escape(ml)}\b", a) for a in alias_set if a):
                     matched.append(m); continue
                 unknown.append(m)
 

@@ -91,6 +91,7 @@ console.info("people_graph.js — click path & hover path build loaded");
     hoverRadius: 10,
     userScale: 1.4,
     linkColor: 'rgba(0,0,0,0.25)',
+    socialColor: '#111111',
     nodeColor: '#374151',
     deadColor: '#9ca3af',
     userColor: '#111111',
@@ -132,7 +133,21 @@ console.info("people_graph.js — click path & hover path build loaded");
     cursorAttractK: 0.0025,
     cursorInfluence: 320,
   };
-  const PET_COLOR = '#cc5500'; // burnt orange for pets
+  // Dark mode canvas color swap
+  if (document.documentElement.classList.contains('dark')) {
+    CFG.linkColor   = 'rgba(255,255,255,0.22)';
+    CFG.socialColor = 'rgba(255,255,255,0.45)';
+    CFG.nodeColor   = '#c4b8ff';
+    CFG.deadColor   = '#6b6a8a';
+    CFG.userColor   = '#ff2d78';
+    CFG.nodeHalo    = 'rgba(255,45,120,0.15)';
+    CFG.focusColor  = '#ffb347';
+    CFG.labelColor  = '#f4f0ff';
+  }
+
+  const PET_COLOR = document.documentElement.classList.contains('dark')
+    ? '#ff8c42'
+    : '#cc5500'; // burnt orange for pets
 
   // App state
   const state = {
@@ -163,6 +178,9 @@ console.info("people_graph.js — click path & hover path build loaded");
   let lastInteract = performance.now();
   function markInteract(){ lastInteract = performance.now(); }
   const SID = (x) => String(x);
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
   state.meId = canvas.getAttribute('data-me-id') || (window.state && window.state.meId) || '';
 
   // Helpers
@@ -371,9 +389,18 @@ console.info("people_graph.js — click path & hover path build loaded");
     state.nodes = Array.from(map.values());
     state.edges = all;
 
-    // meId: trust provided data-me-id (person id); only keep it if present in nodes
+    // meId: trust provided data-me-id (person id); only keep it if present in nodes.
+    // The HTML attribute is always a string, but JSON node ids may be integers, so
+    // try both the raw value and its numeric conversion.
     let me = state.meId;
-    if (!me || !map.has(me)) { me = null; }
+    if (me) {
+      const meNum = Number(me);
+      if (!map.has(me) && !map.has(meNum)) {
+        me = null;
+      } else if (!map.has(me) && map.has(meNum)) {
+        me = meNum; // normalise to the actual key type used in the map
+      }
+    }
     state.meId = me;
 
     // Unweighted adjacency
@@ -391,10 +418,20 @@ console.info("people_graph.js — click path & hover path build loaded");
     const pc = all.filter(e => isParentChild(e.rel));
     state.edgesPC = pc;
 
-    // --- Path-to-me adjacency: parent/child + anchor core (parents/children/spouse) ---
+    // --- Sibling edges (for path routing) ---
+    const sibAll = all.filter(e => isSibling(e.rel));
+
+    // --- Path-to-me adjacency: bio (parent/child) + siblings + anchor core ---
+    // Including siblings lets the path flow through the real family tree
+    // (e.g. You→Mom→Grandma→Great-grandma→Trish rather than a direct aunt-of shortcut)
     const adjPath = new Map();
     state.nodes.forEach(n => adjPath.set(SID(n.id), new Set()));
     pc.forEach(e => {
+      const s = SID(e.s), d = SID(e.d);
+      adjPath.get(s)?.add(d);
+      adjPath.get(d)?.add(s);
+    });
+    sibAll.forEach(e => {
       const s = SID(e.s), d = SID(e.d);
       adjPath.get(s)?.add(d);
       adjPath.get(d)?.add(s);
@@ -411,19 +448,28 @@ console.info("people_graph.js — click path & hover path build loaded");
     state.adjPath = adjPath;
 
     // --- Weighted adjacency (string keys) ---
+    // 'extended' channel (aunt/uncle/cousin/grandparent shortcut edges) gets a very
+    // high weight so Dijkstra strongly prefers the real bio+sibling chain. The shortcut
+    // edges still act as a last-resort fallback when no bio path exists at all.
     const adjW = new Map();
     state.nodes.forEach(n => adjW.set(SID(n.id), []));
     all.forEach(e => {
+      const w = e.chan === 'extended' ? 20.0 : e.w;
       const s = SID(e.s), d = SID(e.d);
-      adjW.get(s)?.push({ v: d, w: e.w, chan: e.chan });
-      adjW.get(d)?.push({ v: s, w: e.w, chan: e.chan });
+      adjW.get(s)?.push({ v: d, w, chan: e.chan });
+      adjW.get(d)?.push({ v: s, w, chan: e.chan });
     });
     state.adjW = adjW;
 
-    // --- Bio-only adjacency (string keys) ---
+    // --- Bio+sibling adjacency for A→B click paths ---
     const adjBio = new Map();
     state.nodes.forEach(n => adjBio.set(SID(n.id), new Set()));
     pc.forEach(e => {
+      const s = SID(e.s), d = SID(e.d);
+      adjBio.get(s)?.add(d);
+      adjBio.get(d)?.add(s);
+    });
+    sibAll.forEach(e => {
       const s = SID(e.s), d = SID(e.d);
       adjBio.get(s)?.add(d);
       adjBio.get(d)?.add(s);
@@ -566,7 +612,7 @@ console.info("people_graph.js — click path & hover path build loaded");
       if (n.fixed || (freezeId && SID(n.id) === freezeId)) continue;
       const kBase = CFG.centerK + (CFG.degreeCenterBoost * (deg.get(n.id)||0));
       let k = kBase;
-      if (selectedId && n.id === selectedId) { k = CFG.centerKSelected; }
+      if (selectedId != null && String(n.id) === String(selectedId)) { k = CFG.centerKSelected; }
       n.vx += (cx - n.x) * k;
       n.vy += (cy - n.y) * k;
 
@@ -745,7 +791,7 @@ console.info("people_graph.js — click path & hover path build loaded");
         ctx.globalAlpha = hasGlow ? (onPath ? 0.9 : 0.12)
                         : (hoverId ? (focused ? 0.95 : 0.5) : 0.7);
       } else if (e.cat === 'social') {
-        ctx.strokeStyle = '#111';
+        ctx.strokeStyle = CFG.socialColor;
         ctx.lineWidth = 1.1 * DPR;
         ctx.setLineDash([3*DPR, 2*DPR]);
         ctx.globalAlpha = hasGlow ? (onPath ? 0.8 : 0.08)
@@ -803,12 +849,12 @@ console.info("people_graph.js — click path & hover path build loaded");
     for (const n of state.nodes) {
       const isHover = hoverId === String(n.id);
       const isNeighbor = !!hoverId && neighbors.has(String(n.id));
-      const isSelected = selectedId === n.id;
+      const isSelected = selectedId != null && String(selectedId) === String(n.id);
       const baseR = CFG.nodeRadius * ((state.meId && SID(n.id) === SID(state.meId)) ? CFG.userScale : 1);
       const r = (isHover ? CFG.hoverRadius : baseR) * DPR * s;
 
       // Halo for hover OR selected
-      const isAnchor = state.anchorId && (state.anchorId === SID(n.id));
+      const isAnchor = state.anchorId != null && String(state.anchorId) === String(n.id);
       if (isHover || isSelected || isAnchor) {
         ctx.beginPath();
         ctx.fillStyle = isAnchor ? 'rgba(245, 158, 11, 0.25)' : CFG.nodeHalo;
@@ -1071,6 +1117,8 @@ console.info("people_graph.js — click path & hover path build loaded");
     };
     try{
       await fetch(`/api/people/${state.selectedId}`, { method:'PATCH', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      // Silently auto-add high-confidence edges (parent/child/spouse from role_hint)
+      await fetch(`/api/people/${state.selectedId}/infer/auto`, { method:'POST', credentials:'include' }).catch(()=>{});
       await refreshGraph();
     } catch {}
   }
@@ -1151,6 +1199,8 @@ console.info("people_graph.js — click path & hover path build loaded");
     const j = await r.json().catch(()=>({}));
     const pid = j && (j.person_id ?? j.id);
     npName.value = ''; if (npRole) npRole.value = '';
+    // Auto-add high-confidence edges from role_hint (e.g. "mother" → parent-of You)
+    if (pid) await fetch(`/api/people/${pid}/infer/auto`, { method:'POST', credentials:'include' }).catch(()=>{});
     await refreshGraph();
     const node = pid ? state.nodes.find(n => String(n.id) === String(pid))
                      : state.nodes.find(n => n.kind==='person' && (n.label||'').toLowerCase() === name.toLowerCase());
@@ -1520,9 +1570,25 @@ console.info("people_graph.js — click path & hover path build loaded");
   async function openDisplay(id){
     state.selectedId = id;
     if (!panelView) return;
+
+    // Show panel immediately from graph-state data so there's no perceived delay
+    const graphNode = getNode(id);
+    if (pvName) pvName.textContent = graphNode?.label || ('#'+id);
+    if (pvRole)  pvRole.textContent = graphNode?.role ? graphNode.role.replace(/-/g,' ') : '—';
+    if (pvYears) pvYears.textContent = '—';
+    if (pvBio)   pvBio.textContent = '—';
+    if (pvConnect)  pvConnect.style.display  = 'none';
+    if (pvDeceased) pvDeceased.style.display = 'none';
+    if (pvPhoto) { pvPhoto.removeAttribute('src'); pvPhoto.style.display = 'none'; }
+    if (pvEdges) pvEdges.innerHTML = '<div class="text-xs text-stone-500">Loading…</div>';
+    panelView.style.display = 'block';
+
+    // Fetch full detail and update in-place
     try {
       const res = await fetch(`/api/people/${id}`, { credentials:'include' });
       const d = await res.json();
+      // Only update if panel is still showing the same person
+      if (String(state.selectedId) !== String(id)) return;
       if (pvName) pvName.textContent = d.display_name || ('#'+id);
       if (pvPhoto) {
         if (d.photo_url) { pvPhoto.src = d.photo_url; pvPhoto.style.display='block'; }
@@ -1532,14 +1598,13 @@ console.info("people_graph.js — click path & hover path build loaded");
       if (pvYears) {
         const by = d.birth_year ? String(d.birth_year) : '';
         const dy = d.death_year ? String(d.death_year) : (d.deceased ? '—' : '');
-        pvYears.textContent = (by || dy) ? `${by || ''}${(by||dy)?'':''}${by && (dy||d.deceased) ? ' – ' : ''}${dy || (d.deceased ? '—' : '')}` : '—';
+        pvYears.textContent = (by || dy) ? `${by}${by && (dy||d.deceased) ? ' – ' : ''}${dy || (d.deceased ? '—' : '')}` : '—';
       }
-      if (pvConnect) pvConnect.style.display = d.connect_to_owner ? 'inline-block' : 'none';
+      if (pvConnect)  pvConnect.style.display  = d.connect_to_owner ? 'inline-block' : 'none';
       if (pvDeceased) pvDeceased.style.display = d.deceased ? 'inline-block' : 'none';
       if (pvBio) pvBio.textContent = (d.bio || '').trim() || '—';
       if (pvEdges) {
         pvEdges.innerHTML = '';
-        // Display panel: show only the selected person's own (outgoing) connections
         const conns = Array.isArray(d.connections)
           ? d.connections.filter(c => c && c.direction === 'out')
           : [];
@@ -1548,34 +1613,22 @@ console.info("people_graph.js — click path & hover path build loaded");
         } else {
           conns.forEach(c => {
             const row = document.createElement('div'); row.className='text-sm my-0.5';
-            const roleLabel = relLabel(c.rel_type);
-
-            // Always subject=displayed person, object=neighbor
-            const subjName = (pvName.textContent || ('#'+d.id));
-            const objName  = (c.name || ('#'+c.person_id));
-            // Fallback label first using edge's rel_type
-            row.textContent = `${subjName} is ${roleLabel} of ${objName}`;
-
-            // Upgrade to kinship label asynchronously using ego=object, alter=subject
+            const subjName = pvName.textContent || ('#'+d.id);
+            const objName  = c.name || ('#'+c.person_id);
+            row.textContent = `${subjName} is ${relLabel(c.rel_type)} of ${objName}`;
             (async () => {
               try {
-                const subjectId = d.id;        // displayed person
-                const objectId  = c.person_id; // neighbor
-                const lbl = await fetchKinshipLabel(objectId, subjectId);
+                const lbl = await fetchKinshipLabel(c.person_id, d.id);
                 if (lbl && String(lbl).toLowerCase() !== 'related') {
                   row.textContent = `${subjName} is ${lbl} of ${objName}`;
-                } else if (gen && (rt==='aunt-of' || rt==='niece-of')) {
-                  row.textContent = `${subjName} is ${roleLabel} of ${objName}`;
                 }
               } catch {}
             })();
-
             pvEdges.appendChild(row);
           });
         }
       }
     } catch {}
-    panelView.style.display = 'block';
   }
 
   // Panel close buttons

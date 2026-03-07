@@ -11,6 +11,7 @@ RUN apt-get update && \
         python3-venv \
         ffmpeg \
         tzdata \
+        curl \
         libcudnn8=8.9.2.* \
         libcudnn8-dev=8.9.2.* \
     && rm -rf /var/lib/apt/lists/*

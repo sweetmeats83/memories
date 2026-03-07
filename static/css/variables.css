@@ -32,29 +32,29 @@
   --fs-5: 28px;
 }
 
-/* Dark theme tokens (neon pink/purple, glassy surfaces) */
+/* Dark theme tokens — neon noir palette */
 html.dark :root,
 html.dark {
   color-scheme: dark;
-  --bg: #090b12;              /* near-black indigo */
-  --fg: #e8e6ff;              /* soft white with lilac tint */
+  --bg: #06080f;              /* deep space near-black */
+  --fg: #f4f0ff;              /* crisp white, faint lavender */
   --muted: rgba(255,255,255,0.06);
-  --muted-fg: #bdb9e6;
-  --accent: #ff3bc1;          /* neon pink */
-  --primary: #a855f7;         /* violet */
-  --danger: #ff4d6d;          /* hot red */
-  --success: #22d3ee;         /* cyan accent */
-  --info: #7c3aed;            /* purple info */
+  --muted-fg: #c8c2ff;
+  --accent: #ff2d78;          /* hot neon pink */
+  --primary: #9333ea;         /* electric violet */
+  --danger: #ff3d5a;          /* neon red */
+  --success: #00d4aa;         /* electric teal */
+  --info: #3b82f6;            /* electric blue */
 
-  --line-w: 1px;              /* lighter borders in dark */
+  --line-w: 1px;
   --radius: 14px;
 
   --shadow-sm: 0 0 0 rgba(0,0,0,0.0);
-  --shadow-md: 0 10px 30px rgba(0,0,0,0.35);
-  --shadow-neon: 0 0 18px rgba(255, 59, 193, 0.25), 0 0 44px rgba(124, 58, 237, 0.20);
+  --shadow-md: 0 12px 36px rgba(0,0,0,0.55);
+  --shadow-neon: 0 0 20px rgba(255, 45, 120, 0.32), 0 0 56px rgba(124, 58, 237, 0.24);
 
   /* Glass surfaces */
-  --glass-bg: rgba(8, 10, 20, 0.55);
-  --glass-stroke: rgba(255, 59, 193, 0.28);
-  --glass-highlight: rgba(255,255,255,0.06);
+  --glass-bg: rgba(6, 8, 20, 0.72);
+  --glass-stroke: rgba(255, 45, 120, 0.42);
+  --glass-highlight: rgba(255, 255, 255, 0.07);
 }

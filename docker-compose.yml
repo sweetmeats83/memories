@@ -3,6 +3,7 @@ services:
   postgres:
     image: postgres:15
     container_name: memories3_db
+    restart: unless-stopped
     env_file: .env
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -13,23 +14,41 @@ services:
       - "${PG_PORT:-5433}:5432"
     volumes:
       - postgres_data_memories3:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-memories}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   web:
     build: .
     runtime: nvidia
     container_name: memories3_web
+    restart: unless-stopped
     env_file: .env
     environment:
       TZ: ${TZ:-Etc/UTC}
     ports:
       - "${WEB_PORT:-8003}:8000"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     volumes:
-      - .:/app   
+      - .:/app
       - ./static/uploads:/app/static/uploads
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Override CMD to drop --reload in long-running use.
+    # --reload holds inotify watches on the entire mounted volume;
+    # over days on a network share this leaks file descriptors and kills the process.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Production-ready app service (CPU), uses Dockerfile.prod
   web_prod:
@@ -37,15 +56,23 @@ services:
       context: .
       dockerfile: Dockerfile.prod
     container_name: memories3_web_prod
+    restart: unless-stopped
     env_file: .env
     environment:
       TZ: ${TZ:-Etc/UTC}
     ports:
       - "${WEB_PROD_PORT:-8004}:8000"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     volumes:
       - ./static/uploads:/app/static/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     profiles: ["prod"]
 
   # Optional Tailwind asset builder (Node) for local dev

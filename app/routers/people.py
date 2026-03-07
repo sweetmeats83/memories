@@ -475,6 +475,23 @@ async def api_people_infer_commit(person_id: int, user=Depends(require_authentic
     return {'person_id': person_id, 'attempted': len(cands), 'inserted': n}
 
 
+@router.post('/api/people/{person_id}/infer/auto')
+async def api_people_infer_auto(person_id: int, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    """Auto-commit only high-confidence (>=0.80) inferred edges.
+    Safe to call silently after saving a person — will not create speculative links."""
+    p = await db.get(Person, person_id)
+    if not p or p.owner_user_id != user.id:
+        raise HTTPException(404, 'Person not found')
+    cands = await infer_edges_for_person(db, user_id=user.id, person_id=person_id)
+    high_conf = [c for c in cands if c.confidence >= 0.80]
+    n = await commit_inferred_edges(db, user_id=user.id, candidates=high_conf)
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+    return {'person_id': person_id, 'inserted': n}
+
+
 # ---------------------------------------------------------------------------
 # Kinship classification
 # ---------------------------------------------------------------------------
@@ -872,6 +889,8 @@ async def api_people_inferred(user=Depends(require_authenticated_user), db: Asyn
 @router.post('/api/people/resolve')
 async def api_people_resolve(payload: ResolvePersonReq, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
     p = await resolve_person(db, user.id, payload.display_name)
+    if p is None:
+        raise HTTPException(status_code=409, detail="Ambiguous name matches multiple people; provide a full name.")
     await db.commit()
     return {'person_id': p.id, 'created': True}
 

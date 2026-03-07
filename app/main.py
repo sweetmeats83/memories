@@ -13,6 +13,9 @@ from .routers.invites import router as invites_router
 from .routers.people import router as people_router
 from .routers.weekly import router as weekly_router
 from .routers.upload import router as upload_router
+from .routers.onboarding import router as onboarding_router
+from .routers.admin_tags import router as admin_tags_router
+from .routers.admin_responses import router as admin_responses_router
 from .users import fastapi_users, auth_backend
 from .models import User, Tag
 from .utils import get_current_user
@@ -69,6 +72,9 @@ app.add_middleware(
 app.include_router(upload_router)
 app.include_router(people_router)
 app.include_router(weekly_router)
+app.include_router(onboarding_router)
+app.include_router(admin_tags_router)
+app.include_router(admin_responses_router)
 app.include_router(router)
 app.include_router(user_router)
 app.include_router(responses_router)
@@ -229,6 +235,12 @@ async def reset_password_page(request: Request):
 @app.get("/set_password", response_class=HTMLResponse)
 async def set_password_page(request: Request):
     return templates.TemplateResponse("set_password.html", {"request": request})
+
+@app.get("/health")
+async def health_check():
+    """Lightweight liveness probe used by Docker healthcheck and uptime monitors."""
+    return {"status": "ok"}
+
 
 @app.get("/")
 async def root_redirect(user: User = Depends(get_current_user)):
