@@ -255,6 +255,7 @@ async def onboarding_interests(
         await _get_or_create_tag(db, ts)
         gray_add.append(ts)
     prof.tag_weights = tw
+    prof.interests = interest_slugs or None
     pp = dict(prof.privacy_prefs or {})
     _push_graylist(pp, gray_add)
     pp["onboarding"] = dict(pp.get("onboarding") or {})

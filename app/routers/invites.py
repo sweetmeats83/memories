@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..models import Invite, User
+from ..models import Invite, User, KinGroup, KinMembership
 from ..users import get_jwt_strategy, cookie_transport
 from ..services.invite import new_token, invite_expiry, render_invite_email, send_email
 
@@ -100,6 +100,19 @@ async def invite_set_password(
     if invite.make_superuser:
         user.is_superuser = True
     invite.used_at = now
+    # Auto-add to the family group — everyone invited is family
+    family_group = (await db.execute(
+        select(KinGroup).where(KinGroup.kind == 'family').limit(1)
+    )).scalars().first()
+    if family_group:
+        already = (await db.execute(
+            select(KinMembership).where(
+                KinMembership.group_id == family_group.id,
+                KinMembership.user_id == user.id,
+            )
+        )).scalars().first()
+        if not already:
+            db.add(KinMembership(group_id=family_group.id, user_id=user.id, role='member'))
     await db.commit()
     strategy = get_jwt_strategy()
     jwt_token = await strategy.write_token(user)

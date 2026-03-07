@@ -143,8 +143,10 @@ async def people_graph_page(request: Request, user=Depends(require_authenticated
 @router.get('/api/people/graph')
 async def api_people_graph(user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
     own_q = select(Person.id, Person.display_name).where(Person.owner_user_id == user.id)
-    shared_exists = exists(select(PersonShare.id).join(KinMembership, KinMembership.group_id == PersonShare.group_id).where(PersonShare.person_id == Person.id).where(KinMembership.user_id == user.id))
-    shared_q = select(Person.id, Person.display_name).where((Person.visibility == 'groups') & shared_exists)
+    # Everyone in the same family group shares their person nodes automatically
+    my_groups_sq = select(KinMembership.group_id).where(KinMembership.user_id == user.id).scalar_subquery()
+    cogroup_users_sq = select(KinMembership.user_id).where(KinMembership.group_id.in_(my_groups_sq)).scalar_subquery()
+    shared_q = select(Person.id, Person.display_name).where(Person.owner_user_id.in_(cogroup_users_sq))
     prows = (await db.execute(own_q.union(shared_q))).all()
     try:
         rows_all = (await db.execute(select(Person.id, Person.meta, Person.display_name).where(Person.owner_user_id == user.id))).all()
@@ -367,7 +369,14 @@ async def api_people_detail(person_id: int, user=Depends(require_authenticated_u
     is_owner = p.owner_user_id == user.id
     is_shared = False
     if not is_owner:
-        is_shared = bool(await db.scalar(select(PersonShare.id).join(KinMembership, KinMembership.group_id == PersonShare.group_id).where(PersonShare.person_id == person_id).where(KinMembership.user_id == user.id).limit(1)))
+        # Visible if the person's owner is in the same family group as the current user
+        my_groups_sq = select(KinMembership.group_id).where(KinMembership.user_id == user.id).scalar_subquery()
+        is_shared = bool(await db.scalar(
+            select(KinMembership.id).where(
+                KinMembership.user_id == p.owner_user_id,
+                KinMembership.group_id.in_(my_groups_sq),
+            ).limit(1)
+        ))
         if not is_shared:
             raise HTTPException(404, 'Person not found')
     aliases = (await db.execute(select(ResponsePerson.alias_used).where(ResponsePerson.person_id == person_id))).scalars().all()
@@ -1121,8 +1130,9 @@ async def api_people_edge(payload: EdgeReq, user=Depends(require_authenticated_u
 @router.get('/api/people/tree')
 async def api_people_tree(user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
     own_q = select(Person.id, Person.display_name).where(Person.owner_user_id == user.id)
-    shared_exists = exists(select(PersonShare.id).join(KinMembership, KinMembership.group_id == PersonShare.group_id).where(PersonShare.person_id == Person.id).where(KinMembership.user_id == user.id))
-    shared_q = select(Person.id, Person.display_name).where((Person.visibility == 'groups') & shared_exists)
+    my_groups_sq = select(KinMembership.group_id).where(KinMembership.user_id == user.id).scalar_subquery()
+    cogroup_users_sq = select(KinMembership.user_id).where(KinMembership.group_id.in_(my_groups_sq)).scalar_subquery()
+    shared_q = select(Person.id, Person.display_name).where(Person.owner_user_id.in_(cogroup_users_sq))
     rows = (await db.execute(own_q.union(shared_q))).all()
     nodes = [{'id': rid, 'name': name} for rid, name in rows]
     return {'nodes': nodes, 'edges': []}

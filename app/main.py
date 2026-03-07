@@ -125,6 +125,29 @@ async def _auth_redirect_handler(request: Request, exc: FastAPIHTTPException):
 # ----------------------
 # Auto-create admin user
 # ----------------------
+async def ensure_family_group():
+    """Create the one implicit family group and add all active users to it."""
+    from .models import KinGroup, KinMembership
+    async with async_session_maker() as session:
+        group = (await session.execute(
+            select(KinGroup).where(KinGroup.kind == 'family').limit(1)
+        )).scalars().first()
+        if not group:
+            group = KinGroup(name='Family', kind='family')
+            session.add(group)
+            await session.flush()
+        all_user_ids = (await session.execute(
+            select(User.id).where(User.is_active.is_(True))
+        )).scalars().all()
+        existing = set((await session.execute(
+            select(KinMembership.user_id).where(KinMembership.group_id == group.id)
+        )).scalars().all())
+        for uid in all_user_ids:
+            if uid not in existing:
+                session.add(KinMembership(group_id=group.id, user_id=uid, role='member'))
+        await session.commit()
+
+
 async def create_admin_user():
     from .models import User
     admin_email = os.getenv("ADMIN_EMAIL")
@@ -223,6 +246,7 @@ async def on_startup():
     from . import models  # Required for SQLAlchemy model detection
     await init_db()
     await create_admin_user()
+    await ensure_family_group()
     await _seed_tags_startup()
     start_scheduler()
 # ----------------------

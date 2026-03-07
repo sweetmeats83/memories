@@ -274,7 +274,14 @@ async def settings_page(request: Request, user=Depends(require_authenticated_htm
     elif roles:
         rel_roles = roles
     roles_for_form = ', '.join(rel_roles)
-    interests_for_form = ', '.join(profile.interests or [] if profile and profile.interests else [])
+    interests_list: list[str] = []
+    if profile and profile.interests:
+        interests_list = list(profile.interests)
+    elif profile and isinstance(profile.tag_weights, dict):
+        tw_i = dict(profile.tag_weights or {}).get('tagWeights') or {}
+        _skip = ('role:', 'place:', 'person:')
+        interests_list = [k for k, v in tw_i.items() if (v or 0) > 0 and not any(k.startswith(p) for p in _skip)]
+    interests_for_form = ', '.join(interests_list)
     places_list: list[str] = []
     if profile and isinstance(profile.tag_weights, dict):
         tw2 = dict(profile.tag_weights or {}).get('tagWeights') or {}
@@ -376,8 +383,8 @@ async def settings_profile_update(request: Request, display_name: Optional[str]=
     prof.bio = (bio or '').strip() or None
     tw = dict(prof.tag_weights or {'tagWeights': {}})
     weights = tw.setdefault('tagWeights', {})
+    from .utils import slugify as _slugify_local
     for r in prof.relation_roles or []:
-        from .utils import slugify as _slugify_local
         slug_val = _slugify_local(r)
         if not slug_val:
             continue
@@ -386,8 +393,15 @@ async def settings_profile_update(request: Request, display_name: Optional[str]=
             weights[key] = max(float(weights.get(key, 0.0) or 0.0), 0.7)
         except Exception:
             weights[key] = 0.7
+    for interest in prof.interests or []:
+        slug_val = interest if ':' in interest else _slugify_local(interest)
+        if not slug_val:
+            continue
+        try:
+            weights[slug_val] = max(float(weights.get(slug_val, 0.0) or 0.0), 0.6)
+        except Exception:
+            weights[slug_val] = 0.6
     for base in _parse_tag_input(places):
-        from .utils import slugify as _slugify_local
         slug = f'place:{_slugify_local(base)}'
         try:
             weights[slug] = max(float(weights.get(slug, 0.0) or 0.0), 0.5)
@@ -400,6 +414,20 @@ async def settings_profile_update(request: Request, display_name: Optional[str]=
         um['gender'] = (gender or '').strip() or None
         pp['user_meta'] = um
     prof.privacy_prefs = pp
+    # Sync display_name change to the "self" Person node in the people graph
+    if prof.display_name:
+        try:
+            from app.models import Person
+            self_people = (await db.execute(
+                select(Person).where(Person.owner_user_id == user.id)
+            )).scalars().all()
+            for p in self_people:
+                m = p.meta if isinstance(p.meta, dict) else {}
+                if m.get('connect_to_owner') and str(m.get('role_hint', '')).strip().lower() in {'you', 'self', 'me'}:
+                    p.display_name = prof.display_name
+                    break
+        except Exception:
+            pass
     try:
         await build_pool_for_user(db, user.id)
     except Exception:
