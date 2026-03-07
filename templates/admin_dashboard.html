@@ -9,21 +9,9 @@
 <section class="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen">
   <div class="mx-auto w-full max-w-[1800px] px-3 sm:px-6">
 
-    <!-- Top bar: title, global search, batch ops -->
-    <div class="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center justify-between mt-2">
+    <!-- Top bar: title -->
+    <div class="flex items-center justify-between mt-2">
       <h1 class="font-baskerville text-2xl sm:text-3xl">Moderate</h1>
-
-      <!-- One search bar (filters Prompts Library only, live) -->
-      <div class="flex-1 sm:max-w-2xl">
-        <label for="promptSearch" class="sr-only">Search prompts</label>
-        <div class="flex items-center gap-2 rounded-full border border-black/70 bg-white/10 backdrop-blur-md px-3 py-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] focus-within:ring-2 focus-within:ring-black">
-          <span class="material-symbols-outlined select-none">search</span>
-          <input id="promptSearch" type="search" autocomplete="off" placeholder="Search prompts by text, tag, chapter, or assigned user   " class="w-full bg-transparent outline-none placeholder-black/60 text-sm sm:text-base" />
-          <button id="clearSearch" class="hidden sm:inline-flex items-center text-sm px-2 py-1 rounded-full border border-black/70 hover:bg-black hover:text-white">Clear</button>
-        </div>
-      </div>
-
-      <div class="flex items-center gap-2"></div>
     </div>
 
 <!-- Sticky tabs -->
@@ -61,12 +49,23 @@
 
     <!-- ===== Prompts Library ===== -->
     <section id="sec-prompts" class="adm-panel pt-4" role="tabpanel" aria-labelledby="Prompts Library">
+<div class="flex items-center justify-end mb-2">
+  <button id="toggleCreateBox" class="pill inline-flex items-center gap-1 text-sm">
+    <span class="material-symbols-outlined text-base">add_circle</span> New Prompt
+  </button>
+</div>
 <div id="promptsLayout" class="flex flex-col gap-4 md:flex-row md:items-stretch">
   <!-- LEFT: Chapters & Prompts -->
   <div id="promptsPane"
        class="min-w-0 md:basis-2/3 transition-all duration-300 ease-in-out">
-    <div class="flex items-center justify-between mb-2">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
       <h2 class="text-xl font-semibold">Chapters & Prompts</h2>
+      <div class="flex items-center gap-2 rounded-full border border-black/70 bg-white/10 backdrop-blur-md px-3 py-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] focus-within:ring-2 focus-within:ring-black">
+        <span class="material-symbols-outlined select-none text-[18px]">search</span>
+        <label for="promptSearch" class="sr-only">Search prompts</label>
+        <input id="promptSearch" type="search" autocomplete="off" placeholder="Search prompts…" class="bg-transparent outline-none placeholder-black/60 text-sm w-52" />
+        <button id="clearSearch" class="hidden text-sm px-1 py-0.5 rounded-full border border-black/70 hover:bg-black hover:text-white">Clear</button>
+      </div>
     </div>
     <div class="text-xs text-gray-600 mb-3">
       Set the number to the left of each chapter title. Enter swaps/moves chapters; autosaves will run.
@@ -79,7 +78,7 @@
 
   <!-- RIGHT: Create Prompt -->
   <aside id="createBox"
-         class="create-box w-full md:basis-1/3 rounded-2xl border border-black/10 bg-white/60 p-4 space-y-4
+         class="create-box hidden w-full md:basis-1/3 rounded-2xl border border-black/10 bg-white/60 p-4 space-y-4
                 transition-all duration-300 ease-in-out"
          aria-expanded="false" data-state="collapsed">
     <h3 class="font-semibold">Create Prompt</h3>
@@ -185,7 +184,7 @@
     </section>
 
 <!-- ===== Weekly Tab ===== -->
-<section id="sec-weekly" class="hidden">
+<section id="sec-weekly" class="adm-panel hidden pt-4" role="tabpanel" aria-labelledby="Weekly">
   <!-- Filters & Bulk toolbar -->
   <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
     <div class="flex items-center gap-2">
@@ -220,6 +219,57 @@
       <button id="wkPrev" class="btn btn-xs">Prev</button>
       <span id="wkPage" class="text-xs"></span>
       <button id="wkNext" class="btn btn-xs">Next</button>
+    </div>
+  </div>
+
+  <!-- Email schedule config -->
+  <div class="mt-6 border-t border-black/10 pt-4">
+    <div class="grid gap-4 md:grid-cols-2">
+      <div class="rounded-2xl border border-black/10 bg-white/60 p-4">
+        <h2 class="text-lg font-semibold mb-3">Email Schedule</h2>
+        <p class="text-sm text-gray-600 mb-3">Choose days and time to send weekly prompts. Default: weekdays at 8:00 AM.</p>
+        <form id="weeklyForm" class="space-y-3">
+          <div>
+            <span class="block text-sm font-medium mb-1">Days</span>
+            <div class="flex flex-wrap gap-3 text-sm">
+              <label class="inline-flex items-center gap-1"><input type="checkbox" name="day" value="1" checked> Mon</label>
+              <label class="inline-flex items-center gap-1"><input type="checkbox" name="day" value="2" checked> Tue</label>
+              <label class="inline-flex items-center gap-1"><input type="checkbox" name="day" value="3" checked> Wed</label>
+              <label class="inline-flex items-center gap-1"><input type="checkbox" name="day" value="4" checked> Thu</label>
+              <label class="inline-flex items-center gap-1"><input type="checkbox" name="day" value="5" checked> Fri</label>
+              <label class="inline-flex items-center gap-1"><input type="checkbox" name="day" value="6"> Sat</label>
+              <label class="inline-flex items-center gap-1"><input type="checkbox" name="day" value="7"> Sun</label>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="block">
+              <span class="block text-sm font-medium mb-1">Time</span>
+              <input id="weeklyTime" type="time" value="08:00" class="border rounded px-2 py-1">
+            </label>
+            <label class="block">
+              <span class="block text-sm font-medium mb-1">Weeks to pre-schedule</span>
+              <input id="weeklyWeeks" type="number" min="1" max="52" value="12" class="w-24 border rounded px-2 py-1">
+            </label>
+          </div>
+          <div class="flex items-center gap-3 flex-wrap">
+            <button id="btnWeeklySaveCron" type="button" class="pill inline-flex items-center gap-1">
+              <span class="material-symbols-outlined text-base">schedule</span> Save schedule
+            </button>
+            <button id="btnWeeklyScheduleAll" type="button" class="pill inline-flex items-center gap-1">
+              <span class="material-symbols-outlined text-base">event</span> Pre-schedule next weeks
+            </button>
+            <span id="weeklyMsg" class="text-sm text-gray-600"></span>
+          </div>
+        </form>
+      </div>
+      <div class="rounded-2xl border border-black/10 bg-white/60 p-4">
+        <h2 class="text-lg font-semibold mb-3">Send Now</h2>
+        <p class="text-sm text-gray-600 mb-3">Immediately send the current weekly prompt email to all users.</p>
+        <button id="btnWeeklySendAll" class="pill inline-flex items-center gap-1">
+          <span class="material-symbols-outlined text-base">send</span> Send now to all users
+        </button>
+        <span id="weeklySendMsg" class="ml-2 text-sm text-gray-600"></span>
+      </div>
     </div>
   </div>
 </section>
@@ -315,7 +365,7 @@
           <div class="flex flex-wrap items-center gap-2 mb-3">
             <a id="btnExportPrompts" href="/api/admin/prompts/export" class="btn" download>Export JSON</a>
             <label class="btn btn-ghost cursor-pointer">
-              <input id="impFile" type="file" accept="application/json" class="hidden" />
+              <input id="impFile" type="file" accept=".json,application/json" class="hidden" />
               Choose JSON
             </label>
             <label class="text-sm inline-flex items-center gap-1">
@@ -378,6 +428,23 @@
             <p class="text-xs text-stone-600 mt-1">Tips: Tags should be canonical slugs (e.g., role:mother, theme:school, place:new-york-city). When patch is checked and an id is present, the prompt is updated; otherwise a new prompt is created.</p>
           </div>
         </div>
+        <!-- Role Keyword Scanner -->
+        <div class="rounded-2xl border border-black/10 bg-white/60 p-4">
+          <h2 class="text-lg font-semibold mb-2">Role Keyword Scanner</h2>
+          <p class="text-sm text-stone-700 mb-3">Scan all prompt texts for role-indicating keywords (children, spouse, grandchildren, etc.) and automatically apply <code class="text-xs bg-stone-100 px-1 rounded">for:*</code> gate tags. Run a dry-run first to preview changes.</p>
+          <div class="flex flex-wrap items-center gap-3 mb-3">
+            <label class="text-sm inline-flex items-center gap-1">
+              <input id="scanOverwrite" type="checkbox" /> Overwrite existing <code class="text-xs bg-stone-100 px-1 rounded">for:*</code> tags
+            </label>
+          </div>
+          <div class="flex flex-wrap gap-2 mb-3">
+            <button id="btnScanDryRun" class="btn">Preview (dry run)</button>
+            <button id="btnScanCommit" class="btn btn-primary">Apply tags</button>
+          </div>
+          <div id="scanStatus" class="text-sm text-stone-600 mb-2"></div>
+          <div id="scanResults" class="text-xs bg-stone-50 rounded p-2 overflow-auto max-h-64 hidden"></div>
+        </div>
+
         <!-- Invites -->
         <div class="rounded-2xl border border-black/10 bg-white/60 p-4">
           <h2 class="text-lg font-semibold mb-2">Invites</h2>
@@ -450,13 +517,13 @@
                   <a href="/admin/user/{{ u.id }}" class="btn">Open</a>
                 </div>
               </div>
-              <div class="flex items-center gap-2 px-2 pb-2">
+              <div class="flex items-center gap-2 px-2 pb-2 flex-wrap">
                 <form method="post" action="/admin/users/{{ u.id }}/force_password" class="flex gap-2 items-center">
                   <input type="password" name="new_password" placeholder="New password (min 8)" class="border rounded px-2 py-1" required minlength="8">
                   <button class="btn">Set Password</button>
                 </form>
-                <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete this user and all their data?')">
-                  <button class="btn btn-danger">Delete</button>
+                <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete this user and all their data?')" class="ml-auto border-l border-stone-200 pl-2">
+                  <button class="btn btn-danger text-xs">Delete user</button>
                 </form>
               </div>
             </div>
@@ -470,8 +537,8 @@
 
   </div>
 </section>
-    <!-- ===== Weekly (scheduler) ===== -->
-    <section id="sec-weekly" class="adm-panel hidden pt-4" role="tabpanel" aria-labelledby="Weekly">
+    <!-- Weekly scheduler HTML moved into sec-weekly above; kept as inert template to avoid losing content -->
+    <template>
       <div class="grid gap-4 md:grid-cols-2">
         <div class="rounded-2xl border border-black/10 bg-white/60 p-4">
           <h2 class="text-lg font-semibold mb-3">Weekly Email Schedule</h2>
@@ -574,7 +641,7 @@
         });
       })();
       </script>
-    </section>
+    </template>
 
 <!-- ===== Chapter Meta Modal (responsive) ===== -->
 <div id="chapterMetaModal"
@@ -1168,6 +1235,11 @@ window.PromptUI = PromptUI;
         msgEl.className = 'text-xs text-green-700';
       }
       toast('Prompt created');
+      // Collapse create box after success
+      const createBox = document.getElementById('createBox');
+      const toggleBtn = document.getElementById('toggleCreateBox');
+      if (createBox) { createBox.classList.add('hidden'); createBox.setAttribute('aria-expanded','false'); }
+      if (toggleBtn) { const ico = toggleBtn.querySelector('span.material-symbols-outlined'); if (ico) ico.textContent = 'add_circle'; }
 
       (window.__createPickedMedia || []).forEach(({ card }) => {
         card.__revoke && card.__revoke();
@@ -1237,13 +1309,17 @@ const AssignUI = (() => {
     host.setAttribute('aria-busy','true');
 
     host.innerHTML = `
-      <div class="flex items-center justify-between mb-2">
-        <div class="text-sm opacity-75">${escapeHtml(pool.user?.name || pool.user?.email || 'User')}     ${(pool.answered_pct ?? 0)}% answered</div>
-        <div class="flex gap-2">
-          <button id="expandAll"  class="px-2 py-1 border rounded">Expand all</button>
-          <button id="collapseAll" class="px-2 py-1 border rounded">Collapse all</button>
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div class="text-sm opacity-75">${escapeHtml(pool.user?.name || pool.user?.email || 'User')} — ${(pool.answered_pct ?? 0)}% answered</div>
+        <div class="flex gap-2 flex-wrap">
+          <button id="expandAll"  class="px-2 py-1 border rounded text-xs">Expand all</button>
+          <button id="collapseAll" class="px-2 py-1 border rounded text-xs">Collapse all</button>
+          <button id="btnRebuildPool" class="px-2 py-1 border rounded text-xs inline-flex items-center gap-1" title="Add all role-eligible prompts to this user's queue">
+            <span class="material-symbols-outlined text-[16px]">refresh</span> Rebuild pool
+          </button>
         </div>
       </div>
+      <div id="rebuildPoolMsg" class="text-xs text-stone-600 mb-2"></div>
     `;
 
     for (const chap of sortedChapters) {
@@ -1317,7 +1393,7 @@ const AssignUI = (() => {
             ${rid ? `
               <a class="px-2 py-1 border rounded flex items-center gap-1 bg-fuchsia-700/30"
                  href="/admin/users/${encodeURIComponent(String(uid))}/responses/${encodeURIComponent(String(rid))}/edit"
-                 title="Edit this user   s response (impersonate)">
+                 title="Edit this user's response">
                 <span class="material-symbols-outlined text-[18px]">edit_note</span>
                 Response
               </a>` : ''
@@ -1351,6 +1427,35 @@ const AssignUI = (() => {
     });
     host.querySelector('#collapseAll')?.addEventListener('click', () => {
       host.querySelectorAll('details.chapter-wrap').forEach(d => d.open = false);
+    });
+    host.querySelector('#btnRebuildPool')?.addEventListener('click', async () => {
+      const msg = host.querySelector('#rebuildPoolMsg');
+      const btn = host.querySelector('#btnRebuildPool');
+      if (!msg || !btn) return;
+      const uid = host.dataset.userId;
+      if (!uid) return;
+      btn.disabled = true;
+      msg.textContent = 'Rebuilding…';
+      try {
+        const res = await fetch('/api/admin/pool/rebuild', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: Number(uid) }),
+        });
+        const j = await res.json();
+        if (res.ok) {
+          msg.textContent = `Done — ${j.added} eligible prompt(s) added to queue.`;
+          // Refresh the pool view
+          await renderUserPoolCollapsible(Number(uid));
+        } else {
+          msg.textContent = 'Failed: ' + (j.detail || JSON.stringify(j));
+          btn.disabled = false;
+        }
+      } catch (e) {
+        msg.textContent = 'Error: ' + e;
+        btn.disabled = false;
+      }
     });
     
     // Single delegated click handler for the chapter host
@@ -1560,6 +1665,12 @@ const WeeklyUI = (() => {
     const pages = Math.max(1, Math.ceil((wk.total || 0) / wk.pageSize));
     if (el.page) el.page.textContent = `Page ${wk.page} / ${pages}`;
     if (el.total) el.total.textContent = `${wk.total} total`;
+
+    // Update bulk button labels with selection count
+    const n = wk.selected.size;
+    if (el.bulkSend)     el.bulkSend.textContent     = n ? `Send now (${n})` : 'Bulk: Send now';
+    if (el.bulkQueue)    el.bulkQueue.textContent    = n ? `Queue next (${n})` : 'Bulk: Queue next';
+    if (el.bulkSchedule) el.bulkSchedule.textContent = n ? `Schedule (${n})` : 'Bulk: Schedule';
   }
 
   // ------- events -------
@@ -1915,6 +2026,50 @@ window.initWeeklyTab = () => WeeklyUI.ensureInit();
   });
 })();
 
+/* ====================== Role keyword scanner ====================== */
+(function(){
+  const btnDry    = document.getElementById('btnScanDryRun');
+  const btnCommit = document.getElementById('btnScanCommit');
+  const statusEl  = document.getElementById('scanStatus');
+  const resultsEl = document.getElementById('scanResults');
+  if (!btnDry || !btnCommit) return;
+
+  async function runScan(commit) {
+    const overwrite = document.getElementById('scanOverwrite')?.checked || false;
+    statusEl.textContent = commit ? 'Applying tags…' : 'Scanning…';
+    resultsEl.classList.add('hidden');
+    resultsEl.textContent = '';
+    try {
+      const res = await fetch('/api/admin/prompts/scan-roles', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commit, overwrite }),
+      });
+      const j = await res.json();
+      if (!res.ok) { statusEl.textContent = 'Error: ' + (j.detail || JSON.stringify(j)); return; }
+      const { scanned, changed, results } = j;
+      statusEl.textContent = commit
+        ? `Done. Scanned ${scanned} prompts, updated ${changed}.`
+        : `Preview: ${changed} of ${scanned} prompts would be updated. (No changes saved.)`;
+      if (results && results.length) {
+        resultsEl.textContent = results.map(r =>
+          `[${r.id}] ${r.text.slice(0,60)}…\n  suggested: ${(r.suggested||[]).join(', ')}\n  existing:  ${(r.existing_for||[]).join(', ') || '(none)'}\n  action:    ${r.action}\n`
+        ).join('\n');
+        resultsEl.classList.remove('hidden');
+      }
+    } catch (e) {
+      statusEl.textContent = 'Error: ' + e;
+    }
+  }
+
+  btnDry.addEventListener('click', () => runScan(false));
+  btnCommit.addEventListener('click', async () => {
+    if (!confirm('Apply for:* gate tags to all matching prompts? This is reversible via re-import but will modify prompt tags.')) return;
+    await runScan(true);
+  });
+})();
+
 /* ====================== Tag whitelist (load/save) ====================== */
 function loadTagWhitelist(){
   const g = (id) => document.getElementById(id);
@@ -1997,6 +2152,26 @@ function loadTagWhitelist(){
 
 // Expose for tabs
 window.loadTagWhitelist = loadTagWhitelist;
+
+/* ====================== New Prompt toggle ====================== */
+(function(){
+  const btn = document.getElementById('toggleCreateBox');
+  const box = document.getElementById('createBox');
+  if (!btn || !box) return;
+  btn.addEventListener('click', () => {
+    const open = !box.classList.contains('hidden');
+    box.classList.toggle('hidden', open);
+    box.setAttribute('aria-expanded', open ? 'false' : 'true');
+    btn.querySelector('span.material-symbols-outlined').textContent = open ? 'add_circle' : 'close';
+  });
+  // After successful create, collapse box
+  const origRefresh = window.PromptUI?.refreshPartial?.bind(window.PromptUI);
+  document.getElementById('createPromptForm')?.addEventListener('submit-done', () => {
+    box.classList.add('hidden');
+    box.setAttribute('aria-expanded', 'false');
+    btn.querySelector('span.material-symbols-outlined').textContent = 'add_circle';
+  });
+})();
 
 </script>
 

@@ -406,6 +406,37 @@ async def admin_pool_remove(
     return {"ok": True}
 
 
+@router.post("/api/admin/pool/rebuild")
+async def admin_pool_rebuild(
+    payload: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin_user),
+):
+    """
+    Rebuild the prompt pool for one user (or all users if user_id is omitted).
+    Calls build_pool_for_user which filters prompts by for:* gate tags against user roles.
+    """
+    user_id = payload.get("user_id")
+    if user_id is not None:
+        user_id = int(user_id)
+        u = await db.get(User, user_id)
+        if not u:
+            raise HTTPException(404, "User not found")
+        added = await build_pool_for_user(db, user_id)
+        return {"ok": True, "user_id": user_id, "added": added}
+
+    # All users
+    users = (await db.execute(select(User).where(User.is_active == True))).scalars().all()
+    results = []
+    for u in users:
+        try:
+            added = await build_pool_for_user(db, u.id)
+            results.append({"user_id": u.id, "added": added})
+        except Exception as exc:
+            results.append({"user_id": u.id, "error": str(exc)})
+    return {"ok": True, "rebuilt": len(results), "results": results}
+
+
 @router.get("/api/admin/pool/stats")
 async def admin_pool_stats(
     scope: str = Query(..., pattern="^(prompt|user)$"),
