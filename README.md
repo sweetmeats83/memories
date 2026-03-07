@@ -10,6 +10,111 @@ It is not a social network. It is for a small, private group — one admin, a ha
 
 ---
 
+## Quick start
+
+### Option A — Docker Hub (no build required)
+
+```bash
+# 1. Grab just the two files you need
+curl -O https://raw.githubusercontent.com/sweetmeats83/memories/main/docker-compose.hub.yml
+curl -O https://raw.githubusercontent.com/sweetmeats83/memories/main/.env.example
+mv .env.example .env
+```
+
+Or create `docker-compose.hub.yml` manually (copy from below) and a `.env` file.
+
+Edit `.env` — minimum required values:
+
+```env
+SECRET=<paste output of: openssl rand -hex 32>
+WEEKLY_TOKEN_HMAC=<paste output of: openssl rand -hex 32>
+POSTGRES_PASSWORD=changeme
+BASE_URL=http://your-server-ip:8004
+ADMIN_EMAIL=you@example.com
+ADMIN_PASSWORD=your-admin-password
+```
+
+```bash
+# 2. Pull and start
+docker compose -f docker-compose.hub.yml up -d
+
+# App is at http://localhost:8004
+
+# 3. Watch logs
+docker compose -f docker-compose.hub.yml logs -f web
+```
+
+**`docker-compose.hub.yml`** — save this alongside your `.env`:
+
+```yaml
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-memories}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-memories}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    image: sweetmeats83/memories:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${WEB_PROD_PORT:-8004}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/static/uploads
+
+volumes:
+  postgres_data:
+```
+
+```bash
+# Update to the latest image
+docker compose -f docker-compose.hub.yml pull && docker compose -f docker-compose.hub.yml up -d
+```
+
+---
+
+### Option B — Build from source
+
+```bash
+# 1. Clone
+git clone https://github.com/sweetmeats83/memories
+cd memories
+
+# 2. Create your .env
+cp .env.example .env
+# Edit .env (see Option A for required values)
+
+# 3. Build and run (CPU / production, no GPU required)
+docker compose --profile prod up -d --build web_prod postgres
+
+# App is at http://localhost:8004 (or WEB_PROD_PORT)
+
+# Optional: GPU + live transcription (requires nvidia runtime)
+docker compose up -d
+
+# 4. Watch logs
+docker compose logs -f web_prod
+```
+
+**On first boot**, Alembic runs migrations and the admin account is created from `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+
+---
+
 ## What it does
 
 **Prompts and weekly routine**
@@ -129,6 +234,7 @@ If you set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env`, a bootstrap admin accou
 | `WEEKLY_TOKEN_HMAC` | HMAC key for recording tokens |
 | `APP_TZ` | Timezone for the weekly scheduler (falls back to `TZ`) |
 | `WEEKLY_CRON` | Crontab string for weekly prompt delivery. Default: Mon-Fri 09:00. Example: `0 9 * * 1-5` |
+| `REMINDER_CRON` | Crontab string for daily push reminder. Default: `0 9 * * *` (9 AM daily) |
 
 **Email (optional)**
 
@@ -142,6 +248,23 @@ If you set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env`, a bootstrap admin accou
 | `SMTP_FROM` | From address |
 | `SMTP_USE_TLS` | `true` / `false` |
 | `SMTP_USE_SSL` | `true` / `false` |
+
+**Push notifications (optional — PWA install on mobile)**
+
+| Variable | Description |
+|---|---|
+| `VAPID_PRIVATE_KEY` | VAPID private key (base64url). Generate with `py_vapid` (see below) |
+| `VAPID_PUBLIC_KEY` | VAPID public key (base64url) |
+| `VAPID_SUBJECT` | Sender identity, e.g. `mailto:you@example.com` |
+
+Generate VAPID keys:
+```bash
+docker compose run --rm web_prod python3 -c "
+from py_vapid import Vapid; v = Vapid(); v.generate_keys()
+print('VAPID_PRIVATE_KEY=' + v.private_pem().decode().strip())
+print('VAPID_PUBLIC_KEY=' + v.public_key)
+"
+```
 
 **Transcription (optional, GPU image only)**
 
