@@ -52,8 +52,8 @@ Manage prompts, assign them to users, view all responses, and edit responses on 
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/sweetmeats83/memories3
-cd memories3
+git clone https://github.com/sweetmeats83/memories
+cd memories
 cp .env.example .env
 ```
 
