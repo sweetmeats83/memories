@@ -20,6 +20,7 @@
     })();
   </script>
   <link rel="icon" type="image/png" href="{{ url_for('static', path='memories.png') }}?v=20250921">
+  <link rel="manifest" href="/manifest.json">
 
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -585,6 +586,91 @@ function openMedia(kind, src){
   })();
 </script>
 <script src="/static/js/chunked-upload.js"></script>
+
+<!-- Push notification opt-in (only shown when push is supported and not yet granted) -->
+{% if user %}
+<div id="pushPromptBanner" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-3 px-5 py-3 rounded-2xl border border-black/20 bg-white/90 backdrop-blur shadow-lg text-sm max-w-sm w-[90vw]">
+  <span class="material-symbols-outlined text-[22px] shrink-0">notifications</span>
+  <span class="flex-1">Get reminders to record your memories.</span>
+  <button id="pushEnableBtn" class="shrink-0 rounded-full bg-black text-white px-3 py-1 text-xs font-semibold">Enable</button>
+  <button id="pushDismissBtn" class="shrink-0 text-black/40 hover:text-black material-symbols-outlined text-base leading-none">close</button>
+</div>
+
+<script>
+(function(){
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+  // Register service worker
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+  const STORAGE_KEY = 'push_dismissed_v1';
+
+  function shouldShowBanner() {
+    if (Notification.permission === 'granted') return false;
+    if (Notification.permission === 'denied') return false;
+    try { if (sessionStorage.getItem(STORAGE_KEY)) return false; } catch {}
+    return true;
+  }
+
+  async function subscribeAndSend(reg) {
+    const keyResp = await fetch('/api/push/vapid-key');
+    if (!keyResp.ok) return;
+    const { publicKey } = await keyResp.json();
+
+    // Convert base64url → Uint8Array
+    const raw = atob(publicKey.replace(/-/g,'+').replace(/_/g,'/'));
+    const key = new Uint8Array(raw.length);
+    for (let i=0;i<raw.length;i++) key[i]=raw.charCodeAt(i);
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: key,
+    });
+
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(sub.toJSON()),
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const banner = document.getElementById('pushPromptBanner');
+    const enableBtn = document.getElementById('pushEnableBtn');
+    const dismissBtn = document.getElementById('pushDismissBtn');
+
+    if (shouldShowBanner()) {
+      banner.classList.remove('hidden');
+    }
+
+    enableBtn?.addEventListener('click', async function() {
+      banner.classList.add('hidden');
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') return;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        await subscribeAndSend(reg);
+      } catch(e) { console.warn('Push subscribe failed', e); }
+    });
+
+    dismissBtn?.addEventListener('click', function() {
+      banner.classList.add('hidden');
+      try { sessionStorage.setItem(STORAGE_KEY, '1'); } catch {}
+    });
+
+    // If already granted, silently ensure subscribed
+    if (Notification.permission === 'granted') {
+      navigator.serviceWorker.ready.then(reg => {
+        reg.pushManager.getSubscription().then(sub => {
+          if (!sub) subscribeAndSend(reg).catch(() => {});
+        });
+      });
+    }
+  });
+})();
+</script>
+{% endif %}
 
 </body>
 </html>

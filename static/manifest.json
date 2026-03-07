@@ -1,0 +1,30 @@
+{
+  "name": "Memories",
+  "short_name": "Memories",
+  "description": "A private family storytelling platform.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf9f7",
+  "theme_color": "#7c3a2e",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/static/memories.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/memories.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/memories.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -10,6 +10,8 @@ from app.models import User, WeeklyState
 from app.services.utils_weekly import get_or_refresh_active_token, _now
 from app.services.assignment import ensure_weekly_prompt
 from app.services.mailer import send_weekly_email
+from app.services.push import send_push_to_user, push_enabled
+from app.models import PushSubscription
 from app.database import async_session_maker
 from datetime import datetime, timedelta
 try:
@@ -51,6 +53,20 @@ def start_scheduler():
         logger.warning("Invalid WEEKLY_CRON; falling back to Mon-Fri 09:00")
 
     scheduler.add_job(job_weekly_send_scan, trigger)
+
+    # Daily morning reminder — configurable via REMINDER_CRON, default 9 AM
+    reminder_cron = (os.getenv("REMINDER_CRON") or "").strip()
+    try:
+        if reminder_cron:
+            reminder_trigger = CronTrigger.from_crontab(reminder_cron, timezone=tz)
+            logger.info("Daily reminder using REMINDER_CRON='%s' tz=%s", reminder_cron, tz_name)
+        else:
+            reminder_trigger = CronTrigger(hour=9, minute=0, timezone=tz)
+            logger.info("Daily reminder using default 09:00 tz=%s (set REMINDER_CRON to override)", tz_name)
+    except Exception:
+        reminder_trigger = CronTrigger(hour=9, minute=0, timezone=tz)
+        logger.warning("Invalid REMINDER_CRON; falling back to 09:00")
+    scheduler.add_job(job_daily_reminder, reminder_trigger)
 
     # Clean up orphaned _tmp_* upload files every 6 hours
     scheduler.add_job(job_cleanup_tmp_uploads, CronTrigger(hour="*/6"))
@@ -119,7 +135,81 @@ async def job_weekly_send_scan():
             u.weekly_sent_at = _now()
             u.weekly_email_provider_id = provider_id
 
+            # Send push notification alongside email (best-effort)
+            if push_enabled():
+                try:
+                    await send_push_to_user(
+                        db, u.id,
+                        title="Memories — new prompt waiting",
+                        body="You have a new memory prompt ready to record.",
+                        url=f"/respond/{tok}" if tok else "/",
+                        tag="memories-weekly",
+                    )
+                except Exception:
+                    logger.exception("Push notification failed for user %s", u.id)
+
         await db.commit()
+
+_REMINDER_MESSAGES = [
+    "Your memories are waiting — even a few minutes makes a difference.",
+    "Someone in your family will treasure what only you can share.",
+    "Take a few minutes today to record a memory.",
+    "The stories that feel ordinary to you are priceless to the ones you love.",
+    "You have a memory prompt ready — give it a go today.",
+    "A little piece of your story is waiting to be told.",
+    "Whenever you're ready, your memories are there to record.",
+    "Even a short recording means the world to those who come after you.",
+]
+
+_reminder_index = 0
+
+
+async def job_daily_reminder():
+    """Send a gentle morning reminder push to users with an unrecorded active prompt."""
+    global _reminder_index
+    if not push_enabled():
+        return
+
+    async with async_session_maker() as db:
+        # States where the prompt was sent but not yet recorded
+        pending_states = (
+            WeeklyState.sent,
+            WeeklyState.queued,
+            WeeklyState.opened,
+            WeeklyState.clicked,
+        )
+
+        # Find users who have push subscriptions AND a pending prompt
+        from sqlalchemy import exists
+        users = (await db.execute(
+            select(User).where(
+                User.is_active == True,
+                User.weekly_state.in_(pending_states),
+                User.weekly_current_prompt_id.isnot(None),
+                exists().where(PushSubscription.user_id == User.id),
+            )
+        )).scalars().all()
+
+        if not users:
+            return
+
+        body = _REMINDER_MESSAGES[_reminder_index % len(_REMINDER_MESSAGES)]
+        _reminder_index += 1
+
+        for u in users:
+            try:
+                await send_push_to_user(
+                    db, u.id,
+                    title="Memories",
+                    body=body,
+                    url="/",
+                    tag="memories-reminder",
+                )
+            except Exception:
+                logger.exception("Daily reminder push failed for user %s", u.id)
+
+        logger.info("Daily reminder sent to %d users", len(users))
+
 
 async def job_cleanup_tmp_uploads():
     """Delete _tmp_* files in static/uploads older than 4 hours."""
@@ -161,6 +251,17 @@ async def job_send_one(user_id: int):
         u.weekly_state = WeeklyState.sent
         u.weekly_sent_at = _now()
         u.weekly_email_provider_id = provider_id
+        if push_enabled():
+            try:
+                await send_push_to_user(
+                    db, u.id,
+                    title="Memories — new prompt waiting",
+                    body="You have a new memory prompt ready to record.",
+                    url=f"/respond/{tok}" if tok else "/",
+                    tag="memories-weekly",
+                )
+            except Exception:
+                logger.exception("Push notification failed for user %s", u.id)
         await db.commit()
 
 # ---- Admin-adjustable cron (runtime) ----

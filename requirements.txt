@@ -17,3 +17,4 @@ Pillow
 pydantic-settings
 APScheduler
 spacy
+pywebpush

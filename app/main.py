@@ -16,6 +16,7 @@ from .routers.upload import router as upload_router
 from .routers.onboarding import router as onboarding_router
 from .routers.admin_tags import router as admin_tags_router
 from .routers.admin_responses import router as admin_responses_router
+from .routers.push import router as push_router
 from .users import fastapi_users, auth_backend
 from .models import User, Tag
 from .utils import get_current_user
@@ -75,6 +76,7 @@ app.include_router(weekly_router)
 app.include_router(onboarding_router)
 app.include_router(admin_tags_router)
 app.include_router(admin_responses_router)
+app.include_router(push_router)
 app.include_router(router)
 app.include_router(user_router)
 app.include_router(responses_router)
@@ -226,6 +228,20 @@ async def on_startup():
 # ----------------------
 # Home Redirect Route
 # ----------------------
+
+
+@app.get("/sw.js")
+async def service_worker():
+    """Serve the service worker from root scope (required for full PWA push scope)."""
+    from fastapi.responses import FileResponse
+    return FileResponse("static/sw.js", media_type="application/javascript")
+
+
+@app.get("/manifest.json")
+async def pwa_manifest():
+    """Serve the PWA web app manifest."""
+    from fastapi.responses import FileResponse
+    return FileResponse("static/manifest.json", media_type="application/manifest+json")
 
 
 @app.get("/reset_password", response_class=HTMLResponse)

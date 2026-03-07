@@ -530,6 +530,21 @@ class PersonShare(Base):
     __table_args__ = (UniqueConstraint("person_id","group_id", name="uq_person_group_once"),)
 
 # --- ADD: chapter compilation model (below ChapterMeta) ---
+class PushSubscription(Base):
+    """Stores a browser Web Push subscription for a user."""
+    __tablename__ = "push_subscriptions"
+
+    id         = Column(Integer, primary_key=True)
+    user_id    = Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint   = Column(Text, nullable=False, unique=True)
+    p256dh     = Column(Text, nullable=False)   # browser public key
+    auth       = Column(Text, nullable=False)   # auth secret
+    user_agent = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", backref="push_subscriptions")
+
+
 class ChapterCompilation(Base):
     __tablename__ = "chapter_compilation"
 
