@@ -40,7 +40,8 @@ from app.routes_shared import (
 from app.schemas import ReorderSegmentsRequest
 from app.services.auto_tag import suggest_tags_rule_based
 from app.transcription import enrich_after_transcription
-from app.utils import require_admin_user
+from app.utils import require_admin_user, slug_role
+from app.models import UserProfile
 from app.background import spawn
 from passlib.hash import bcrypt
 
@@ -86,6 +87,96 @@ async def admin_delete_user(
     await db.delete(target)
     await db.commit()
     return RedirectResponse(url='/admin_dashboard?notice=User+deleted', status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# User roles management
+# ---------------------------------------------------------------------------
+
+# Curated role presets shown in the admin UI (value → display label)
+_ROLE_PRESETS = [
+    ("parent",      "Parent"),
+    ("grandparent", "Grandparent"),
+    ("spouse",      "Spouse / Partner"),
+    ("sibling",     "Sibling"),
+    ("aunt-uncle",  "Aunt / Uncle"),
+    ("child",       "Child (has living parents)"),
+    ("grandchild",  "Grandchild"),
+]
+
+_GENDER_OPTIONS = [
+    ("male",   "Male"),
+    ("female", "Female"),
+]
+
+
+@router.get('/api/admin/users/{user_id}/roles')
+async def admin_get_user_roles(
+    user_id: int,
+    admin=Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    prof = (await db.execute(select(UserProfile).where(UserProfile.user_id == user_id))).scalars().first()
+    if not prof:
+        return {"roles": [], "gender": None}
+    tw = (prof.tag_weights or {}).get("tagWeights", {}) or {}
+    roles = [k for k in tw if k.startswith("role:") and float(tw[k] or 0) >= 0.3]
+    gender = ((prof.privacy_prefs or {}).get("user_meta") or {}).get("gender")
+    return {"roles": sorted(roles), "gender": gender}
+
+
+@router.post('/api/admin/users/{user_id}/roles')
+async def admin_set_user_roles(
+    user_id: int,
+    payload: dict = Body(...),
+    admin=Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Replace the user's role:* weights and gender setting.
+    payload: {"roles": ["role:parent", "role:spouse"], "gender": "female" | null}
+    Rebuilds the prompt pool automatically.
+    """
+    from app.services.assignment import build_pool_for_user
+    from sqlalchemy.orm.attributes import flag_modified
+
+    prof = (await db.execute(select(UserProfile).where(UserProfile.user_id == user_id))).scalars().first()
+    if not prof:
+        raise HTTPException(404, "User profile not found")
+
+    incoming_roles: list[str] = [
+        slug_role(str(r)) for r in (payload.get("roles") or []) if r
+    ]
+    gender = (payload.get("gender") or "").strip().lower() or None
+
+    # Update tag_weights: remove old role:* keys, add new ones at weight 0.7
+    tw = dict(prof.tag_weights or {"tagWeights": {}})
+    weights: dict = tw.setdefault("tagWeights", {})
+    for k in list(weights.keys()):
+        if k.startswith("role:"):
+            del weights[k]
+    for rs in incoming_roles:
+        weights[rs] = 0.7
+
+    prof.tag_weights = tw
+    flag_modified(prof, "tag_weights")
+
+    # Update gender in privacy_prefs
+    pp = dict(prof.privacy_prefs or {})
+    user_meta = dict(pp.get("user_meta") or {})
+    if gender:
+        user_meta["gender"] = gender
+    else:
+        user_meta.pop("gender", None)
+    pp["user_meta"] = user_meta
+    prof.privacy_prefs = pp
+    flag_modified(prof, "privacy_prefs")
+
+    await db.commit()
+
+    # Rebuild prompt pool so new roles take effect immediately
+    added = await build_pool_for_user(db, user_id)
+    return {"ok": True, "roles": incoming_roles, "gender": gender, "pool_added": added}
 
 
 @router.post('/admin/users/{user_id}/anonymize')

@@ -442,7 +442,7 @@
             <button id="btnScanCommit" class="btn btn-primary">Apply tags</button>
           </div>
           <div id="scanStatus" class="text-sm text-stone-600 mb-2"></div>
-          <div id="scanResults" class="text-xs bg-stone-50 rounded p-2 overflow-auto max-h-64 hidden"></div>
+          <div id="scanResults" class="bg-stone-50 rounded border border-stone-200 overflow-auto max-h-72 hidden"></div>
         </div>
 
         <!-- Invites -->
@@ -1308,10 +1308,23 @@ const AssignUI = (() => {
     host.dataset.userId = pool.user?.id;
     host.setAttribute('aria-busy','true');
 
+    const rolePresets = [
+      { value: 'role:parent',      label: 'Parent' },
+      { value: 'role:grandparent', label: 'Grandparent' },
+      { value: 'role:spouse',      label: 'Spouse / Partner' },
+      { value: 'role:sibling',     label: 'Sibling' },
+      { value: 'role:aunt-uncle',  label: 'Aunt / Uncle' },
+      { value: 'role:child',       label: 'Child (has living parents)' },
+      { value: 'role:grandchild',  label: 'Grandchild' },
+    ];
+
     host.innerHTML = `
       <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
         <div class="text-sm opacity-75">${escapeHtml(pool.user?.name || pool.user?.email || 'User')} — ${(pool.answered_pct ?? 0)}% answered</div>
         <div class="flex gap-2 flex-wrap">
+          <button id="btnEditRoles" class="px-2 py-1 border rounded text-xs inline-flex items-center gap-1">
+            <span class="material-symbols-outlined text-[16px]">manage_accounts</span> Edit roles
+          </button>
           <button id="expandAll"  class="px-2 py-1 border rounded text-xs">Expand all</button>
           <button id="collapseAll" class="px-2 py-1 border rounded text-xs">Collapse all</button>
           <button id="btnRebuildPool" class="px-2 py-1 border rounded text-xs inline-flex items-center gap-1" title="Add all role-eligible prompts to this user's queue">
@@ -1320,6 +1333,38 @@ const AssignUI = (() => {
         </div>
       </div>
       <div id="rebuildPoolMsg" class="text-xs text-stone-600 mb-2"></div>
+
+      <!-- Roles editor (hidden by default) -->
+      <div id="rolesEditor" class="hidden mb-4 rounded-xl border border-black/10 bg-white/70 p-3 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-semibold">Roles</span>
+          <span class="text-xs text-stone-500">Check all that apply to this person's life</span>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          ${rolePresets.map(r => `
+            <label class="role-chip flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 cursor-pointer hover:border-black/40 has-[:checked]:bg-amber-50 has-[:checked]:border-amber-400">
+              <input type="checkbox" class="role-check accent-amber-500" value="${r.value}" />
+              <span class="text-sm">${r.label}</span>
+            </label>
+          `).join('')}
+        </div>
+        <div class="flex items-center gap-4">
+          <span class="text-sm font-medium">Gender</span>
+          <label class="inline-flex items-center gap-1 text-sm cursor-pointer">
+            <input type="radio" name="roleGender" class="role-gender accent-amber-500" value="male" /> Male
+          </label>
+          <label class="inline-flex items-center gap-1 text-sm cursor-pointer">
+            <input type="radio" name="roleGender" class="role-gender accent-amber-500" value="female" /> Female
+          </label>
+          <label class="inline-flex items-center gap-1 text-sm cursor-pointer">
+            <input type="radio" name="roleGender" class="role-gender accent-amber-500" value="" checked /> Not set
+          </label>
+        </div>
+        <div class="flex items-center gap-3">
+          <button id="btnSaveRoles" class="px-3 py-1.5 rounded-lg border border-black/70 bg-white text-sm font-medium hover:bg-black hover:text-white transition-colors">Save roles</button>
+          <span id="rolesMsg" class="text-xs text-stone-600"></span>
+        </div>
+      </div>
     `;
 
     for (const chap of sortedChapters) {
@@ -1420,6 +1465,59 @@ const AssignUI = (() => {
       if (style) details.setAttribute('style', style);
       host.appendChild(details);
     }
+
+    // Roles editor toggle + load
+    const rolesEditor = host.querySelector('#rolesEditor');
+    host.querySelector('#btnEditRoles')?.addEventListener('click', async () => {
+      if (!rolesEditor) return;
+      const isOpen = !rolesEditor.classList.contains('hidden');
+      if (isOpen) { rolesEditor.classList.add('hidden'); return; }
+      rolesEditor.classList.remove('hidden');
+      // Load current roles
+      const uid = host.dataset.userId;
+      if (!uid) return;
+      try {
+        const res = await fetch(`/api/admin/users/${uid}/roles`, { credentials: 'include' });
+        if (!res.ok) return;
+        const j = await res.json();
+        // Check matching presets
+        rolesEditor.querySelectorAll('.role-check').forEach(cb => {
+          cb.checked = (j.roles || []).includes(cb.value);
+        });
+        // Set gender radio
+        const g = j.gender || '';
+        rolesEditor.querySelectorAll('.role-gender').forEach(r => { r.checked = r.value === g; });
+      } catch (e) { /* ignore */ }
+    });
+
+    host.querySelector('#btnSaveRoles')?.addEventListener('click', async () => {
+      const msg = host.querySelector('#rolesMsg');
+      const uid = host.dataset.userId;
+      if (!uid || !rolesEditor) return;
+      const roles = Array.from(rolesEditor.querySelectorAll('.role-check:checked')).map(c => c.value);
+      const genderEl = rolesEditor.querySelector('.role-gender:checked');
+      const gender = genderEl?.value || null;
+      if (msg) msg.textContent = 'Saving…';
+      try {
+        const res = await fetch(`/api/admin/users/${uid}/roles`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roles, gender }),
+        });
+        const j = await res.json();
+        if (res.ok) {
+          if (msg) msg.textContent = `Saved. ${j.pool_added} prompt(s) added to queue.`;
+          rolesEditor.classList.add('hidden');
+          // Reload the pool view to reflect new assignments
+          await renderUserPoolCollapsible(Number(uid));
+        } else {
+          if (msg) msg.textContent = 'Error: ' + (j.detail || JSON.stringify(j));
+        }
+      } catch (e) {
+        if (msg) msg.textContent = 'Error: ' + e;
+      }
+    });
 
     // actions
     host.querySelector('#expandAll')?.addEventListener('click', () => {
@@ -2019,7 +2117,14 @@ window.initWeeklyTab = () => WeeklyUI.ensureInit();
       });
       const res = await fetch('/api/admin/prompts/import', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body });
       const j = await res.json();
-      r.textContent = res.ok ? JSON.stringify(j,null,2) : ('Failed: ' + JSON.stringify(j));
+      if (res.ok) {
+        r.textContent = `Created ${j.created}, updated ${j.updated}, skipped ${j.skipped}`;
+        if ((j.created || 0) + (j.updated || 0) > 0) {
+          await window.PromptUI?.refreshPartial?.();
+        }
+      } else {
+        r.textContent = 'Failed: ' + JSON.stringify(j);
+      }
     } catch (e) {
       r.textContent = 'Error: ' + e;
     }
@@ -2038,7 +2143,7 @@ window.initWeeklyTab = () => WeeklyUI.ensureInit();
     const overwrite = document.getElementById('scanOverwrite')?.checked || false;
     statusEl.textContent = commit ? 'Applying tags…' : 'Scanning…';
     resultsEl.classList.add('hidden');
-    resultsEl.textContent = '';
+    resultsEl.innerHTML = '';
     try {
       const res = await fetch('/api/admin/prompts/scan-roles', {
         method: 'POST',
@@ -2049,14 +2154,49 @@ window.initWeeklyTab = () => WeeklyUI.ensureInit();
       const j = await res.json();
       if (!res.ok) { statusEl.textContent = 'Error: ' + (j.detail || JSON.stringify(j)); return; }
       const { scanned, changed, results } = j;
+
+      // Summarise by tag
+      const tagCounts = {};
+      (results || []).forEach(r => (r.to_add || r.suggested || []).forEach(t => {
+        tagCounts[t] = (tagCounts[t] || 0) + 1;
+      }));
+      const countStr = Object.entries(tagCounts).map(([t,n]) => `${t} ×${n}`).join(', ');
+      const poolNote = (commit && j.pools_rebuilt) ? ` Assignments rebuilt for ${j.pools_rebuilt} user(s).` : '';
       statusEl.textContent = commit
-        ? `Done. Scanned ${scanned} prompts, updated ${changed}.`
-        : `Preview: ${changed} of ${scanned} prompts would be updated. (No changes saved.)`;
+        ? `Done — ${changed} of ${scanned} prompts updated. ${countStr}${poolNote}`
+        : `Preview: ${changed} of ${scanned} prompts would change. ${countStr || '(none)'} — no changes saved`;
+
       if (results && results.length) {
-        resultsEl.textContent = results.map(r =>
-          `[${r.id}] ${r.text.slice(0,60)}…\n  suggested: ${(r.suggested||[]).join(', ')}\n  existing:  ${(r.existing_for||[]).join(', ') || '(none)'}\n  action:    ${r.action}\n`
-        ).join('\n');
+        const table = document.createElement('table');
+        table.className = 'w-full text-xs border-collapse';
+        table.innerHTML = `<thead><tr class="border-b border-stone-200 text-left bg-stone-50">
+          <th class="py-1 px-2 w-10">ID</th>
+          <th class="py-1 px-2 w-28">Chapter</th>
+          <th class="py-1 px-2">Prompt</th>
+          <th class="py-1 px-2 w-40">Tags to add</th>
+        </tr></thead>`;
+        const tbody = document.createElement('tbody');
+        results.forEach(r => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b border-stone-100 hover:bg-stone-50';
+          const tags = r.to_add && r.to_add.length ? r.to_add : (r.suggested || []);
+          tr.innerHTML = `
+            <td class="py-1 px-2 opacity-50">${r.id}</td>
+            <td class="py-1 px-2 opacity-70 truncate max-w-[7rem]">${escapeHtml(r.chapter || '')}</td>
+            <td class="py-1 px-2">${escapeHtml(r.text || '')}</td>
+            <td class="py-1 px-2">${tags.map(t =>
+              `<span class="inline-block bg-amber-100 border border-amber-300 rounded px-1 mr-1 whitespace-nowrap">${escapeHtml(t)}</span>`
+            ).join('')}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        resultsEl.appendChild(table);
         resultsEl.classList.remove('hidden');
+      }
+      // Refresh the Prompts Library so new tags are visible
+      if (commit && changed > 0) {
+        window.PromptUI?.refreshPartial?.();
       }
     } catch (e) {
       statusEl.textContent = 'Error: ' + e;

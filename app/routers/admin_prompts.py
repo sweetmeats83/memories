@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..database import get_db
-from ..models import Prompt, Tag
+from ..models import Prompt, Tag, User
 from ..utils import require_admin_user
 
 router = APIRouter(prefix="/api/admin/prompts", tags=["admin", "prompts"])
@@ -54,16 +54,42 @@ async def admin_prompts_export(
 # Role keyword scanner
 # ---------------------------------------------------------------------------
 
-# Keyword → for:* gate tag(s) to apply
+# ---------------------------------------------------------------------------
+# Keyword rules — only tag prompts where the RESPONDENT holds that role.
+#
+# Key distinction:
+#   "your children / your son / your daughter" → respondent IS a parent   → for:parent
+#   "your mother / your father / your grandparents" → asking about ancestors → no gate (for:all)
+#
+# Prompts asking about the user's own ancestors/relatives need no gate tag —
+# they apply to everyone (no gate = eligible for all in _eligible()).
+# ---------------------------------------------------------------------------
 _ROLE_KEYWORD_RULES: list[tuple[list[str], str]] = [
-    # grandparent first (more specific than parent)
-    (["grandchildren", "grandchild", "grandkids", "grandkid", "grandparent", "grandmother", "grandfather", "grandma", "grandpa", "nana", "pop-pop", "popop", "granny"], "for:grandparent"),
-    # parent
-    (["children", "child", "kids", "kid", "son", "daughter", "your children", "your kids", "your child", "parenting", "raised", "parent", "mother", "father", "mom", "dad"], "for:parent"),
-    # spouse / partner
-    (["spouse", "husband", "wife", "partner", "married", "wedding", "engagement", "significant other", "better half", "marriage"], "for:spouse"),
-    # sibling
-    (["sibling", "brother", "sister", "siblings"], "for:sibling"),
+    # Respondent IS a grandparent (has grandchildren)
+    (
+        ["your grandchildren", "your grandchild", "your grandkids", "your grandkid",
+         "you became a grandparent", "as a grandparent", "being a grandparent",
+         "grandchildren's", "grandchild's"],
+        "for:grandparent",
+    ),
+    # Respondent IS a parent (has children)
+    # Excludes standalone "child/kid" and "mother/father" (those refer to the user's own ancestors)
+    (
+        ["your children", "your kids", "your son", "your daughter",
+         "your firstborn", "your babies", "you became a parent",
+         "as a parent", "raising children", "raising kids",
+         "having children", "having kids", "found out you'd be a parent",
+         "children's", "your kids'"],
+        "for:parent",
+    ),
+    # Respondent HAS / HAD a spouse
+    (
+        ["your spouse", "your husband", "your wife",
+         "your marriage", "your wedding", "your honeymoon",
+         "your engagement", "your fiance", "when you got married",
+         "your significant other", "your better half"],
+        "for:spouse",
+    ),
 ]
 
 
@@ -107,21 +133,14 @@ async def admin_prompts_scan_roles(
             continue
 
         existing_for = {t.slug for t in (prompt.tags or []) if t.slug.startswith("for:")}
-
         to_add = [s for s in suggested if s not in existing_for]
+
+        # Nothing new to add and we're not overwriting — skip entirely
         if not to_add and not options.overwrite:
-            results.append({
-                "id": prompt.id,
-                "text": (prompt.text or "")[:80],
-                "suggested": suggested,
-                "existing_for": list(existing_for),
-                "action": "skipped (already tagged)",
-            })
             continue
 
         if options.commit:
             if options.overwrite:
-                # Replace existing for:* tags; keep all other tags
                 other_tags = [t for t in (prompt.tags or []) if not t.slug.startswith("for:")]
                 new_for_tags = []
                 for slug in suggested:
@@ -130,7 +149,6 @@ async def admin_prompts_scan_roles(
                         new_for_tags.append(tag)
                 prompt.tags = other_tags + new_for_tags
             else:
-                # Only add missing for:* tags
                 current_tags = list(prompt.tags or [])
                 for slug in to_add:
                     tag = await _ensure_tag_slug_admin(db, slug)
@@ -140,22 +158,38 @@ async def admin_prompts_scan_roles(
 
         results.append({
             "id": prompt.id,
-            "text": (prompt.text or "")[:80],
+            "chapter": prompt.chapter or "",
+            "text": (prompt.text or "")[:100],
             "suggested": suggested,
             "existing_for": list(existing_for),
-            "added": to_add if options.commit else [],
+            "to_add": to_add,
             "action": "updated" if options.commit else "would add",
         })
         changed += 1
 
     if options.commit:
         await db.commit()
+        # Rebuild prompt pools for all active users so gate tags take effect immediately
+        from app.services.assignment import build_pool_for_user
+        active_users = (
+            await db.execute(select(User.id).where(User.is_active == True))
+        ).scalars().all()
+        rebuilt = 0
+        for uid in active_users:
+            try:
+                await build_pool_for_user(db, uid)
+                rebuilt += 1
+            except Exception:
+                pass
+    else:
+        rebuilt = 0
 
     return {
         "ok": True,
         "commit": options.commit,
         "scanned": len(rows),
         "changed": changed,
+        "pools_rebuilt": rebuilt,
         "results": results,
     }
 

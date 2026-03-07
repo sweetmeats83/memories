@@ -2,7 +2,7 @@
 from __future__ import annotations
 import hashlib, random
 from datetime import date, datetime
-from sqlalchemy import select, update, func, insert, case, and_, not_ as NOT_
+from sqlalchemy import delete, select, update, func, insert, case, and_, not_ as NOT_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -329,11 +329,36 @@ async def build_pool_for_user(db: AsyncSession, user_id: int) -> int:
     prompts = rows.scalars().unique().all()
 
     # 3) Use shared gating logic (_eligible) which supports for:male/female, for:user, etc.
-    eligible_ids = [p.id for p in prompts if _eligible(p, weights, user_id=user_id)]
+    eligible_ids = set(p.id for p in prompts if _eligible(p, weights, user_id=user_id))
+
+    # 4) Remove queued/skipped entries for prompts the user is no longer eligible for.
+    #    Leave "active" rows alone — removing a prompt mid-week would disrupt the current
+    #    weekly rotation. Answered prompts live in the Response table, not here.
+    ineligible_queued = (
+        await db.execute(
+            select(UserPrompt.prompt_id)
+            .where(
+                UserPrompt.user_id == user_id,
+                UserPrompt.status.in_(("queued", "skipped")),
+            )
+        )
+    ).scalars().all()
+
+    to_remove = [pid for pid in ineligible_queued if pid not in eligible_ids]
+    if to_remove:
+        await db.execute(
+            delete(UserPrompt).where(
+                UserPrompt.user_id == user_id,
+                UserPrompt.prompt_id.in_(to_remove),
+                UserPrompt.status.in_(("queued", "skipped")),
+            )
+        )
+
     if not eligible_ids:
+        await db.commit()
         return 0
 
-    # 4) Bulk upsert into user_prompts
+    # 5) Bulk upsert eligible prompts (adds new ones, ignores already-present rows)
     stmt = pg_insert(UserPrompt.__table__).values([
         {"user_id": user_id, "prompt_id": pid, "status": "queued", "score": 0, "times_sent": 0}
         for pid in eligible_ids
