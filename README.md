@@ -274,12 +274,106 @@ print('VAPID_PUBLIC_KEY=' + v.public_key)
 | `WHISPER_DEVICE` | `cuda` or `cpu` |
 | `WHISPER_COMPUTE` | `float16`, `int8`, etc. |
 
-**Ollama (optional)**
+**Ollama / local LLM (optional)**
 
 | Variable | Description |
 |---|---|
-| `OLLAMA_BASE_URL` | e.g. `http://host.docker.internal:11434` |
-| `OLLAMA_MODEL` | Model name |
+| `OLLAMA_BASE_URL` | e.g. `http://host.docker.internal:11434` or `http://ollama:11434` |
+| `OLLAMA_MODEL` | Model name, e.g. `llama3.2` |
+
+---
+
+## Transcription
+
+The GPU image (`docker compose up -d`, uses `Dockerfile`) integrates [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for automatic speech-to-text. When a user records audio, transcription runs in the background and the transcript appears alongside the recording where it can be edited.
+
+Requires an NVIDIA GPU on the host with the `nvidia` Docker runtime installed.
+
+```env
+WHISPER_MODEL=large-v3      # large-v3 is most accurate; tiny/base are faster
+WHISPER_DEVICE=cuda
+WHISPER_COMPUTE=float16
+```
+
+The CPU / production image (`Dockerfile.prod`, used by the Docker Hub image) omits the transcription stack to keep the image size small. Transcription is silently skipped if not configured.
+
+**Model size guide**
+
+| Model | VRAM | Notes |
+|---|---|---|
+| `tiny` | ~1 GB | Fast, lower accuracy |
+| `base` | ~1 GB | Good balance for short clips |
+| `small` | ~2 GB | Recommended for most use |
+| `medium` | ~5 GB | Strong accuracy |
+| `large-v3` | ~10 GB | Best accuracy, slowest |
+
+---
+
+## Local LLM (Ollama)
+
+With a local [Ollama](https://ollama.com) instance running, the admin panel gains two AI-assisted tools:
+
+- **Response editing** — clean up a raw transcript: remove filler words, fix run-on sentences, improve flow, while preserving the speaker's voice and not changing the meaning
+- **Chapter compilation** — takes all the responses recorded for a chapter and weaves them into a single readable narrative, keeping the speaker's exact words where possible and attributing quotes
+
+Neither tool is shown to users — they are admin-only. Both are entirely optional; the app works fully without Ollama.
+
+### Run Ollama in Docker (with the app)
+
+Add to your `docker-compose.yml`:
+
+```yaml
+services:
+  ollama:
+    image: ollama/ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    # Remove deploy block if no NVIDIA GPU
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  ollama_data:
+```
+
+Pull a model (run once after first `docker compose up`):
+
+```bash
+docker compose exec ollama ollama pull llama3.2
+```
+
+Add to `.env`:
+
+```env
+OLLAMA_BASE_URL=http://ollama:11434
+OLLAMA_MODEL=llama3.2
+```
+
+### Use an existing Ollama on the host
+
+If Ollama is already running on the host machine:
+
+```env
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=llama3.2
+```
+
+### Model recommendations
+
+Any instruction-following model works. Larger models produce better prose but are slower.
+
+| Model | RAM | Notes |
+|---|---|---|
+| `llama3.2:1b` | ~2 GB | Usable on low-memory hosts |
+| `llama3.2` | ~6 GB | Good quality, recommended default |
+| `llama3.1:8b` | ~8 GB | Strong results |
+| `mistral` | ~6 GB | Concise, good for editing |
 
 ---
 
