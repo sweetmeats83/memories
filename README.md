@@ -1,140 +1,191 @@
-<div align="center">
+# Memories
 
-# Memories  🎙️🧬📜
+> **This app is completely vibe coded.**
 
-<p>
-Capture the voices and stories of your family — especially elders — with a tap. Token links make recording effortless. A dark neon interface and a visual people graph bring your shared history to life.
-</p>
+A private family storytelling platform. The core idea: send a link to an elder, they tap it on their phone and record a story. No account needed. You get the audio (and optionally a transcript) tied to a chapter in your family's archive.
 
-<p>
-  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi&labelColor=0b4d46" />
-  <img alt="Tailwind" src="https://img.shields.io/badge/Tailwind-3.x-38bdf8?logo=tailwindcss&labelColor=0b2532" />
-  <img alt="Docker" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker" />
-  <img alt="License" src="https://img.shields.io/badge/License-MIT-green" />
-</p>
+It is not a social network. It is for a small, private group — one admin, a handful of storytellers.
 
-<sub>Family‑first, privacy‑first. Not a social network — a home for your people.</sub>
-
-</div>
-
-## Who this is for (family‑first) 💞
-
-- Small, private family groups — not a mass‑market social network.
-- An admin (you) curates prompts and facilitates recordings.
-- Users are storytellers (often elders) who answer prompts and record memories.
-- Family trees/people are shared among users (e.g., parents also visible to the admin), so relationships connect across accounts by design.
+---
 
 ## What it does
 
-- Prompts & routine
-  - Weekly prompts delivered by email (opt‑in) and shown on the dashboard.
-  - One‑click “record now” or type to answer; auto‑tracks chapter completion.
-- One‑link recording (tokens) — the easy way for elders to record 💡
-  - Send a time‑limited token link by email or message — no login required.
-  - The recipient clicks, sees just their prompt, and records or types their story.
-  - Audio‑first UX with large, clear controls; works on phones and tablets.
-  - Tokens expire and are scoped to the intended prompt for safe, simple sharing.
-- Rich media capture
-  - Record audio or upload audio/video/images; square thumbnails and web players via Plyr.
-  - “Boomerang” short videos loop and get special playback handling.
-- Transcription & text
-  - Optional Whisper‑based transcription (faster‑whisper/ctranslate2) with sensible defaults.
-  - Clean reading view with a paper‑like card and version history for edits.
-- Tagging, chapters, search
-  - Tagify UI for quick tags, chapter progress meter, and search from the navbar.
-- People graph
-  - Interactive canvas to add people, mark relationships, search, and view connection details.
-  - Handy edit/display panel with photo, bio, years, and inferred edges.
-- Sharing & tokens
-  - Time‑limited share tokens for weekly prompts let recipients view/answer without an account.
-- Admin tools
-  - Manage prompts (chapters/tags/media), assign to users, impersonate for troubleshooting (“Edit Mode”).
-- UX & theme
-  - Dark neon theme with glassy cards; readable light theme preserved.
-  - Accessibility and mobile‑friendly defaults (focus rings, tap targets, reduced motion).
+**Prompts and weekly routine**
+The admin creates prompts organized by chapter (childhood, work life, travel, etc.) and assigns them to users. Prompts can be sent by email on a schedule — daily, weekly, whatever you configure. Users see their current prompt on their dashboard and can record or type an answer.
 
-## How it works in 60 seconds ⏱️
+**Token links — the main way elders actually use it**
+Instead of asking someone to log in, the admin sends a time-limited token link by email or text. The recipient clicks the link and lands directly on their prompt with large, clear record controls. No login, no friction. Tokens are scoped to one prompt and expire automatically.
 
-1) Admin seeds prompts by chapter (or uses built‑ins).  
-2) Admin sends a token link to Mom/Dad/Grandma for this week’s prompt.  
-3) They tap the link on their phone, press record, talk.  
-4) You get the story (audio + optional transcript) on the dashboard, tied to their chapter.  
-5) Add people/tags, watch chapter completion grow, and build the family’s shared graph.
+**Media capture**
+Record audio directly in the browser, or upload audio, video, or images. ffmpeg handles thumbnails. Short looping videos get special playback treatment. The Plyr player handles in-browser playback.
+
+**Transcription**
+Optional. If you run the GPU image (Dockerfile) with a CUDA-capable host, faster-whisper transcribes audio automatically in the background. The CPU/prod image (Dockerfile.prod) skips this. Transcripts appear alongside the recording and can be edited.
+
+**People graph**
+An interactive canvas showing family members and relationships. You can add people, draw edges between them (parent, spouse, sibling, etc.), and the app infers additional relationships automatically. A gold path line traces how two people are related through the actual genealogical chain. Kinship labels (great-grandaunt, second cousin, etc.) are computed from the graph structure.
+
+**Admin tools**
+Manage prompts, assign them to users, view all responses, and impersonate users for troubleshooting. Tag responses, track chapter completion, search across everything.
 
 ---
-![Demo of Memories app](memories.gif)
 
 ## Tech stack
 
-- Backend: FastAPI, SQLAlchemy (Postgres), Jinja2 templates
-- Frontend: Tailwind CSS (compiled), vanilla JS, Tagify, Plyr
-- Media: ffmpeg (thumbnails), optional faster‑whisper + ctranslate2 for transcription
-- Packaging: Docker Compose (dev & prod profiles), multi‑stage Dockerfile for production
+- Backend: FastAPI, async SQLAlchemy, PostgreSQL, Alembic migrations
+- Frontend: Jinja2 templates, Tailwind CSS (compiled), vanilla JS, Tagify, Plyr
+- Media: ffmpeg for thumbnails, faster-whisper + ctranslate2 for optional GPU transcription
+- Infra: Docker Compose with dev and prod profiles, multi-stage Dockerfile.prod for CPU-only production
 
-## Quickstart (Docker Compose)
+---
 
-- Prereqs: Docker + Docker Compose v2
-- Clone and configure:
-  - `git clone https://github.com/sweetmeats83/memories3`
-  - `cd memories3`
-  - `cp .env.example .env`
-  - Edit `.env`: set `BASE_URL`, `INVITE_BASE_URL`, `SECRET`, `WEEKLY_TOKEN_HMAC`, and SMTP settings if sending email. Optionally set `ADMIN_*` and `SUPER_ADMIN_*` for bootstrap accounts.
-- Run (development, hot reload):
-  - `docker compose up -d postgres`
-  - `docker compose up -d web`
-  - Optional Tailwind watcher (rebuilds CSS on changes): `docker compose --profile dev up assets`
-  - App at `http://localhost:${WEB_PORT:-8003}`
-- Run (production-like, single image):
-  - `docker compose --profile prod up -d --build web_prod postgres`
-  - App at `http://localhost:${WEB_PROD_PORT:-8004}`
+## Installation
 
-## Environment Variables
+### Prerequisites
 
-- Web/DB
-  - `TZ` (default UTC), `PG_PORT` (default 5433), `WEB_PORT` (default 8003), `WEB_PROD_PORT` (default 8004)
-  - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
-  - `DATABASE_URL` (defaults provided via compose for internal connectivity)
-- App
-  - `BASE_URL` (public URL, no trailing slash), `INVITE_BASE_URL`
-  - `SECRET` (JWT/session secret)
-  - `RUN_DB_CREATE_ALL=1` (auto-create tables on first run)
-  - `WEEKLY_TOKEN_HMAC` (long random string — required for secure token recording)
-  - `APP_TZ` (optional; falls back to `TZ`) — timezone for weekly scheduler
-  - `WEEKLY_CRON` (optional; crontab string) — when to send weekly prompts
-    - Examples: `0 9 * * 1-5` (Mon–Fri 09:00), `0 9 * * 1` (Mondays 09:00)
-- Email (optional)
-  - `EMAIL_TRANSPORT=smtp | dummy`
-  - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`
-  - `SMTP_USE_TLS=true/false`, `SMTP_USE_SSL=true/false`
-- AI integrations (optional)
-  - `OLLAMA_BASE_URL`, `OLLAMA_MODEL`
-  - `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE`
+- Docker and Docker Compose v2
+- A CUDA-capable GPU host if you want transcription (the `web` service uses `runtime: nvidia`)
+- SMTP credentials if you want email delivery (optional — the app works without it)
 
-## Persistent Data
+### 1. Clone and configure
 
-- Database: named Docker volume `postgres_data_memories3`
-- User uploads: bind mount `./static/uploads:/app/static/uploads`
+```bash
+git clone https://github.com/sweetmeats83/memories3
+cd memories3
+cp .env.example .env
+```
+
+Edit `.env`. The required values are:
+
+| Variable | Description |
+|---|---|
+| `BASE_URL` | Public URL of the app, no trailing slash (e.g. `http://yourdomain.com:8003`) |
+| `INVITE_BASE_URL` | Same as BASE_URL unless you proxy differently |
+| `SECRET` | Long random string — used for session signing |
+| `WEEKLY_TOKEN_HMAC` | Long random string — required for secure token links |
+| `POSTGRES_USER` | Database user (default: postgres) |
+| `POSTGRES_PASSWORD` | Database password |
+| `POSTGRES_DB` | Database name (default: memories) |
+
+Generate secrets with `openssl rand -hex 32`.
+
+### 2. Run (development — GPU transcription enabled)
+
+```bash
+docker compose up -d
+```
+
+The `web` service requires `runtime: nvidia`. If you do not have a GPU host, use the prod profile instead.
+
+App available at `http://localhost:8003` (or `WEB_PORT` if overridden).
+
+Optional: watch Tailwind for CSS changes during development:
+
+```bash
+docker compose --profile dev up assets
+```
+
+### 3. Run (production — CPU only, no transcription)
+
+```bash
+docker compose --profile prod up -d --build web_prod postgres
+```
+
+App available at `http://localhost:8004` (or `WEB_PROD_PORT` if overridden).
+
+The prod image builds Tailwind CSS at image build time and does not require Node at runtime.
+
+### 4. First run
+
+On first start, Alembic migrations run automatically via the entrypoint. Tables are created and the schema is brought up to date.
+
+If you set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env`, a bootstrap admin account is created on startup.
+
+---
+
+## Environment variables
+
+**Ports and database**
+
+| Variable | Default | Description |
+|---|---|---|
+| `TZ` | `Etc/UTC` | Container timezone |
+| `PG_PORT` | `5433` | Host port for Postgres |
+| `WEB_PORT` | `8003` | Host port for dev web service |
+| `WEB_PROD_PORT` | `8004` | Host port for prod web service |
+| `POSTGRES_USER` | `postgres` | |
+| `POSTGRES_PASSWORD` | `postgres` | |
+| `POSTGRES_DB` | `memories` | |
+
+**Application**
+
+| Variable | Description |
+|---|---|
+| `BASE_URL` | Public URL, no trailing slash |
+| `INVITE_BASE_URL` | Public URL for invite/token links |
+| `SECRET` | Session/JWT signing secret |
+| `WEEKLY_TOKEN_HMAC` | HMAC key for recording tokens |
+| `APP_TZ` | Timezone for the weekly scheduler (falls back to `TZ`) |
+| `WEEKLY_CRON` | Crontab string for weekly prompt delivery. Default: Mon-Fri 09:00. Example: `0 9 * * 1-5` |
+
+**Email (optional)**
+
+| Variable | Description |
+|---|---|
+| `EMAIL_TRANSPORT` | `smtp` or `dummy` (dummy logs to console) |
+| `SMTP_HOST` | |
+| `SMTP_PORT` | |
+| `SMTP_USERNAME` | |
+| `SMTP_PASSWORD` | |
+| `SMTP_FROM` | From address |
+| `SMTP_USE_TLS` | `true` / `false` |
+| `SMTP_USE_SSL` | `true` / `false` |
+
+**Transcription (optional, GPU image only)**
+
+| Variable | Description |
+|---|---|
+| `WHISPER_MODEL` | Model size: `tiny`, `base`, `small`, `medium`, `large-v3` |
+| `WHISPER_DEVICE` | `cuda` or `cpu` |
+| `WHISPER_COMPUTE` | `float16`, `int8`, etc. |
+
+**Ollama (optional)**
+
+| Variable | Description |
+|---|---|
+| `OLLAMA_BASE_URL` | e.g. `http://host.docker.internal:11434` |
+| `OLLAMA_MODEL` | Model name |
+
+---
+
+## Persistent data
+
+- **Database**: named Docker volume `postgres_data_memories3`
+- **Uploads**: bind mount `./static/uploads` — back this up. It contains all recorded audio, video, and images.
+
+---
 
 ## Tailwind CSS
 
-- The app links `static/css/tailwind.css`.
-- For development: `docker compose run --rm assets npm install` then `docker compose --profile dev up assets`.
-- For production builds: `Dockerfile.prod` compiles Tailwind during image build (no CDN).
+Pre-compiled CSS is committed to the repo so the app works without a Node build step in development. If you change templates or add new Tailwind classes, rebuild:
 
-## Security & Secrets
+```bash
+docker compose run --rm assets npm install
+docker compose --profile dev up assets
+```
 
-- Do not commit `.env`. Use `.env.example` as a template.
-- Rotate any secrets used for your deployment before publishing.
+The prod image (`Dockerfile.prod`) always rebuilds Tailwind from source during `docker build`.
+
+---
+
+## Security
+
+- Do not commit `.env`
+- Rotate `SECRET` and `WEEKLY_TOKEN_HMAC` before any public deployment
+- Token links expire — do not extend lifetimes beyond what is needed
+
+---
 
 ## License
 
-- MIT — see `LICENSE` in this repository.
-
-## Roadmap (ideas)
-
-- Multi-user groups with granular sharing by chapter or person
-- Export: printable book PDF and data export (JSON/ZIP)
-- Multi-arch container images (amd64/arm64) published by CI
-- Optional vector search for semantic memory lookup
-
-
+MIT
