@@ -212,10 +212,23 @@
       <!-- Processing veil -->
       <div id="transcribeCover" aria-live="polite">
         <div class="veil-card">
-          <div class="spin" aria-hidden="true"></div>
-          <div class="text-base font-semibold mb-1" id="veilTitle">Uploading & transcribing…</div>
+          <div id="veilSpinner" class="spin" aria-hidden="true"></div>
+          <div class="text-base font-semibold mb-1" id="veilTitle">Uploading…</div>
+          <!-- Progress bar -->
+          <div id="veilProgressWrap" style="display:none; margin:10px 0 6px;">
+            <div style="background:rgba(255,255,255,.15); border-radius:999px; height:6px; overflow:hidden;">
+              <div id="veilProgressBar" style="height:100%; width:0%; background:#fff; border-radius:999px; transition:width .3s;"></div>
+            </div>
+            <div id="veilProgressText" style="font-size:12px; opacity:.7; margin-top:4px; text-align:center;"></div>
+          </div>
           <div class="text-sm opacity-85" id="veilNote">Please keep this tab open.</div>
-          <div class="text-red-300 text-sm mt-2" id="transcribeErr"></div>
+          <!-- Cellular warning -->
+          <div id="veilCellularWarn" style="display:none; margin-top:8px; padding:6px 10px; background:rgba(255,200,0,.12); border:1px solid rgba(255,200,0,.3); border-radius:8px; font-size:12px; color:#FFD43B;">
+            Uploading over mobile data — this may take a moment.
+          </div>
+          <!-- Error state -->
+          <div id="transcribeErr" style="display:none; margin-top:10px; padding:8px 10px; background:rgba(239,68,68,.15); border:1px solid rgba(239,68,68,.4); border-radius:8px; font-size:13px; color:#fca5a5; text-align:left; line-height:1.4;"></div>
+          <button id="veilRetryBtn" style="display:none; margin-top:12px; padding:8px 20px; background:#fff; color:#111; border:none; border-radius:8px; font-weight:700; font-size:14px; cursor:pointer;">Try again</button>
         </div>
       </div>
     </div>
@@ -247,9 +260,16 @@
   const recLabel  = document.getElementById('btnRecordLabel');
   const timerEl   = document.getElementById('overlayTimer');
 
-  const veil      = document.getElementById('transcribeCover');
-  const veilTitle = document.getElementById('veilTitle');
-  const veilErr   = document.getElementById('transcribeErr');
+  const veil            = document.getElementById('transcribeCover');
+  const veilTitle       = document.getElementById('veilTitle');
+  const veilNote        = document.getElementById('veilNote');
+  const veilErr         = document.getElementById('transcribeErr');
+  const veilSpinner     = document.getElementById('veilSpinner');
+  const veilProgressWrap= document.getElementById('veilProgressWrap');
+  const veilProgressBar = document.getElementById('veilProgressBar');
+  const veilProgressText= document.getElementById('veilProgressText');
+  const veilCellularWarn= document.getElementById('veilCellularWarn');
+  const veilRetryBtn    = document.getElementById('veilRetryBtn');
 
   // --- State ---
   let cfg = { kind: 'segment', responseId: null, primary: null, mode: null };
@@ -282,12 +302,22 @@
 
   function showVeil(msg){
     if (veilTitle) veilTitle.textContent = msg || 'Uploading & transcribing…';
-    if (veilErr) veilErr.textContent = '';
+    if (veilErr) { veilErr.textContent = ''; veilErr.style.display = 'none'; }
+    if (veilSpinner) veilSpinner.style.display = 'block';
+    if (veilProgressWrap) veilProgressWrap.style.display = 'none';
+    if (veilProgressBar) veilProgressBar.style.width = '0%';
+    if (veilProgressText) veilProgressText.textContent = '';
+    if (veilRetryBtn) veilRetryBtn.style.display = 'none';
+    if (veilCellularWarn) veilCellularWarn.style.display =
+      (typeof ChunkedUploader !== 'undefined' && ChunkedUploader.onCellular()) ? 'block' : 'none';
     if (veil) veil.style.display = 'grid';
   }
   function hideVeil(){
     if (veil) veil.style.display = 'none';
-    if (veilErr) veilErr.textContent = '';
+    if (veilErr) { veilErr.textContent = ''; veilErr.style.display = 'none'; }
+    if (veilRetryBtn) veilRetryBtn.style.display = 'none';
+    if (veilCellularWarn) veilCellularWarn.style.display = 'none';
+    if (veilProgressWrap) veilProgressWrap.style.display = 'none';
   }
 
   function setPillState(){
@@ -473,11 +503,17 @@ async function gateWeeklyTokenUse(){
     if (typeof ChunkedUploader !== 'undefined' && blob.size > ChunkedUploader.LARGE_FILE_THRESHOLD) {
       showVeil('Uploading…');
       const uploader = new ChunkedUploader(file, {
-        onProgress(done, total) {
-          if (veilTitle) veilTitle.textContent = `Uploading… ${Math.round(done / total * 100)}%`;
+        onProgress(done, total, chunkIndex, totalChunks) {
+          const pct = total > 0 ? Math.round(done / total * 100) : 0;
+          if (veilTitle) veilTitle.textContent = `Uploading… ${pct}%`;
+          if (veilProgressWrap) veilProgressWrap.style.display = 'block';
+          if (veilProgressBar) veilProgressBar.style.width = pct + '%';
+          if (veilProgressText && totalChunks > 1)
+            veilProgressText.textContent = `Part ${chunkIndex} of ${totalChunks}`;
         }
       });
       const staged_id = await uploader.upload();
+      if (veilProgressWrap) veilProgressWrap.style.display = 'none';
       if (veilTitle) veilTitle.textContent = 'Processing…';
       const fd = new FormData();
       fd.append('staged_id', staged_id);
@@ -524,11 +560,17 @@ async function gateWeeklyTokenUse(){
     if (typeof ChunkedUploader !== 'undefined' && blob.size > ChunkedUploader.LARGE_FILE_THRESHOLD) {
       showVeil('Uploading…');
       const uploader = new ChunkedUploader(file, {
-        onProgress(done, total) {
-          if (veilTitle) veilTitle.textContent = `Uploading… ${Math.round(done / total * 100)}%`;
+        onProgress(done, total, chunkIndex, totalChunks) {
+          const pct = total > 0 ? Math.round(done / total * 100) : 0;
+          if (veilTitle) veilTitle.textContent = `Uploading… ${pct}%`;
+          if (veilProgressWrap) veilProgressWrap.style.display = 'block';
+          if (veilProgressBar) veilProgressBar.style.width = pct + '%';
+          if (veilProgressText && totalChunks > 1)
+            veilProgressText.textContent = `Part ${chunkIndex} of ${totalChunks}`;
         }
       });
       const staged_id = await uploader.upload();
+      if (veilProgressWrap) veilProgressWrap.style.display = 'none';
       // Inject staged_id into form and clear the file input
       let stagedInput = form.querySelector('input[name="primary_staged_id"]');
       if (!stagedInput) {
@@ -598,14 +640,24 @@ async function gateWeeklyTokenUse(){
         }
       }
     } catch (e){
-      if (veilErr) veilErr.textContent = 'Upload failed. Please try again.';
       console.error(e);
-      setTimeout(hideVeil, 1500);
+      // Show the error persistently — don't auto-dismiss
+      if (veilSpinner) veilSpinner.style.display = 'none';
+      if (veilProgressWrap) veilProgressWrap.style.display = 'none';
+      if (veilTitle) veilTitle.textContent = 'Upload failed';
+      if (veilNote) veilNote.textContent = '';
+      if (veilErr) {
+        veilErr.textContent = e?.message || 'Something went wrong. Please try again.';
+        veilErr.style.display = 'block';
+      }
+      if (veilRetryBtn) veilRetryBtn.style.display = 'inline-block';
       cleanup();
     }
 }
 
   // --- Wire UI ---
+  veilRetryBtn?.addEventListener('click', () => { hideVeil(); close(); });
+
   btnAudio?.addEventListener('click', () => setMode('audio'));
   btnVideo?.addEventListener('click', () => setMode('video'));
   btnRecord?.addEventListener('click', toggleRecord);
@@ -645,11 +697,17 @@ async function gateWeeklyTokenUse(){
     if (typeof ChunkedUploader !== 'undefined' && blob.size > ChunkedUploader.LARGE_FILE_THRESHOLD) {
       showVeil('Uploading…');
       const uploader = new ChunkedUploader(file, {
-        onProgress(done, total) {
-          if (veilTitle) veilTitle.textContent = `Uploading… ${Math.round(done / total * 100)}%`;
+        onProgress(done, total, chunkIndex, totalChunks) {
+          const pct = total > 0 ? Math.round(done / total * 100) : 0;
+          if (veilTitle) veilTitle.textContent = `Uploading… ${pct}%`;
+          if (veilProgressWrap) veilProgressWrap.style.display = 'block';
+          if (veilProgressBar) veilProgressBar.style.width = pct + '%';
+          if (veilProgressText && totalChunks > 1)
+            veilProgressText.textContent = `Part ${chunkIndex} of ${totalChunks}`;
         }
       });
       const staged_id = await uploader.upload();
+      if (veilProgressWrap) veilProgressWrap.style.display = 'none';
       fd.append('primary_staged_id', staged_id);
       if (veilTitle) veilTitle.textContent = 'Saving…';
     } else {
