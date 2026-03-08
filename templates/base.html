@@ -589,7 +589,7 @@ function openMedia(kind, src){
 
 <!-- Push notification opt-in (only shown when push is supported and not yet granted) -->
 {% if user %}
-<div id="pushPromptBanner" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-[9000] flex items-center gap-3 px-5 py-3 rounded-2xl border border-black/20 bg-white/90 backdrop-blur shadow-lg text-sm max-w-sm w-[90vw]">
+<div id="pushPromptBanner" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-5 py-3 rounded-2xl border border-black/20 bg-white/90 shadow-lg text-sm max-w-sm w-[90vw]" style="z-index:9000;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);">
   <span class="material-symbols-outlined text-[22px] shrink-0">notifications</span>
   <span class="flex-1">Get reminders to record your memories.</span>
   <button id="pushEnableBtn" class="shrink-0 rounded-full bg-black text-white px-3 py-1 text-xs font-semibold">Enable</button>
