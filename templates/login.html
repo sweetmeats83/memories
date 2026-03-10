@@ -31,12 +31,16 @@
       <!-- Password Field -->
       <div class="relative">
         <input type="password" name="password" id="password" required
-          class="peer w-full p-3 border-b-2 border-gray-300 bg-transparent placeholder-transparent focus:outline-none focus:border-orange-500 text-black">
+          class="peer w-full p-3 pr-10 border-b-2 border-gray-300 bg-transparent placeholder-transparent focus:outline-none focus:border-orange-500 text-black">
         <label for="password"
           class="absolute left-3 -top-5 text-gray-700 text-sm transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-gray-400 peer-placeholder-shown:text-base peer-focus:-top-3.5 peer-focus:text-sm peer-focus:text-orange-500">
           Password
         </label>
-        <span class="material-symbols-outlined absolute right-2 top-3 text-gray-400">lock</span>
+        <button type="button" id="toggle-password" tabindex="-1"
+          class="absolute right-2 top-3 text-gray-400 hover:text-gray-600 focus:outline-none"
+          aria-label="Show password">
+          <span class="material-symbols-outlined" id="toggle-password-icon">visibility_off</span>
+        </button>
       </div>
 
       <!-- Login Button -->
@@ -51,6 +55,17 @@
     </form>
   </div>
 </div>
+
+<script>
+document.getElementById('toggle-password').addEventListener('click', function () {
+  const input = document.getElementById('password');
+  const icon  = document.getElementById('toggle-password-icon');
+  const show  = input.type === 'password';
+  input.type  = show ? 'text' : 'password';
+  icon.textContent = show ? 'visibility' : 'visibility_off';
+  this.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+});
+</script>
 
 <script>
 // Local toast above the form (override any global showNotification)

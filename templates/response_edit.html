@@ -170,7 +170,16 @@
     </div>
 
     <!-- Quill editor -->
-    <div id="editor">{{ (response.transcription or '')|safe }}</div>
+    <div id="editor-wrap" class="relative">
+      {% if response.primary_media_url and not response.transcription %}
+      <div id="tx-overlay" class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded pointer-events-none" style="background:rgba(255,255,255,0.88);backdrop-filter:blur(4px);min-height:120px">
+        <span class="material-icons-outlined spin text-2xl text-gray-500">sync</span>
+        <p class="text-sm font-medium text-gray-700">Transcribing your recording…</p>
+        <p class="text-xs text-gray-400" id="tx-elapsed"></p>
+      </div>
+      {% endif %}
+      <div id="editor">{{ (response.transcription or '')|safe }}</div>
+    </div>
     <input type="hidden" name="transcription" id="transcription">
       <!-- Response Tags -->
       <div class="mt-4">
@@ -387,6 +396,59 @@
   form.addEventListener('submit', function () {
     document.getElementById('transcription').value = quill.root.innerHTML;
   });
+
+  // --- Transcription polling ---
+  // If the response has media but no transcript yet, poll until it arrives.
+  {% if response.primary_media_url and not response.transcription %}
+  (function () {
+    const overlay  = document.getElementById('tx-overlay');
+    const elapsed  = document.getElementById('tx-elapsed');
+    const saveBtn  = document.getElementById('btn-save');
+    if (!overlay) return;
+
+    if (saveBtn) saveBtn.disabled = true;
+
+    const RESPONSE_ID = {{ response.id }};
+    const started = Date.now();
+    const MAX_WAIT = 5 * 60 * 1000; // give up after 5 min
+
+    async function poll() {
+      try {
+        const r = await fetch(`/api/response/${RESPONSE_ID}/transcript`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (r.ok) {
+          const { text } = await r.json();
+          if (text && text.trim()) {
+            // Populate the Quill editor with the transcript
+            quill.setText(text);
+            // Also update the reference transcript collapsible
+            const ref = document.getElementById('original-transcript');
+            if (ref) ref.textContent = text;
+            // Remove overlay and re-enable save
+            overlay.remove();
+            if (saveBtn) saveBtn.disabled = false;
+            return;
+          }
+        }
+      } catch (_) {}
+
+      const secs = Math.round((Date.now() - started) / 1000);
+      if (elapsed) elapsed.textContent = secs + 's elapsed';
+
+      if (Date.now() - started >= MAX_WAIT) {
+        overlay.innerHTML = '<p class="text-sm text-red-500 p-4 text-center">Transcription is taking longer than expected.<br>You can type your story manually.</p>';
+        overlay.style.pointerEvents = 'auto';
+        if (saveBtn) saveBtn.disabled = false;
+        return;
+      }
+      setTimeout(poll, 2500);
+    }
+
+    setTimeout(poll, 2000); // first check after 2s
+  })();
+  {% endif %}
 </script>
 <script>
 (() => {
@@ -519,6 +581,50 @@
     }
   });
 
+  // Reorder Quill text blocks to match the new segment order.
+  // Only ops that carry a `seg` attribute (inserted via "Insert" or auto-insert)
+  // are repositioned; any free-typed text stays at the end.
+  function reorderQuillBySegments(ids) {
+    if (!window.quill) return;
+    const Delta = Quill.import('delta');
+    const ops = quill.getContents().ops;
+
+    // Group consecutive ops by their seg attribute
+    const groups = [];
+    for (const op of ops) {
+      const segId = op.attributes?.seg != null ? Number(op.attributes.seg) : null;
+      const last = groups[groups.length - 1];
+      if (last && last.segId === segId) {
+        last.ops.push(op);
+      } else {
+        groups.push({ segId, ops: [op] });
+      }
+    }
+
+    // Collect per-segment ops and unsegmented (free-typed) ops
+    const segOps = {};   // segId → [ops]
+    const freeOps = [];
+    for (const g of groups) {
+      if (g.segId !== null) {
+        (segOps[g.segId] ||= []).push(...g.ops);
+      } else {
+        freeOps.push(...g.ops);
+      }
+    }
+
+    // Bail out if nothing in Quill has segment attribution (nothing to reorder)
+    if (!Object.keys(segOps).length) return;
+
+    // Rebuild delta: segments in new panel order, free text appended
+    const newOps = [];
+    for (const id of ids) {
+      if (segOps[id]) newOps.push(...segOps[id]);
+    }
+    newOps.push(...freeOps);
+
+    quill.setContents(new Delta(newOps));
+  }
+
   // drag & drop reorder
   let draggingId = null;
   listEl?.addEventListener('dragstart', (e)=>{
@@ -541,6 +647,7 @@
   });
   listEl?.addEventListener('drop', async ()=>{
     const ids = [...listEl.children].map(li => Number(li.dataset.id));
+    reorderQuillBySegments(ids);
     await fetch(`${window.SEG_API_BASE}/reorder`, {
       method:'PATCH', headers:{'Content-Type':'application/json'}, credentials:'include',
       body: JSON.stringify({ order: ids })
