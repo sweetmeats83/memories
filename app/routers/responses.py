@@ -32,6 +32,7 @@ from app.models import (
     SupportingMedia,
     Tag,
     User,
+    UserProfile,
     UserPrompt,
     WeeklyToken,
     WeeklyTokenStatus,
@@ -489,12 +490,26 @@ async def edit_response_page(
     supporting_media = (await db.execute(select(SupportingMedia).where(SupportingMedia.response_id == response_id))).scalars().all()
     pm_res = await db.execute(select(PromptMedia).where(PromptMedia.prompt_id == response.prompt_id))
     prompt_media = pm_res.scalars().all()
+    # Build profile tag suggestions (high-weight tags not already on this response)
+    profile_tag_suggestions: list[str] = []
+    try:
+        profile = await db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
+        if profile:
+            weights = (profile.tag_weights or {}).get("tagWeights", {})
+            existing_slugs = {t.slug for t in (response.tags or [])}
+            profile_tag_suggestions = [
+                slug for slug, w in sorted(weights.items(), key=lambda x: x[1], reverse=True)
+                if w >= 0.5 and slug not in existing_slugs
+            ][:20]
+    except Exception:
+        pass
     return templates.TemplateResponse('response_edit.html', {
         'request': request,
         'user': user,
         'response': response,
         'supporting_media': supporting_media,
         'prompt_media': prompt_media,
+        'profile_tag_suggestions': profile_tag_suggestions,
     })
 
 
@@ -547,7 +562,11 @@ async def save_transcription(
     user=Depends(require_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
-    response = (await db.execute(select(Response).where(Response.id == response_id, Response.user_id == user.id))).scalars().first()
+    response = (await db.execute(
+        select(Response)
+        .options(selectinload(Response.tags))
+        .where(Response.id == response_id, Response.user_id == user.id)
+    )).scalars().first()
     if not response:
         raise HTTPException(status_code=404, detail='Response not found')
     response.transcription = transcription
@@ -563,6 +582,23 @@ async def save_transcription(
                 response.tags.append(tag)
     try:
         await enrich_after_transcription(db, response)
+    except Exception:
+        pass
+    # Auto-apply user's high-weight profile tags to this response
+    try:
+        profile = await db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
+        if profile:
+            weights = (profile.tag_weights or {}).get("tagWeights", {})
+            high_weight = sorted(
+                [(slug, w) for slug, w in weights.items() if w >= 0.5],
+                key=lambda x: x[1], reverse=True,
+            )
+            existing_ids = {t.id for t in (response.tags or [])}
+            for slug, _ in high_weight[:20]:
+                tag = await db.scalar(select(Tag).where(Tag.slug == slug))
+                if tag and tag.id not in existing_ids:
+                    response.tags.append(tag)
+                    existing_ids.add(tag.id)
     except Exception:
         pass
     await db.commit()

@@ -116,6 +116,25 @@
       </div>
     </section>
 
+    <!-- Profile Tags -->
+    <section class="rounded-xl border border-black/10 bg-white/70 p-4 md:col-span-2">
+      <h2 class="text-lg font-semibold mb-1">Profile tags</h2>
+      <p class="text-sm text-gray-600 mb-3">These tags are auto-applied to your responses. Higher weight = stronger match. Remove any that don't fit you.</p>
+      {% if all_profile_tags %}
+      <div class="flex flex-wrap gap-2" id="profileTagsPanel">
+        {% for t in all_profile_tags %}
+        <span class="inline-flex items-center gap-1 rounded-full border border-black/20 bg-white/80 px-2 py-0.5 text-xs" data-slug="{{ t.slug }}">
+          <span>{{ t.slug }}</span>
+          <span class="opacity-50 text-[10px]">{{ t.weight }}</span>
+          <button type="button" class="ml-1 text-gray-400 hover:text-red-600 leading-none remove-profile-tag" aria-label="Remove {{ t.slug }}">&times;</button>
+        </span>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-sm opacity-60">No profile tags yet — complete onboarding to build your profile.</p>
+      {% endif %}
+    </section>
+
     <!-- Notifications -->
     <section class="rounded-xl border border-black/10 bg-white/70 p-4 md:col-span-2">
       <h2 class="text-lg font-semibold mb-3">Notifications</h2>
@@ -218,6 +237,21 @@
     if (roles) new Tagify(roles, { enforceWhitelist:false, dropdown:{enabled:0} });
     if (ints)  new Tagify(ints,  { enforceWhitelist:false, dropdown:{enabled:0} });
     if (places) new Tagify(places,{ enforceWhitelist:false, dropdown:{enabled:0} });
+
+    // Profile tag remove buttons
+    document.getElementById('profileTagsPanel')?.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.remove-profile-tag');
+      if (!btn) return;
+      const chip = btn.closest('[data-slug]');
+      const slug = chip?.dataset.slug;
+      if (!slug) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/settings/profile-tags/${encodeURIComponent(slug)}`, { method: 'DELETE', credentials: 'include' });
+        if (r.ok) chip.remove();
+        else btn.disabled = false;
+      } catch { btn.disabled = false; }
+    });
   })();
   </script>
 {% endblock %}

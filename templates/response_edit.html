@@ -193,6 +193,16 @@
         <small class="block mt-1 text-gray-600">
           Type to search existing tags; press Enter to add a new one.
         </small>
+        {% if profile_tag_suggestions %}
+        <div class="mt-2 flex flex-wrap gap-1" id="profileTagSuggestions">
+          <span class="text-xs text-gray-500 mr-1 self-center">From your profile:</span>
+          {% for slug in profile_tag_suggestions %}
+          <button type="button"
+            class="text-xs px-2 py-0.5 rounded-full border border-orange-400 text-orange-700 bg-orange-50 hover:bg-orange-100 transition profile-tag-chip"
+            data-slug="{{ slug }}">+ {{ slug }}</button>
+          {% endfor %}
+        </div>
+        {% endif %}
       </div>
   </form>
 
@@ -1374,6 +1384,18 @@
   tagify.on('add', saveTags);
   tagify.on('remove', saveTags);
   tagify.on('edit:updated', saveTags);
+
+  // Profile tag suggestion chips
+  document.querySelectorAll('.profile-tag-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const slug = btn.dataset.slug;
+      // Derive a readable name from the slug (strip prefix, replace dashes)
+      const name = slug.includes(':') ? slug.split(':').slice(1).join(':').replace(/-/g, ' ') : slug.replace(/-/g, ' ');
+      const already = tagify.value.some(t => t.value.toLowerCase() === name.toLowerCase() || (t.slug && t.slug === slug));
+      if (!already) tagify.addTags([{ value: name, slug }]);
+      btn.remove();
+    });
+  });
 })();
 </script>
 <script id="segments-bundle">

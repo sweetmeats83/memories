@@ -47,28 +47,6 @@ def _role_options_from_whitelist() -> list[str]:
     return roles
 
 
-def _push_graylist(privacy_prefs: dict, slugs: list[str]) -> None:
-    if not slugs:
-        return
-    gp = privacy_prefs.setdefault("graylist_tags", [])
-    existing = set(gp)
-    for s in slugs:
-        if s not in existing:
-            gp.append(s)
-            existing.add(s)
-
-
-def _normalize_role_input(value: str) -> str:
-    v = (value or "").strip().lower()
-    if not v:
-        return ""
-    if v.startswith("relationship:"):
-        v = v.split(":", 1)[1]
-    elif v.startswith("role:"):
-        v = v.split(":", 1)[1]
-    return slug_role(slugify(v))
-
-
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -133,17 +111,13 @@ async def onboarding_roles(
     tw = dict(prof.tag_weights or {"tagWeights": {}})
     weights = tw.setdefault("tagWeights", {})
     incoming = payload if isinstance(payload, list) else payload.get("roles") or []
-    wl_roles = set(_role_options_from_whitelist())
     cleaned_roles = []
-    off_whitelist = []
     for r in incoming:
         v = (r.get("value") if isinstance(r, dict) else str(r or "")).strip()
         if not v:
             continue
         if v.startswith("relationship:"):
             v = v.split(":", 1)[1]
-        if v not in wl_roles:
-            off_whitelist.append(f"role:{slugify(v)}")
         cleaned_roles.append(v)
     role_slugs = [slug_role(r) for r in cleaned_roles]
     for rs in role_slugs:
@@ -151,7 +125,6 @@ async def onboarding_roles(
         await _get_or_create_tag(db, rs)
     prof.tag_weights = tw
     pp = dict(prof.privacy_prefs or {})
-    _push_graylist(pp, off_whitelist)
     pp["onboarding"] = dict(pp.get("onboarding") or {})
     pp["onboarding"]["step"] = "family"
     prof.privacy_prefs = pp
@@ -170,9 +143,7 @@ async def onboarding_family(
     tw = dict(prof.tag_weights or {"tagWeights": {}})
     weights = tw.setdefault("tagWeights", {})
     items = payload if isinstance(payload, list) else payload.get("family") or []
-    wl_roles = set(_role_options_from_whitelist())
     created = []
-    gray_add = []
     for row in items:
         name = (row.get("name") or "").strip()
         role = (row.get("role") or "").strip()
@@ -187,12 +158,9 @@ async def onboarding_family(
             r_tag = slug_role(base_role)
             weights[r_tag] = max(weights.get(r_tag, 0.0), 0.7)
             await _get_or_create_tag(db, r_tag)
-            if base_role not in wl_roles:
-                gray_add.append(r_tag)
         created.append({"person_id": person.id, "name": name, "role": role})
     prof.tag_weights = tw
     pp = dict(prof.privacy_prefs or {})
-    _push_graylist(pp, gray_add)
     pp["onboarding"] = dict(pp.get("onboarding") or {})
     pp["onboarding"]["step"] = "places"
     prof.privacy_prefs = pp
@@ -221,10 +189,8 @@ async def onboarding_places(
         place_slugs.append(ps)
         weights[ps] = max(weights.get(ps, 0.0), 0.5)
         await _get_or_create_tag(db, ps)
-        gray_add.append(ps)
     prof.tag_weights = tw
     pp = dict(prof.privacy_prefs or {})
-    _push_graylist(pp, gray_add)
     pp["onboarding"] = dict(pp.get("onboarding") or {})
     pp["onboarding"]["step"] = "interests"
     prof.privacy_prefs = pp
@@ -253,11 +219,9 @@ async def onboarding_interests(
         interest_slugs.append(ts)
         weights[ts] = max(weights.get(ts, 0.0), 0.6)
         await _get_or_create_tag(db, ts)
-        gray_add.append(ts)
     prof.tag_weights = tw
     prof.interests = interest_slugs or None
     pp = dict(prof.privacy_prefs or {})
-    _push_graylist(pp, gray_add)
     pp["onboarding"] = dict(pp.get("onboarding") or {})
     pp["onboarding"]["step"] = "preview"
     prof.privacy_prefs = pp

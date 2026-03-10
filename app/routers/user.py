@@ -126,6 +126,15 @@ async def settings_page(
             'is_admin': bool(getattr(candidate, 'is_superuser', False)),
         })
 
+    # All profile tags sorted by weight descending, for the settings panel
+    all_profile_tags: list[dict] = []
+    if profile and isinstance(profile.tag_weights, dict):
+        tw_all = dict(profile.tag_weights or {}).get('tagWeights') or {}
+        all_profile_tags = sorted(
+            [{'slug': k, 'weight': round(v, 2)} for k, v in tw_all.items() if (v or 0) > 0],
+            key=lambda x: x['weight'], reverse=True,
+        )
+
     ctx = {
         'request': request,
         'user': user,
@@ -139,8 +148,30 @@ async def settings_page(
         'notify_new_responses_enabled': bool(getattr(user, 'notify_new_responses', False)),
         'notification_watchers': watchers,
         'notification_options': notification_options,
+        'all_profile_tags': all_profile_tags,
     }
     return templates.TemplateResponse('settings.html', ctx)
+
+
+@router.delete('/settings/profile-tags/{slug:path}')
+async def remove_profile_tag(
+    slug: str,
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    profile = (await db.execute(select(UserProfile).where(UserProfile.user_id == user.id))).scalars().first()
+    if not profile:
+        raise HTTPException(status_code=404, detail='Profile not found')
+    tw = dict(profile.tag_weights or {})
+    weights = tw.get('tagWeights') or {}
+    if slug in weights:
+        del weights[slug]
+        tw['tagWeights'] = weights
+        profile.tag_weights = tw
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(profile, 'tag_weights')
+        await db.commit()
+    return {'ok': True}
 
 
 @router.post('/settings/profile')
