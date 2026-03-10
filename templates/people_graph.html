@@ -97,6 +97,8 @@
     /* Edit button reveal on hover for the display panel */
     #panel_view .edit-btn { opacity: 0; transition: opacity .2s ease; }
     #panel_view:hover .edit-btn { opacity: 1; }
+    /* Active cleanup tab */
+    .cleanup-tab.is-active { background: rgba(255,156,234,0.35); border-color: rgba(200,119,207,0.6); }
 
     /* Resize handles for edit panel */
     #panel .resize-handle { position: absolute; z-index: 2; }
@@ -175,9 +177,37 @@
       <button id="np_add" class="graph-btn">Add</button>
     </div>
     <!-- People search (right-aligned) -->
-    <div class="relative ml-auto">
+    <div class="relative ml-auto flex items-center gap-2">
+      <button id="cleanup_btn" class="graph-btn" title="Clean up false positives" style="display:inline-flex;align-items:center;padding:4px 6px;"><span class="material-symbols-outlined" style="font-size:18px;line-height:1">cleaning_services</span></button>
       <input id="pg_search" type="search" placeholder="Search people..." class="graph-input w-64" autocomplete="off" />
       <div id="pgSearchDD" class="absolute z-40 right-0 mt-1 w-72 max-h-64 overflow-auto bg-white/90 border border-black rounded-lg shadow hidden"></div>
+    </div>
+  </div>
+
+  <!-- Cleanup Panel -->
+  <div id="cleanup_panel" class="graph-card fixed left-3 top-28 z-40 w-[380px] max-w-[92vw] p-3 text-[13px]" style="display:none; max-height: calc(100vh - 8rem); overflow: auto;">
+    <div class="flex items-center gap-2 mb-2">
+      <div class="font-semibold flex-1">Clean up people</div>
+      <button id="cleanup_close" class="graph-btn text-sm">Close</button>
+    </div>
+    <!-- Tabs -->
+    <div class="flex gap-1 mb-3 border-b border-black/10 pb-1">
+      <button class="cleanup-tab graph-btn text-xs is-active" data-tab="remove">Remove</button>
+      <button class="cleanup-tab graph-btn text-xs" data-tab="merge">Merge duplicates</button>
+    </div>
+    <!-- Remove tab -->
+    <div id="cleanup_tab_remove">
+      <p class="text-xs text-stone-500 mb-2">Sorted by fewest mentions — false positives are usually at the top.</p>
+      <div class="flex gap-2 mb-2">
+        <input id="cleanup_filter" type="search" placeholder="Filter list…" class="graph-input flex-1 text-xs" autocomplete="off" />
+      </div>
+      <div id="cleanup_list" class="space-y-1"></div>
+    </div>
+    <!-- Merge tab -->
+    <div id="cleanup_tab_merge" style="display:none">
+      <p class="text-xs text-stone-500 mb-2">Detected duplicate names and aliases. Choose which person to keep — the other's mentions, connections, and name become an alias.</p>
+      <button id="merge_refresh" class="graph-btn text-xs mb-2">Scan for duplicates</button>
+      <div id="merge_list" class="space-y-2"></div>
     </div>
   </div>
 
@@ -292,7 +322,7 @@
   </div>
 
 
-<script type="module" src="{{ url_for('static', path='js/people_graph.js') }}?v=20260307c"></script>
+<script type="module" src="{{ url_for('static', path='js/people_graph.js') }}?v=20260310b"></script>
 
 </section>
 

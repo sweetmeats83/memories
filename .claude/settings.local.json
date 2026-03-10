@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Read(///wildspace/compose/memories3/app/**)"
+      "Read(///wildspace/compose/memories3/app/**)",
+      "Read(///wildspace/compose/memories3/**)"
     ]
   }
 }

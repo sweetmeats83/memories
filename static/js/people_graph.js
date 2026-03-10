@@ -1780,6 +1780,218 @@ console.info("people_graph.js — click path & hover path build loaded");
     loop();
   }
 
+  // ── Cleanup panel ──────────────────────────────────────────────────────────
+  (function initCleanup() {
+    const btn       = document.getElementById('cleanup_btn');
+    const panel     = document.getElementById('cleanup_panel');
+    const closeBtn  = document.getElementById('cleanup_close');
+    const listEl    = document.getElementById('cleanup_list');
+    const filterEl  = document.getElementById('cleanup_filter');
+    if (!btn || !panel || !listEl) return;
+
+    let _allRows = []; // {id, name, mentions, hasRole, hasEdge}
+
+    async function loadCleanup() {
+      listEl.innerHTML = '<div class="text-xs text-stone-400 py-2">Loading…</div>';
+      try {
+        const r = await fetch('/api/people/all', { credentials: 'include' });
+        const data = await r.json();
+        _allRows = (data.people || []).map(n => ({
+          id:       n.id,
+          name:     n.name || `#${n.id}`,
+          mentions: n.mentions || 0,
+          edges:    n.edges || 0,
+          hidden:   !!n.hidden,
+          hasRole:  !!(n.role_hint || n.connect_to_owner),
+        }));
+      } catch {
+        listEl.innerHTML = '<div class="text-xs text-red-500 py-2">Failed to load people.</div>';
+        return;
+      }
+      renderList(filterEl?.value || '');
+    }
+
+    function renderList(q) {
+      const query = (q || '').toLowerCase().trim();
+      const rows  = query ? _allRows.filter(r => r.name.toLowerCase().includes(query)) : _allRows;
+      if (!rows.length) {
+        listEl.innerHTML = '<div class="text-xs text-stone-400 py-2">Nothing to show.</div>';
+        return;
+      }
+      listEl.innerHTML = '';
+      for (const row of rows) {
+        const el = document.createElement('div');
+        el.className = 'flex items-center gap-2 py-1 border-b border-black/5' + (row.hidden ? ' opacity-50' : '');
+        el.dataset.id = row.id;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'flex-1 truncate font-medium';
+        nameSpan.textContent = row.name + (row.hidden ? ' (hidden)' : '');
+
+        // mention badge — red if 0, normal otherwise
+        const badge = document.createElement('span');
+        const noMentions = row.mentions === 0;
+        badge.className = 'text-[10px] px-1.5 py-0.5 rounded-full border shrink-0 ' +
+          (noMentions ? 'border-red-300 text-red-500 bg-red-50' : 'border-stone-300 text-stone-500 bg-stone-50');
+        badge.textContent = noMentions ? 'no mentions' : `${row.mentions}×`;
+        badge.title = `${row.mentions} mention${row.mentions === 1 ? '' : 's'}, ${row.edges} connection${row.edges === 1 ? '' : 's'}`;
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.textContent = row.hidden ? 'Unhide' : 'Hide';
+        toggleBtn.className = 'graph-btn text-xs shrink-0';
+        toggleBtn.title = row.hidden ? 'Restore to graph' : 'Remove from graph (keeps the record)';
+        toggleBtn.addEventListener('click', async () => {
+          toggleBtn.disabled = delBtn.disabled = true;
+          const newHidden = !row.hidden;
+          await fetch(`/api/people/${row.id}`, {
+            method: 'PATCH', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hidden: newHidden }),
+          });
+          row.hidden = newHidden;
+          // Re-render in place
+          renderList(filterEl?.value || '');
+          await refreshGraph();
+        });
+
+        const delBtn = document.createElement('button');
+        delBtn.textContent = 'Delete';
+        delBtn.className = 'graph-btn text-xs shrink-0';
+        delBtn.style.cssText = 'border-color:#ef4444;background:rgba(239,68,68,0.15);color:#7f1d1d';
+        delBtn.title = 'Permanently delete this person';
+        delBtn.addEventListener('click', async () => {
+          if (!confirm(`Delete "${row.name}"? This cannot be undone.`)) return;
+          toggleBtn.disabled = delBtn.disabled = true;
+          await fetch(`/api/people/${row.id}`, { method: 'DELETE', credentials: 'include' });
+          _allRows = _allRows.filter(r => r.id !== row.id);
+          renderList(filterEl?.value || '');
+          await refreshGraph();
+        });
+
+        el.appendChild(nameSpan);
+        el.appendChild(badge);
+        el.appendChild(toggleBtn);
+        el.appendChild(delBtn);
+        listEl.appendChild(el);
+      }
+    }
+
+    // Tab switching
+    const tabRemove = document.getElementById('cleanup_tab_remove');
+    const tabMerge  = document.getElementById('cleanup_tab_merge');
+    document.querySelectorAll('.cleanup-tab').forEach(tabBtn => {
+      tabBtn.addEventListener('click', () => {
+        document.querySelectorAll('.cleanup-tab').forEach(t => t.classList.remove('is-active'));
+        tabBtn.classList.add('is-active');
+        const which = tabBtn.dataset.tab;
+        tabRemove.style.display = which === 'remove' ? '' : 'none';
+        tabMerge.style.display  = which === 'merge'  ? '' : 'none';
+      });
+    });
+
+    // Merge tab
+    const mergeList    = document.getElementById('merge_list');
+    const mergeRefresh = document.getElementById('merge_refresh');
+
+    async function loadMerge() {
+      if (!mergeList) return;
+      mergeList.innerHTML = '<div class="text-xs text-stone-400 py-2">Scanning…</div>';
+      try {
+        const r = await fetch('/api/people/duplicates', { credentials: 'include' });
+        const data = await r.json();
+        const groups      = data.groups      || [];
+        const aliasPairs  = data.alias_pairs || [];
+        if (!groups.length && !aliasPairs.length) {
+          mergeList.innerHTML = '<div class="text-xs text-stone-500 py-2">No duplicates or alias matches found.</div>';
+          return;
+        }
+        mergeList.innerHTML = '';
+
+        function makeMergeRow(a, b, label) {
+          const wrap = document.createElement('div');
+          wrap.className = 'border border-black/10 rounded-lg p-2 space-y-1 bg-white/60';
+          if (label) {
+            const lbl = document.createElement('div');
+            lbl.className = 'text-[10px] text-stone-400 uppercase tracking-wide';
+            lbl.textContent = label;
+            wrap.appendChild(lbl);
+          }
+          const names = document.createElement('div');
+          names.className = 'flex items-center gap-2 text-xs font-medium flex-wrap';
+          names.innerHTML = `<span class="truncate max-w-[120px]" title="${a.name}">${a.name}</span>
+            <span class="opacity-40">↔</span>
+            <span class="truncate max-w-[120px]" title="${b.name}">${b.name}</span>`;
+          wrap.appendChild(names);
+
+          const actions = document.createElement('div');
+          actions.className = 'flex gap-1 flex-wrap mt-1';
+
+          function mergeBtn(keepId, keepName, delId, delName) {
+            const mb = document.createElement('button');
+            mb.className = 'graph-btn text-xs';
+            mb.textContent = `Keep "${keepName}"`;
+            mb.title = `Merge "${delName}" into "${keepName}"`;
+            mb.addEventListener('click', async () => {
+              if (!confirm(`Merge "${delName}" into "${keepName}"?\n\n"${delName}" will be deleted and its mentions and connections transferred. Its name will become an alias.`)) return;
+              mb.disabled = true;
+              const res = await fetch('/api/people/merge', {
+                method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keep_id: keepId, delete_id: delId }),
+              });
+              if (res.ok) {
+                wrap.remove();
+                _allRows = _allRows.filter(r => r.id !== delId);
+                await refreshGraph();
+              } else {
+                mb.disabled = false;
+                alert('Merge failed — check the console.');
+              }
+            });
+            return mb;
+          }
+
+          actions.appendChild(mergeBtn(a.id, a.name, b.id, b.name));
+          actions.appendChild(mergeBtn(b.id, b.name, a.id, a.name));
+
+          const skipBtn = document.createElement('button');
+          skipBtn.className = 'graph-btn text-xs';
+          skipBtn.textContent = 'Not a duplicate';
+          skipBtn.style.cssText = 'opacity:0.6';
+          skipBtn.addEventListener('click', () => wrap.remove());
+          actions.appendChild(skipBtn);
+
+          wrap.appendChild(actions);
+          mergeList.appendChild(wrap);
+        }
+
+        for (const group of groups) {
+          // For groups > 2, show all pairwise combos
+          for (let i = 0; i < group.length; i++) {
+            for (let j = i + 1; j < group.length; j++) {
+              makeMergeRow(group[i], group[j], 'Same name');
+            }
+          }
+        }
+        for (const pair of aliasPairs) {
+          makeMergeRow(pair.a, pair.b, 'Name matches alias');
+        }
+      } catch (err) {
+        mergeList.innerHTML = '<div class="text-xs text-red-500 py-2">Failed to scan for duplicates.</div>';
+      }
+    }
+
+    mergeRefresh?.addEventListener('click', loadMerge);
+
+    btn.addEventListener('click', async () => {
+      const open = panel.style.display !== 'none';
+      panel.style.display = open ? 'none' : '';
+      if (!open) await loadCleanup();
+    });
+    closeBtn?.addEventListener('click', () => { panel.style.display = 'none'; });
+    filterEl?.addEventListener('input', () => renderList(filterEl.value));
+  })();
+
   // Boot
   (async () => {
     try { const r = await fetch('/api/roles', { credentials:'include' }); const j = await r.json(); window.__ROLES__ = j.roles || []; } catch {}

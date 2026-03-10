@@ -13,14 +13,14 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
 from pydantic import BaseModel
-from sqlalchemy import select, exists, func
+from sqlalchemy import select, exists, func, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.database import get_db
 from app.models import (
-    Person, RelationshipEdge, ResponsePerson,
+    Person, PersonAlias, RelationshipEdge, ResponsePerson,
     KinGroup, KinMembership, PersonShare,
     UserProfile, Response,
 )
@@ -224,7 +224,7 @@ async def api_people_graph(user=Depends(require_authenticated_user), db: AsyncSe
             continue
         if rid in own_ids and inferred_map.get(rid) and (mention_map.get(rid, 0) == 0) and (not (rolehint_map.get(rid) or connect_map.get(rid))):
             continue
-        nodes.append({'id': rid, 'name': name, 'kind': 'person', 'dead': bool(dead_map.get(rid)), 'color': color_map.get(rid)})
+        nodes.append({'id': rid, 'name': name, 'kind': 'person', 'dead': bool(dead_map.get(rid)), 'color': color_map.get(rid), 'mentions': mention_map.get(rid, 0), 'role_hint': rolehint_map.get(rid), 'connect_to_owner': connect_map.get(rid, False)})
     ers = (await db.execute(select(RelationshipEdge).where(RelationshipEdge.user_id == user.id))).scalars().all()
     edges = [{'src': e.src_id, 'dst': e.dst_id, 'rel': e.rel_type, 'confidence': getattr(e, 'confidence', None), 'generation': int((e.meta or {}).get('generation')) if isinstance(getattr(e, 'meta', None), dict) and (e.meta or {}).get('generation') is not None else None} for e in ers if e.src_id in node_ids and e.dst_id in node_ids]
     try:
@@ -889,6 +889,181 @@ async def api_people_inferred(user=Depends(require_authenticated_user), db: Asyn
     data = [{'id': p.id, 'name': p.display_name, 'mentions': counts.get(p.id, 0)} for p in inferred]
     data.sort(key=lambda x: (-x['mentions'], x['name'].lower()))
     return {'people': data}
+
+
+@router.get('/api/people/all')
+async def api_people_all(user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    """Flat list of all owned people including hidden — for the cleanup panel."""
+    rows = (await db.execute(select(Person).where(Person.owner_user_id == user.id))).scalars().all()
+    pids = [p.id for p in rows]
+    counts: dict[int, int] = {}
+    if pids:
+        cnt_rows = (await db.execute(
+            select(ResponsePerson.person_id, func.count(ResponsePerson.id))
+            .join(Response, Response.id == ResponsePerson.response_id)
+            .where(Response.user_id == user.id, ResponsePerson.person_id.in_(pids))
+            .group_by(ResponsePerson.person_id)
+        )).all()
+        counts = {pid: int(c) for pid, c in cnt_rows}
+    edge_counts: dict[int, int] = {}
+    if pids:
+        e_rows = (await db.execute(
+            select(RelationshipEdge.src_id, func.count(RelationshipEdge.id))
+            .where(RelationshipEdge.user_id == user.id, RelationshipEdge.src_id.in_(pids))
+            .group_by(RelationshipEdge.src_id)
+        )).all()
+        for pid, cnt in e_rows:
+            edge_counts[pid] = edge_counts.get(pid, 0) + int(cnt)
+        e_rows2 = (await db.execute(
+            select(RelationshipEdge.dst_id, func.count(RelationshipEdge.id))
+            .where(RelationshipEdge.user_id == user.id, RelationshipEdge.dst_id.in_(pids))
+            .group_by(RelationshipEdge.dst_id)
+        )).all()
+        for pid, cnt in e_rows2:
+            edge_counts[pid] = edge_counts.get(pid, 0) + int(cnt)
+    data = []
+    for p in rows:
+        meta = getattr(p, 'meta', {}) or {}
+        data.append({
+            'id':      p.id,
+            'name':    p.display_name or '',
+            'hidden':  bool(meta.get('hidden')),
+            'role_hint': meta.get('role_hint'),
+            'connect_to_owner': bool(meta.get('connect_to_owner')),
+            'mentions': counts.get(p.id, 0),
+            'edges':   edge_counts.get(p.id, 0),
+        })
+    data.sort(key=lambda x: (x['mentions'], x['name'].lower()))
+    return {'people': data}
+
+
+def _name_key(name: str) -> str:
+    """Normalise a display name for fuzzy duplicate detection."""
+    return re.sub(r'[^a-z0-9]', '', (name or '').lower().strip())
+
+
+@router.get('/api/people/duplicates')
+async def api_people_duplicates(user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    """Return groups of people whose normalised names are identical or very similar."""
+    rows = (await db.execute(
+        select(Person.id, Person.display_name, Person.meta)
+        .where(Person.owner_user_id == user.id)
+    )).all()
+    # Also pull aliases so we can match e.g. "Bob" -> alias of "Robert"
+    pids = [r[0] for r in rows]
+    alias_rows: list[tuple[int, str]] = []
+    if pids:
+        alias_rows = (await db.execute(
+            select(PersonAlias.person_id, PersonAlias.alias).where(PersonAlias.person_id.in_(pids))
+        )).all()
+    alias_map: dict[str, list[int]] = {}  # normalised alias -> [person_ids]
+    for pid, alias in alias_rows:
+        key = _name_key(alias)
+        if key:
+            alias_map.setdefault(key, []).append(pid)
+
+    # Group by normalised name
+    by_key: dict[str, list[dict]] = {}
+    for pid, dname, meta in rows:
+        key = _name_key(dname)
+        if not key:
+            continue
+        by_key.setdefault(key, []).append({'id': pid, 'name': dname or '', 'hidden': bool((meta or {}).get('hidden'))})
+
+    # Also include pairs where one person's name matches another's alias
+    alias_pairs: list[dict] = []
+    seen_pairs: set[tuple[int, int]] = set()
+    for key, apids in alias_map.items():
+        if key in by_key:
+            for node in by_key[key]:
+                for apid in apids:
+                    if apid != node['id']:
+                        pair = tuple(sorted([node['id'], apid]))
+                        if pair not in seen_pairs:
+                            seen_pairs.add(pair)
+                            # look up the alias-holder's name
+                            holder = next((r for r in rows if r[0] == apid), None)
+                            if holder:
+                                alias_pairs.append({'a': node, 'b': {'id': holder[0], 'name': holder[1] or ''}})
+
+    groups = [nodes for nodes in by_key.values() if len(nodes) > 1]
+    return {'groups': groups, 'alias_pairs': alias_pairs}
+
+
+class MergePersonReq(BaseModel):
+    keep_id: int
+    delete_id: int
+
+
+@router.post('/api/people/merge')
+async def api_people_merge(payload: MergePersonReq, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    """Merge delete_id into keep_id: transfer all references then delete."""
+    keep = await db.get(Person, payload.keep_id)
+    gone = await db.get(Person, payload.delete_id)
+    if not keep or keep.owner_user_id != user.id:
+        raise HTTPException(404, 'Keep person not found')
+    if not gone or gone.owner_user_id != user.id:
+        raise HTTPException(404, 'Delete person not found')
+    if keep.id == gone.id:
+        raise HTTPException(400, 'Cannot merge a person with themselves')
+
+    # 1. Add deleted person's display name (and their aliases) as aliases on keep
+    existing_aliases = {
+        a.alias.lower() for a in (await db.execute(
+            select(PersonAlias).where(PersonAlias.person_id == keep.id)
+        )).scalars().all()
+    }
+    new_alias_names = {gone.display_name} if gone.display_name else set()
+    gone_aliases = (await db.execute(
+        select(PersonAlias).where(PersonAlias.person_id == gone.id)
+    )).scalars().all()
+    for a in gone_aliases:
+        new_alias_names.add(a.alias)
+    for aname in new_alias_names:
+        if aname and aname.lower() not in existing_aliases and aname.lower() != (keep.display_name or '').lower():
+            db.add(PersonAlias(person_id=keep.id, alias=aname))
+
+    # 2. Re-point ResponsePerson rows
+    await db.execute(
+        sa_update(ResponsePerson)
+        .where(ResponsePerson.person_id == gone.id)
+        .values(person_id=keep.id)
+    )
+
+    # 3. Re-point RelationshipEdge rows (src and dst), skip if would create a duplicate
+    edge_rows = (await db.execute(
+        select(RelationshipEdge).where(
+            RelationshipEdge.user_id == user.id,
+            (RelationshipEdge.src_id == gone.id) | (RelationshipEdge.dst_id == gone.id)
+        )
+    )).scalars().all()
+    for e in edge_rows:
+        new_src = keep.id if e.src_id == gone.id else e.src_id
+        new_dst = keep.id if e.dst_id == gone.id else e.dst_id
+        if new_src == new_dst:
+            await db.delete(e)
+            continue
+        # Check for existing identical edge
+        clash = await db.scalar(
+            select(RelationshipEdge.id).where(
+                RelationshipEdge.user_id == user.id,
+                RelationshipEdge.src_id == new_src,
+                RelationshipEdge.dst_id == new_dst,
+                RelationshipEdge.rel_type == e.rel_type,
+            )
+        )
+        if clash:
+            await db.delete(e)
+        else:
+            e.src_id = new_src
+            e.dst_id = new_dst
+
+    # 4. Delete the gone person's aliases (already migrated) then the person itself
+    for a in gone_aliases:
+        await db.delete(a)
+    await db.delete(gone)
+    await db.commit()
+    return {'ok': True, 'kept_id': keep.id}
 
 
 # ---------------------------------------------------------------------------
