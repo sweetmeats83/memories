@@ -71,17 +71,17 @@ app.add_middleware(
 # Route Includes
 # ----------------------
 app.include_router(upload_router)
+app.include_router(user_router)
+app.include_router(responses_router)
 app.include_router(people_router)
 app.include_router(weekly_router)
 app.include_router(onboarding_router)
 app.include_router(admin_tags_router)
 app.include_router(admin_responses_router)
 app.include_router(push_router)
-app.include_router(router)
-app.include_router(user_router)
-app.include_router(responses_router)
 app.include_router(admin_prompts_router)
 app.include_router(invites_router)
+app.include_router(router)
 
 # Authentication Routes
 app.include_router(
