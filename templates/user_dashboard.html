@@ -61,14 +61,14 @@
     <div class="tint absolute inset-0 rounded-2xl bg-white/20 backdrop-blur-sm
               opacity-0 transition group-hover:opacity-100 pointer-events-none"></div>
     <!-- subtle pulsing mic pill (clickable area stays the entire band) -->
-    <span class="prompt-cta" aria-hidden="true">
+    <span class="prompt-cta hidden sm:inline-flex" aria-hidden="true">
       <svg viewBox="0 0 24 24" width="16" height="16" class="mr-1 inline-block">
         <path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3zm6-3a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.94V21h2v-2.06A8 8 0 0 0 20 11h-2z"/>
       </svg>
       Tap to record
     </span>
     <!-- Text -->
-    <div class="relative z-10 px-4 sm:px-6 py-6 sm:py-10">
+    <div class="relative z-10 px-4 sm:px-6 py-4 sm:py-10 overflow-hidden">
       <h1 id="bannerTitle"
         class="font-baskerville text-black dark:text-black-100 leading-tight text-[clamp(1rem,6vw,3rem)]">
         {% if current_prompt %}{{ current_prompt.text }}{% else %}What stories do you have?{% endif %}

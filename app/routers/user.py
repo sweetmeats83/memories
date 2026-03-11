@@ -321,7 +321,7 @@ async def settings_password_update(
     user=Depends(require_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from passlib.hash import bcrypt as _bcrypt
+    import bcrypt as _bcrypt_lib
 
     cur = (current_password or '').strip()
     new = (new_password or '').strip()
@@ -331,12 +331,12 @@ async def settings_password_update(
     if len(new) < 8:
         return RedirectResponse(url='/settings?notice=Password+must+be+at+least+8+characters&error=1', status_code=303)
     try:
-        ok = _bcrypt.verify(cur, user.hashed_password or '')
+        ok = _bcrypt_lib.checkpw(cur.encode(), (user.hashed_password or '').encode())
     except Exception:
         ok = False
     if not ok:
         return RedirectResponse(url='/settings?notice=Current+password+is+incorrect&error=1', status_code=303)
-    user.hashed_password = _bcrypt.hash(new)
+    user.hashed_password = _bcrypt_lib.hashpw(new.encode(), _bcrypt_lib.gensalt()).decode()
     await db.commit()
     return RedirectResponse(url='/settings?notice=Password+updated', status_code=303)
 

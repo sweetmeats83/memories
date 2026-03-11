@@ -43,7 +43,7 @@ from app.transcription import enrich_after_transcription
 from app.utils import require_admin_user, slug_role
 from app.models import UserProfile
 from app.background import spawn
-from passlib.hash import bcrypt
+import bcrypt as _bcrypt_lib
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -65,7 +65,7 @@ async def admin_force_password(
         raise HTTPException(status_code=404, detail='User not found')
     if not new_password or len(new_password) < 8:
         raise HTTPException(status_code=400, detail='New password too short')
-    target.hashed_password = bcrypt.hash(new_password)
+    target.hashed_password = _bcrypt_lib.hashpw(new_password.encode(), _bcrypt_lib.gensalt()).decode()
     target.must_change_password = True
     await db.commit()
     return RedirectResponse(url='/admin_dashboard?notice=Password+updated', status_code=303)

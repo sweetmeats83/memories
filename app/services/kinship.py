@@ -3,10 +3,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Iterable, Dict, Tuple, Set
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import RelationshipEdge, Person
+from app.models import RelationshipEdge, Person, KinMembership
+
+
+async def _group_for_user(db: AsyncSession, user_id: int) -> int | None:
+    """Return the user's single KinGroup id, or None if they belong to 0 or 2+ groups."""
+    rows = (await db.execute(select(KinMembership.group_id).where(KinMembership.user_id == user_id))).scalars().all()
+    return rows[0] if len(rows) == 1 else None
+
+
+def _edge_scope(user_id: int, group_id: int | None):
+    """Return the SQLAlchemy WHERE clause for loading a user's visible edges."""
+    if group_id is not None:
+        return or_(
+            (RelationshipEdge.user_id == user_id) & RelationshipEdge.group_id.is_(None),
+            RelationshipEdge.group_id == group_id,
+        )
+    return RelationshipEdge.user_id == user_id
 
 
 # Canonical edge kinds used to derive kinship. Keep using RelationshipEdge as-is.
@@ -48,13 +64,14 @@ class KinshipResult:
     is_affinal: bool = False  # True for in-law relationships
 
 
-async def _parents_with_types(db: AsyncSession, user_id: int, person_id: int) -> list[tuple[int, str]]:
+async def _parents_with_types(db: AsyncSession, user_id: int, person_id: int, group_id: int | None = None) -> list[tuple[int, str]]:
     """Return list of (parent_id, rel_type) for the given person, accepting both directions."""
+    scope = _edge_scope(user_id, group_id)
     # Case 1: stored as parent -> child
     rows1 = await db.execute(
         select(RelationshipEdge.src_id, RelationshipEdge.rel_type)
         .where(
-            RelationshipEdge.user_id == user_id,
+            scope,
             RelationshipEdge.dst_id == person_id,
             RelationshipEdge.rel_type.in_(PARENT_EDGE_TYPES_FWD),
         )
@@ -64,7 +81,7 @@ async def _parents_with_types(db: AsyncSession, user_id: int, person_id: int) ->
     rows2 = await db.execute(
         select(RelationshipEdge.dst_id, RelationshipEdge.rel_type)
         .where(
-            RelationshipEdge.user_id == user_id,
+            scope,
             RelationshipEdge.src_id == person_id,
             RelationshipEdge.rel_type.in_(PARENT_EDGE_TYPES_REV),
         )
@@ -73,12 +90,13 @@ async def _parents_with_types(db: AsyncSession, user_id: int, person_id: int) ->
     return out
 
 
-async def _parents_set(db: AsyncSession, user_id: int, person_id: int) -> set[int]:
+async def _parents_set(db: AsyncSession, user_id: int, person_id: int, group_id: int | None = None) -> set[int]:
     # Accept both storage directions
+    scope = _edge_scope(user_id, group_id)
     rows1 = await db.execute(
         select(RelationshipEdge.src_id)
         .where(
-            RelationshipEdge.user_id == user_id,
+            scope,
             RelationshipEdge.dst_id == person_id,
             RelationshipEdge.rel_type.in_(PARENT_EDGE_TYPES_FWD),
         )
@@ -86,7 +104,7 @@ async def _parents_set(db: AsyncSession, user_id: int, person_id: int) -> set[in
     rows2 = await db.execute(
         select(RelationshipEdge.dst_id)
         .where(
-            RelationshipEdge.user_id == user_id,
+            scope,
             RelationshipEdge.src_id == person_id,
             RelationshipEdge.rel_type.in_(PARENT_EDGE_TYPES_REV),
         )
@@ -95,7 +113,7 @@ async def _parents_set(db: AsyncSession, user_id: int, person_id: int) -> set[in
 
 
 async def _ancestor_map(
-    db: AsyncSession, user_id: int, seed_id: int, max_depth: int = 10
+    db: AsyncSession, user_id: int, seed_id: int, max_depth: int = 10, group_id: int | None = None
 ) -> Dict[int, tuple[int, bool, bool]]:
     """
     BFS upward via parent edges.
@@ -110,7 +128,7 @@ async def _ancestor_map(
         node, d, saw_step, saw_adopt = frontier.pop(0)
         if d >= max_depth:
             continue
-        parents = await _parents_with_types(db, user_id, node)
+        parents = await _parents_with_types(db, user_id, node, group_id=group_id)
         for pid, rtype in parents:
             step_flag = saw_step or (rtype == "step-parent-of")
             adopt_flag = saw_adopt or (rtype == "adoptive-parent-of")
@@ -207,11 +225,12 @@ def _gendered_variant(neutral: str, alter_gender: Optional[str]) -> Optional[str
     return m.get(neutral)
 
 
-async def _partners(db: AsyncSession, user_id: int, person_id: int) -> Set[int]:
+async def _partners(db: AsyncSession, user_id: int, person_id: int, group_id: int | None = None) -> Set[int]:
+    scope = _edge_scope(user_id, group_id)
     rows1 = await db.execute(
         select(RelationshipEdge.dst_id)
         .where(
-            RelationshipEdge.user_id == user_id,
+            scope,
             RelationshipEdge.src_id == person_id,
             RelationshipEdge.rel_type.in_(PARTNER_EDGE_TYPES),
         )
@@ -219,7 +238,7 @@ async def _partners(db: AsyncSession, user_id: int, person_id: int) -> Set[int]:
     rows2 = await db.execute(
         select(RelationshipEdge.src_id)
         .where(
-            RelationshipEdge.user_id == user_id,
+            scope,
             RelationshipEdge.dst_id == person_id,
             RelationshipEdge.rel_type.in_(PARTNER_EDGE_TYPES),
         )
@@ -228,7 +247,7 @@ async def _partners(db: AsyncSession, user_id: int, person_id: int) -> Set[int]:
 
 
 async def _classify_blood(
-    db: AsyncSession, *, user_id: int, ego_id: int, alter_id: int
+    db: AsyncSession, *, user_id: int, ego_id: int, alter_id: int, group_id: int | None = None
 ) -> Optional[KinshipResult]:
     """Pure consanguine classification using only parent edges."""
     if ego_id == alter_id:
@@ -241,8 +260,8 @@ async def _classify_blood(
     alter = await db.get(Person, alter_id)
     alter_gender = _gender_from_meta(alter)
 
-    anc_ego = await _ancestor_map(db, user_id, ego_id)
-    anc_alt = await _ancestor_map(db, user_id, alter_id)
+    anc_ego = await _ancestor_map(db, user_id, ego_id, group_id=group_id)
+    anc_alt = await _ancestor_map(db, user_id, alter_id, group_id=group_id)
 
     if alter_id in anc_ego:
         steps, saw_step, saw_adopt = anc_ego[alter_id]
@@ -281,8 +300,8 @@ async def _classify_blood(
     mrca_id, a, b, step_path, adopt_path = best
 
     if a == 1 and b == 1:
-        p_ego = await _parents_set(db, user_id, ego_id)
-        p_alt = await _parents_set(db, user_id, alter_id)
+        p_ego = await _parents_set(db, user_id, ego_id, group_id=group_id)
+        p_alt = await _parents_set(db, user_id, alter_id, group_id=group_id)
         shared = len(p_ego & p_alt)
         neutral = "sibling"
         return KinshipResult(
@@ -335,11 +354,15 @@ async def _classify_blood(
 async def classify_kinship(
     db: AsyncSession, *, user_id: int, ego_id: int, alter_id: int
 ) -> KinshipResult:
+    # Resolve user's group for shared-scope edge queries
+    group_id = await _group_for_user(db, user_id)
+    scope = _edge_scope(user_id, group_id)
+
     # Quick direct-edge check for partner/social relations to avoid generic 'related'
     try:
         rows = await db.execute(
             select(RelationshipEdge.rel_type).where(
-                RelationshipEdge.user_id == user_id,
+                scope,
                 (
                     (RelationshipEdge.src_id == ego_id) & (RelationshipEdge.dst_id == alter_id)
                 ) | (
@@ -394,7 +417,7 @@ async def classify_kinship(
     The result provides a neutral label and an optional gendered variant derived from alter's gender.
     """
     # First, consanguine classification
-    base = await _classify_blood(db, user_id=user_id, ego_id=ego_id, alter_id=alter_id)
+    base = await _classify_blood(db, user_id=user_id, ego_id=ego_id, alter_id=alter_id, group_id=group_id)
     if base is not None:
         return base
 
@@ -402,9 +425,9 @@ async def classify_kinship(
     alter = await db.get(Person, alter_id)
     alter_gender = _gender_from_meta(alter)
 
-    ego_partners = await _partners(db, user_id, ego_id)
+    ego_partners = await _partners(db, user_id, ego_id, group_id=group_id)
     for p in ego_partners:
-        b = await _classify_blood(db, user_id=user_id, ego_id=p, alter_id=alter_id)
+        b = await _classify_blood(db, user_id=user_id, ego_id=p, alter_id=alter_id, group_id=group_id)
         if not b:
             continue
         neutral = None
@@ -429,9 +452,9 @@ async def classify_kinship(
             )
 
     # Symmetric: alter's partners
-    alter_partners = await _partners(db, user_id, alter_id)
+    alter_partners = await _partners(db, user_id, alter_id, group_id=group_id)
     for q in alter_partners:
-        b = await _classify_blood(db, user_id=user_id, ego_id=ego_id, alter_id=q)
+        b = await _classify_blood(db, user_id=user_id, ego_id=ego_id, alter_id=q, group_id=group_id)
         if not b:
             continue
         neutral = None

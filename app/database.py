@@ -11,7 +11,15 @@ else:
     DATABASE_URL = raw_url or "postgresql+asyncpg://postgres:postgres@postgres:5432/memories"
 
 
-engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,
+    pool_recycle=1800,
+)
 async_session_maker = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
 Base = declarative_base()
 

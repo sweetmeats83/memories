@@ -21,7 +21,7 @@ from .users import fastapi_users, auth_backend
 from .models import User, Tag
 from .utils import get_current_user
 from sqlalchemy import select
-from passlib.hash import bcrypt
+import bcrypt as _bcrypt_lib
 from .schemas import UserRead, UserUpdate
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -164,7 +164,7 @@ async def create_admin_user():
         if not existing_admin:
             user = User(
                 email=admin_email,
-                hashed_password=bcrypt.hash(admin_password),
+                hashed_password=_bcrypt_lib.hashpw(admin_password.encode(), _bcrypt_lib.gensalt()).decode(),
                 username=admin_username,
                 is_superuser=True,
                 is_active=True,

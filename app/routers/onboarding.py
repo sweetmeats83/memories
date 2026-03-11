@@ -237,14 +237,19 @@ async def onboarding_commit(
 ):
     prof = await _ensure_profile(db, user.id)
     try:
-        me_person = (await db.execute(select(Person).where(Person.owner_user_id == user.id))).scalars().all()
-        have_self = any(
-            isinstance(getattr(p, "meta", None), dict)
-            and p.meta.get("connect_to_owner")
-            and str(p.meta.get("role_hint", "")).strip().lower() in {"you", "self", "me"}
-            for p in me_person
-        )
-        if not have_self:
+        # Find existing self-person (check privacy_prefs first, then meta scan)
+        self_pid: int | None = (prof.privacy_prefs or {}).get("self_person_id")
+        self_person = None
+        if self_pid:
+            self_person = await db.get(Person, self_pid)
+        if self_person is None:
+            me_person = (await db.execute(select(Person).where(Person.owner_user_id == user.id))).scalars().all()
+            for p in me_person:
+                m = getattr(p, "meta", None) or {}
+                if isinstance(m, dict) and m.get("connect_to_owner") and str(m.get("role_hint", "")).strip().lower() in {"you", "self", "me"}:
+                    self_person = p
+                    break
+        if self_person is None:
             disp = getattr(prof, "display_name", None) or (user.username or user.email or f"User {user.id}")
             g = None
             try:
@@ -254,17 +259,26 @@ async def onboarding_commit(
             meta = {"connect_to_owner": True, "role_hint": "you"}
             if g:
                 meta["gender"] = g
-            person = Person(owner_user_id=user.id, display_name=disp, meta=meta)
+            # Self-persons stay private (group_id=NULL) so they're never deduplicated
+            self_person = Person(owner_user_id=user.id, display_name=disp, meta=meta)
             try:
                 if getattr(prof, "birth_year", None):
-                    person.birth_year = int(prof.birth_year)
+                    self_person.birth_year = int(prof.birth_year)
             except Exception:
                 pass
-            db.add(person)
+            db.add(self_person)
             try:
                 await db.flush()
             except Exception:
                 await db.rollback()
+        # Pin self_person_id in privacy_prefs for fast, reliable lookup
+        if self_person and self_person.id:
+            prefs = prof.privacy_prefs or {}
+            if prefs.get("self_person_id") != self_person.id:
+                prefs["self_person_id"] = self_person.id
+                prof.privacy_prefs = prefs
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(prof, "privacy_prefs")
     except Exception:
         pass
     await build_pool_for_user(db, user.id)

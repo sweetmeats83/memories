@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from passlib.hash import bcrypt
+import bcrypt as _bcrypt_lib
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,12 +88,12 @@ async def invite_set_password(
         )
     user = (await db.execute(select(User).where(User.email == invite.email))).scalars().first()
     if user:
-        user.hashed_password = bcrypt.hash(password)
+        user.hashed_password = _bcrypt_lib.hashpw(password.encode(), _bcrypt_lib.gensalt()).decode()
     else:
         user = User(
             email=invite.email,
             username=invite.email.split("@")[0],
-            hashed_password=bcrypt.hash(password),
+            hashed_password=_bcrypt_lib.hashpw(password.encode(), _bcrypt_lib.gensalt()).decode(),
         )
         db.add(user)
         await db.flush()

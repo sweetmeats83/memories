@@ -3,12 +3,17 @@
 <div class="max-w-3xl mx-auto mt-8 p-6 bg-white/60 backdrop-blur-md rounded-2xl border border-black/10">
   <div class="flex items-center justify-between mb-4">
     <h1 class="text-2xl font-semibold">Settings</h1>
-    <div class="flex items-center gap-2" aria-label="Theme">
-      <span class="text-sm opacity-70">Theme</span>
-      <div class="flex items-center gap-1" role="group" aria-label="Theme select">
-        <button id="themeLight" type="button" class="pill text-sm">Light</button>
-        <button id="themeDark"  type="button" class="pill text-sm">Dark</button>
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2" aria-label="Theme">
+        <span class="text-sm opacity-70 hidden sm:inline">Theme</span>
+        <div class="flex items-center gap-1" role="group" aria-label="Theme select">
+          <button id="themeLight" type="button" class="pill text-sm">Light</button>
+          <button id="themeDark"  type="button" class="pill text-sm">Dark</button>
+        </div>
       </div>
+      <a href="/user_dashboard" class="flex items-center justify-center w-9 h-9 rounded-full hover:bg-black/10 transition" title="Back to Memories" aria-label="Close settings">
+        <span class="material-symbols-outlined text-[22px]">close</span>
+      </a>
     </div>
   </div>
 

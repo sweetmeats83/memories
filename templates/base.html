@@ -239,7 +239,7 @@
             {{ (user.username or user.email)[0] | upper }}
           {% endif %}
         </div>
-        <div id="userMenu" class="absolute right-0 top-full mt-2 w-48 rounded-2xl border border-black/70 bg-white/10 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] opacity-0 pointer-events-none translate-y-1 transition-all duration-150 dark:border-pink-400/30 dark:bg-zinc-900/70 dark:text-zinc-100 dark:shadow-[0_0_24px_rgba(255,59,193,0.18)]">
+        <div id="userMenu" class="w-48 rounded-2xl border border-black/70 bg-white/80 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] opacity-0 pointer-events-none translate-y-1 transition-all duration-150 dark:border-pink-400/30 dark:bg-zinc-900/90 dark:text-zinc-100 dark:shadow-[0_0_24px_rgba(255,59,193,0.18)] max-h-[calc(100dvh-4rem)] overflow-auto z-[200]" style="min-width:160px;position:fixed;">
           <a href="/settings" class="flex items-center gap-2 px-4 py-2 rounded-2xl hover:bg-white/30 dark:hover:bg-white/10">
             <span class="material-symbols-outlined text-[20px]">settings</span>
             <span>Settings</span>
@@ -419,9 +419,21 @@
   const menu = document.getElementById('userMenu');
   if (!btn || !menu) return;
 
+  // Move menu to body to escape any stacking-context clipping from backdrop-filter
+  document.body.appendChild(menu);
+
   let _justOpened = false;
 
+  function positionMenu() {
+    const r = btn.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.top  = (r.bottom + 8) + 'px';
+    menu.style.right = (window.innerWidth - r.right) + 'px';
+    menu.style.left  = 'auto';
+  }
+
   function openMenu() {
+    positionMenu();
     menu.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-1');
     menu.classList.add('opacity-100', 'pointer-events-auto', 'translate-y-0');
     btn.setAttribute('aria-expanded', 'true');

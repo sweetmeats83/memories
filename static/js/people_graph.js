@@ -192,6 +192,8 @@ console.info("people_graph.js — click path & hover path build loaded");
 
   // Kinship label cache and fetcher (between two person ids)
   const kinCache = new Map(); // key: "ego|alter" (directional), val: string label
+  const KIN_CACHE_MAX = 500;
+  const youCache = new Map(); // key: person_id, val: string label or null
   async function fetchKinshipLabel(aId, bId) {
     const a = parseInt(aId, 10), b = parseInt(bId, 10);
     if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
@@ -208,7 +210,10 @@ console.info("people_graph.js — click path & hover path build loaded");
         nlc.includes('aunt/uncle') || nlc.includes('niece/nephew')
       );
       const lbl = preferNeutral ? (ln || lg) : (lg || ln);
-      if (lbl) kinCache.set(key, lbl);
+      if (lbl) {
+        if (kinCache.size >= KIN_CACHE_MAX) kinCache.delete(kinCache.keys().next().value);
+        kinCache.set(key, lbl);
+      }
       return lbl;
     } catch { return null; }
   }
@@ -327,6 +332,137 @@ console.info("people_graph.js — click path & hover path build loaded");
     if (r === 'wife-of' || r === 'husband-of') r = 'spouse-of';
     if (r === 'ex-partner-of' && !r.endsWith('-of')) r = 'ex-partner-of';
     return r;
+  }
+
+  // Return a kinship label from already-loaded edge data, without a server call.
+  // Checks 1-hop direct family edges, then 2-hop in-law paths, then direct social edges.
+  // Family paths take priority over stored social edges (e.g. someone added as "friend"
+  // who is actually a brother-in-law will show as sibling-in-law, not friend).
+  // Returns null when no path is found (caller should fall back to server).
+  function directKinshipFromEdges(personId) {
+    if (!state.meId || !state.edges) return null;
+    const me = String(state.meId), p = String(personId);
+    if (me === p) return 'you';
+
+    const SPOUSE = new Set(['spouse-of','partner-of']);
+    const EX     = new Set(['ex-spouse-of','ex-partner-of']);
+    const PAR_FWD = new Set(['mother-of','father-of','parent-of','step-parent-of','adoptive-parent-of']);
+    const PAR_REV = new Set(['son-of','daughter-of','child-of']);
+    const SIB    = new Set(['sibling-of','brother-of','sister-of','half-sibling-of','step-sibling-of']);
+
+    // Helpers: find all neighbours of a node reachable via a given rel set (undirected)
+    function linked(nodeId, relSet) {
+      const ids = new Set();
+      for (const e of state.edges) {
+        const s = String(e.s), d = String(e.d), r = e.rel;
+        if (relSet.has(r)) {
+          if (s === nodeId) ids.add(d);
+          else if (d === nodeId) ids.add(s);
+        }
+      }
+      return ids;
+    }
+    // parents: directed — parent→child in PAR_FWD, child→parent in PAR_REV
+    function parentsOf(nodeId) {
+      const ids = new Set();
+      for (const e of state.edges) {
+        const s = String(e.s), d = String(e.d), r = e.rel;
+        if (PAR_FWD.has(r) && d === nodeId) ids.add(s);
+        if (PAR_REV.has(r) && s === nodeId) ids.add(d);
+      }
+      return ids;
+    }
+    function childrenOf(nodeId) {
+      const ids = new Set();
+      for (const e of state.edges) {
+        const s = String(e.s), d = String(e.d), r = e.rel;
+        if (PAR_FWD.has(r) && s === nodeId) ids.add(d);
+        if (PAR_REV.has(r) && d === nodeId) ids.add(s);
+      }
+      return ids;
+    }
+
+    // 1. Direct family edges (1-hop)
+    for (const e of state.edges) {
+      const s = String(e.s), d = String(e.d), r = e.rel;
+      if ((s === me && d === p) || (s === p && d === me)) {
+        const from = s === me ? 'me→p' : 'p→me';
+        if (SPOUSE.has(r)) return 'spouse';
+        if (EX.has(r)) return 'ex-spouse';
+        if (SIB.has(r)) return (r === 'brother-of' ? 'brother' : r === 'sister-of' ? 'sister' : 'sibling');
+        if (PAR_FWD.has(r)) {
+          if (from === 'me→p') return 'child'; // me is parent of p
+          return (r === 'mother-of' ? 'mother' : r === 'father-of' ? 'father' : 'parent');
+        }
+        if (PAR_REV.has(r)) {
+          if (from === 'me→p') return (r === 'son-of' ? 'son' : r === 'daughter-of' ? 'daughter' : 'child');
+          return 'parent'; // p is child of me
+        }
+      }
+    }
+
+    // 2. Two-hop family/in-law paths
+    const mySpouses   = linked(me, SPOUSE);
+    const myChildren  = childrenOf(me);
+    const mySiblings  = linked(me, SIB);
+    const myParents   = parentsOf(me);
+
+    // Spouse's parent → parent-in-law
+    for (const sp of mySpouses) {
+      if (parentsOf(sp).has(p))    return 'parent-in-law';
+      if (linked(sp, SIB).has(p))  return 'sibling-in-law';
+      if (childrenOf(sp).has(p) && p !== me) return 'step-child';
+    }
+    // Child's spouse → child-in-law
+    for (const ch of myChildren) {
+      if (linked(ch, SPOUSE).has(p)) return 'child-in-law';
+    }
+    // Sibling's spouse → sibling-in-law
+    for (const sib of mySiblings) {
+      if (linked(sib, SPOUSE).has(p)) return 'sibling-in-law';
+    }
+    // Parent's sibling → aunt/uncle
+    for (const par of myParents) {
+      if (linked(par, SIB).has(p)) return 'aunt/uncle';
+      // Parent's spouse (step-parent)
+      if (linked(par, SPOUSE).has(p)) return 'step-parent';
+    }
+    // Grandparent
+    for (const par of myParents) {
+      if (parentsOf(par).has(p)) return 'grandparent';
+    }
+    // Grandchild
+    for (const ch of myChildren) {
+      if (childrenOf(ch).has(p)) return 'grandchild';
+    }
+    // Sibling's child → niece/nephew
+    for (const sib of mySiblings) {
+      if (childrenOf(sib).has(p)) return 'niece/nephew';
+    }
+    // Parent's sibling's child → cousin
+    for (const par of myParents) {
+      for (const auntUncle of linked(par, SIB)) {
+        if (childrenOf(auntUncle).has(p)) return 'cousin';
+      }
+    }
+
+    // No social fallback here — let the server try first (it handles through-spouse paths).
+    // Social edge label is only used as a last resort after the server returns nothing.
+    return null;
+  }
+
+  // Return the stored social edge label between me and personId, or null.
+  function socialEdgeLabel(personId) {
+    if (!state.meId || !state.edges) return null;
+    const me = String(state.meId), p = String(personId);
+    const meToP = { 'friend-of':'friend','neighbor-of':'neighbor','coworker-of':'coworker','mentor-of':'student','teacher-of':'student','student-of':'teacher' };
+    const pToMe = { 'friend-of':'friend','neighbor-of':'neighbor','coworker-of':'coworker','mentor-of':'mentor','teacher-of':'teacher','student-of':'student' };
+    for (const e of state.edges) {
+      const s = String(e.s), d = String(e.d), r = e.rel;
+      if (s === me && d === p) { const lbl = meToP[r]; if (lbl) return lbl; }
+      else if (s === p && d === me) { const lbl = pToMe[r]; if (lbl) return lbl; }
+    }
+    return null;
   }
 
   function build(nodes, edges) {
@@ -495,7 +631,29 @@ console.info("people_graph.js — click path & hover path build loaded");
       return rec && String(rec.kind||'').toLowerCase() === 'user';
     };
     const spousePerson = all.filter(e => isSpouse(e.rel) && !isUserId(e.s) && !isUserId(e.d));
-    const socialPerson = all.filter(e => e.cat === 'social' && !isUserId(e.s) && !isUserId(e.d));
+    // BFS from meId over adjPath (bio+sibling+spouse) to find family-reachable persons.
+    // Social edges from me to someone already reachable via family are hidden (redundant lines).
+    const meReachable = new Set();
+    if (meIdStr) {
+      const q = [meIdStr];
+      meReachable.add(meIdStr);
+      while (q.length) {
+        const cur = q.pop();
+        for (const nb of (adjPath.get(cur) || new Set())) {
+          if (!meReachable.has(nb)) { meReachable.add(nb); q.push(nb); }
+        }
+      }
+    }
+    const socialPerson = all.filter(e => {
+      if (e.cat !== 'social' || isUserId(e.s) || isUserId(e.d)) return false;
+      // Suppress social edge if one end is me and the other is family-reachable
+      if (meIdStr) {
+        const s = SID(e.s), d = SID(e.d);
+        if (s === meIdStr && meReachable.has(d)) return false;
+        if (d === meIdStr && meReachable.has(s)) return false;
+      }
+      return true;
+    });
     const petPerson    = all.filter(e => e.cat === 'pet'    && !isUserId(e.s) && !isUserId(e.d));
     const userSocial = all.filter(e => (isUserId(e.s) || isUserId(e.d)) && e.cat === 'social');
     const userPet    = all.filter(e => (isUserId(e.s) || isUserId(e.d)) && e.cat === 'pet');
@@ -938,14 +1096,25 @@ console.info("people_graph.js — click path & hover path build loaded");
                   if (lbl) { tip.textContent = lbl; return; }
                 }
               }
+              // If hovering own node, just say You
+              if (state.meId && String(n.id) === String(state.meId)) {
+                tip.textContent = 'You'; return;
+              }
               // Otherwise, show relationship to You if possible
+              const _directHover = directKinshipFromEdges(n.id);
+              if (_directHover) { tip.textContent = _directHover; return; }
+              const _cachedHover = youCache.get(String(n.id));
+              if (_cachedHover !== undefined) { tip.textContent = _cachedHover || socialEdgeLabel(n.id) || seq.map(id => id === state.meId ? 'You' : (getNode(id)?.label || ('#'+id))).join(' \u2192 '); return; }
               try {
                 const r = await fetch(`/api/people/you/${n.id}`, { credentials:'include', cache:'no-store' });
                 const j = await r.json();
-                if (j && j.label_neutral) { tip.textContent = j.label_neutral; return; }
+                const lbl = (j && j.label_neutral) || null;
+                if (youCache.size >= KIN_CACHE_MAX) youCache.delete(youCache.keys().next().value);
+                youCache.set(String(n.id), lbl);
+                if (lbl) { tip.textContent = lbl; return; }
               } catch {}
-              // Fallback to path text
-              tip.textContent = seq.map(id => id === state.meId ? 'You' : (getNode(id)?.label || ('#'+id))).join(' \u2192 ');
+              // Server returned nothing — fall back to social edge label, then path text
+              tip.textContent = socialEdgeLabel(n.id) || seq.map(id => id === state.meId ? 'You' : (getNode(id)?.label || ('#'+id))).join(' \u2192 ');
             })();
           }
         } else {
@@ -1019,7 +1188,25 @@ console.info("people_graph.js — click path & hover path build loaded");
       // Update tip to relationship to You
       (async () => {
         if (tip) {
-          try { const r = await fetch(`/api/people/you/${n.id}`, { credentials:'include' }); const j = await r.json(); if (j && j.label_neutral) tip.textContent = j.label_neutral; } catch {}
+          try {
+            const _directClick = directKinshipFromEdges(n.id);
+            if (_directClick) { tip.textContent = _directClick; }
+            else {
+              const _cachedClick = youCache.get(String(n.id));
+              if (_cachedClick !== undefined) {
+                tip.textContent = _cachedClick || socialEdgeLabel(n.id) || n.label;
+              } else {
+                try {
+                  const r = await fetch(`/api/people/you/${n.id}`, { credentials:'include', cache:'no-store' });
+                  const j = await r.json();
+                  const lbl = (j && j.label_neutral) || null;
+                  if (youCache.size >= KIN_CACHE_MAX) youCache.delete(youCache.keys().next().value);
+                  youCache.set(String(n.id), lbl);
+                  tip.textContent = lbl || socialEdgeLabel(n.id) || n.label;
+                } catch { tip.textContent = socialEdgeLabel(n.id) || n.label; }
+              }
+            }
+          } catch {}
         }
       })();
       openDisplay(n.id);
@@ -1184,6 +1371,9 @@ console.info("people_graph.js — click path & hover path build loaded");
       body: JSON.stringify({ src_person_id: state.selectedId, dst_person_id: other, rel_type: rel, confidence: 0.9 })
     });
     await refreshGraph();
+    if ((state.edges || []).length >= 3) {
+      fetch('/api/people/infer/run-all', { method:'POST', credentials:'include' }).catch(()=>{});
+    }
     await openPanel(state.selectedId);
   });
 
@@ -1202,6 +1392,9 @@ console.info("people_graph.js — click path & hover path build loaded");
     // Auto-add high-confidence edges from role_hint (e.g. "mother" → parent-of You)
     if (pid) await fetch(`/api/people/${pid}/infer/auto`, { method:'POST', credentials:'include' }).catch(()=>{});
     await refreshGraph();
+    if ((state.edges || []).length >= 3) {
+      fetch('/api/people/infer/run-all', { method:'POST', credentials:'include' }).catch(()=>{});
+    }
     const node = pid ? state.nodes.find(n => String(n.id) === String(pid))
                      : state.nodes.find(n => n.kind==='person' && (n.label||'').toLowerCase() === name.toLowerCase());
     if (node) { state.selectedId = node.id; await openPanel(node.id); }
@@ -1210,7 +1403,7 @@ console.info("people_graph.js — click path & hover path build loaded");
   // Inferred mentions list
   async function loadInferred(){
     try {
-      const r = await fetch('/api/people/inferred/list', { credentials:'include' });
+      const r = await fetch('/api/people-cleanup/inferred', { credentials:'include' });
       const j = await r.json();
       const arr = j.people || [];
       infList.innerHTML = '';
@@ -1751,7 +1944,7 @@ console.info("people_graph.js — click path & hover path build loaded");
       const ok = confirm(`Add ${edges.length} inferred connection(s)?\n\n` + lines.join('\n') + extra);
       if (!ok) return;
       const c = await fetch(`/api/people/${state.selectedId}/infer/commit`, { method:'POST', credentials:'include' });
-      const jj = await c.json().catch(()=>({}));
+      await c.json().catch(()=>({}));
       await refreshGraph();
       await openPanel(state.selectedId);
     } catch (err) {
@@ -1794,7 +1987,7 @@ console.info("people_graph.js — click path & hover path build loaded");
     async function loadCleanup() {
       listEl.innerHTML = '<div class="text-xs text-stone-400 py-2">Loading…</div>';
       try {
-        const r = await fetch('/api/people/all', { credentials: 'include' });
+        const r = await fetch('/api/people-cleanup/all', { credentials: 'include' });
         const data = await r.json();
         _allRows = (data.people || []).map(n => ({
           id:       n.id,
@@ -1868,10 +2061,43 @@ console.info("people_graph.js — click path & hover path build loaded");
           await refreshGraph();
         });
 
-        el.appendChild(nameSpan);
-        el.appendChild(badge);
-        el.appendChild(toggleBtn);
-        el.appendChild(delBtn);
+        // "Set as me" — pin this person as the user's self/center node
+        const isSelf = state.meId && String(state.meId) === String(row.id);
+        if (isSelf) {
+          const selfBadge = document.createElement('span');
+          selfBadge.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-700 border border-pink-300 shrink-0';
+          selfBadge.textContent = 'You';
+          el.appendChild(nameSpan);
+          el.appendChild(selfBadge);
+          el.appendChild(badge);
+          el.appendChild(toggleBtn);
+          el.appendChild(delBtn);
+        } else {
+          const selfBtn = document.createElement('button');
+          selfBtn.textContent = 'Set as me';
+          selfBtn.className = 'graph-btn text-xs shrink-0';
+          selfBtn.title = 'Use this person as your center node in the graph';
+          selfBtn.addEventListener('click', async () => {
+            selfBtn.disabled = true;
+            const r = await fetch('/api/people/claim-self', {
+              method: 'POST', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ person_id: row.id }),
+            });
+            if (r.ok) {
+              // refreshGraph updates state.meId; re-render list after so badge is correct
+              await refreshGraph();
+              renderList(filterEl?.value || '');
+            } else {
+              selfBtn.disabled = false;
+            }
+          });
+          el.appendChild(nameSpan);
+          el.appendChild(badge);
+          el.appendChild(toggleBtn);
+          el.appendChild(selfBtn);
+          el.appendChild(delBtn);
+        }
         listEl.appendChild(el);
       }
     }
@@ -1897,7 +2123,7 @@ console.info("people_graph.js — click path & hover path build loaded");
       if (!mergeList) return;
       mergeList.innerHTML = '<div class="text-xs text-stone-400 py-2">Scanning…</div>';
       try {
-        const r = await fetch('/api/people/duplicates', { credentials: 'include' });
+        const r = await fetch('/api/people-cleanup/duplicates', { credentials: 'include' });
         const data = await r.json();
         const groups      = data.groups      || [];
         const aliasPairs  = data.alias_pairs || [];
@@ -1999,6 +2225,20 @@ console.info("people_graph.js — click path & hover path build loaded");
 
     await load();
     await loadInferred();
+
+    // Poll for graph changes — auto-refresh when new persons are added by any group member
+    let _graphVersion = null;
+    setInterval(async () => {
+      try {
+        const r = await fetch('/api/people/graph/version', { credentials: 'include' });
+        if (!r.ok) return;
+        const { version } = await r.json();
+        if (_graphVersion !== null && version !== _graphVersion) {
+          await refreshGraph();
+        }
+        _graphVersion = version;
+      } catch {}
+    }, 60000);
   })();
 })();
 

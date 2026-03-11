@@ -6,7 +6,8 @@ from typing import Optional, Iterable, Dict, Tuple, Set, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import RelationshipEdge, Person, ResponsePerson, Response
+from sqlalchemy import or_
+from app.models import RelationshipEdge, Person, ResponsePerson, Response, KinMembership
 
 
 # Canonical sets
@@ -35,6 +36,20 @@ SIBLING_EDGE_TYPES: Set[str] = {
     "brother-of",
     "sister-of",
 }
+
+# Family edges are shared group facts; social edges are private to a user.
+FAMILY_EDGE_TYPES: Set[str] = (
+    PARENT_EDGE_TYPES_FWD
+    | PARENT_EDGE_TYPES_REV
+    | SIBLING_EDGE_TYPES
+    | PARTNER_EDGE_TYPES
+    | {
+        "aunt-of", "uncle-of", "niece-of", "nephew-of", "cousin-of",
+        "ex-partner-of", "ex-spouse-of",
+        "grandparent-of", "grandchild-of",
+        "step-child-of", "adoptive-child-of",
+    }
+)
 
 
 def _canon_rel(rt: str) -> str:
@@ -108,17 +123,32 @@ async def _load_people_for_user(db: AsyncSession, user_id: int) -> Dict[int, Per
     return {int(p.id): p for p in rows}
 
 
+async def _group_ids_for_user(db: AsyncSession, user_id: int) -> List[int]:
+    rows = (await db.execute(select(KinMembership.group_id).where(KinMembership.user_id == user_id))).scalars().all()
+    return [int(g) for g in rows]
+
+
+def _edge_scope_filter(user_id: int, group_ids: List[int]):
+    """SQLAlchemy filter: edges owned by this user OR any of their kin groups."""
+    if group_ids:
+        return or_(RelationshipEdge.user_id == user_id, RelationshipEdge.group_id.in_(group_ids))
+    return RelationshipEdge.user_id == user_id
+
+
 async def _load_edges_for_user(db: AsyncSession, user_id: int) -> List[RelationshipEdge]:
-    return (await db.execute(select(RelationshipEdge).where(RelationshipEdge.user_id == user_id))).scalars().all()
+    group_ids = await _group_ids_for_user(db, user_id)
+    return (await db.execute(select(RelationshipEdge).where(_edge_scope_filter(user_id, group_ids)))).scalars().all()
 
 
 async def _parents_index(db: AsyncSession, user_id: int) -> Dict[int, list[tuple[int, str]]]:
     """Map child_id -> list of (parent_id, rel_type). Accept both storage directions."""
+    group_ids = await _group_ids_for_user(db, user_id)
+    scope = _edge_scope_filter(user_id, group_ids)
     out: Dict[int, list[tuple[int, str]]] = {}
     # parent -> child
     rows1 = await db.execute(
         select(RelationshipEdge.src_id, RelationshipEdge.dst_id, RelationshipEdge.rel_type).where(
-            RelationshipEdge.user_id == user_id,
+            scope,
             RelationshipEdge.rel_type.in_(PARENT_EDGE_TYPES_FWD),
         )
     )
@@ -127,7 +157,7 @@ async def _parents_index(db: AsyncSession, user_id: int) -> Dict[int, list[tuple
     # child -> parent
     rows2 = await db.execute(
         select(RelationshipEdge.src_id, RelationshipEdge.dst_id, RelationshipEdge.rel_type).where(
-            RelationshipEdge.user_id == user_id,
+            scope,
             RelationshipEdge.rel_type.in_(PARENT_EDGE_TYPES_REV),
         )
     )
@@ -137,10 +167,11 @@ async def _parents_index(db: AsyncSession, user_id: int) -> Dict[int, list[tuple
 
 
 async def _partners_index(db: AsyncSession, user_id: int) -> Dict[int, Set[int]]:
+    group_ids = await _group_ids_for_user(db, user_id)
     out: Dict[int, Set[int]] = {}
     rows = await db.execute(
         select(RelationshipEdge.src_id, RelationshipEdge.dst_id, RelationshipEdge.rel_type)
-        .where(RelationshipEdge.user_id == user_id)
+        .where(_edge_scope_filter(user_id, group_ids))
         .where(RelationshipEdge.rel_type.in_(PARTNER_EDGE_TYPES))
     )
     for s, d, _ in rows.all():
@@ -152,10 +183,11 @@ async def _partners_index(db: AsyncSession, user_id: int) -> Dict[int, Set[int]]
 
 async def _siblings_index(db: AsyncSession, user_id: int) -> Dict[int, Set[int]]:
     """Undirected sibling adjacency from any sibling edge types."""
+    group_ids = await _group_ids_for_user(db, user_id)
     out: Dict[int, Set[int]] = {}
     rows = await db.execute(
         select(RelationshipEdge.src_id, RelationshipEdge.dst_id, RelationshipEdge.rel_type)
-        .where(RelationshipEdge.user_id == user_id)
+        .where(_edge_scope_filter(user_id, group_ids))
         .where(RelationshipEdge.rel_type.in_(SIBLING_EDGE_TYPES))
     )
     for s, d, rt in rows.all():
@@ -659,8 +691,19 @@ async def infer_edges_for_person(db: AsyncSession, user_id: int, person_id: int)
 
 
 async def commit_inferred_edges(db: AsyncSession, user_id: int, candidates: list[CandidateEdge]) -> int:
-    """Persist candidates using upsert (ignore conflicts). Returns number attempted."""
+    """Persist candidates using upsert (ignore conflicts). Returns number attempted.
+
+    Family edges are written as group-scoped (group_id set, user_id NULL) when the
+    user belongs to exactly one KinGroup.  Social edges always keep user_id.
+    """
     from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    # Determine the user's single group (if any) for family-edge scoping
+    memberships = (await db.execute(
+        select(KinMembership.group_id).where(KinMembership.user_id == user_id)
+    )).scalars().all()
+    group_id: int | None = memberships[0] if len(memberships) == 1 else None
+
     n = 0
     for ce in candidates:
         try:
@@ -668,14 +711,27 @@ async def commit_inferred_edges(db: AsyncSession, user_id: int, candidates: list
             meta.setdefault("inferred", True)
             meta.setdefault("source", ce.source)
             meta.setdefault("explain", ce.explain)
-            stmt = pg_insert(RelationshipEdge.__table__).values(
-                user_id=user_id,
-                src_id=ce.src_id,
-                dst_id=ce.dst_id,
-                rel_type=_canon_rel(ce.rel_type),
-                confidence=ce.confidence,
-                meta=meta,
-            ).on_conflict_do_nothing(index_elements=["user_id", "src_id", "dst_id", "rel_type"])
+            canon_rt = _canon_rel(ce.rel_type)
+            is_family = canon_rt in FAMILY_EDGE_TYPES
+            if is_family and group_id is not None:
+                stmt = pg_insert(RelationshipEdge.__table__).values(
+                    group_id=group_id,
+                    user_id=None,
+                    src_id=ce.src_id,
+                    dst_id=ce.dst_id,
+                    rel_type=canon_rt,
+                    confidence=ce.confidence,
+                    meta=meta,
+                ).on_conflict_do_nothing()
+            else:
+                stmt = pg_insert(RelationshipEdge.__table__).values(
+                    user_id=user_id,
+                    src_id=ce.src_id,
+                    dst_id=ce.dst_id,
+                    rel_type=canon_rt,
+                    confidence=ce.confidence,
+                    meta=meta,
+                ).on_conflict_do_nothing(index_elements=["user_id", "src_id", "dst_id", "rel_type"])
             await db.execute(stmt)
             n += 1
         except Exception:

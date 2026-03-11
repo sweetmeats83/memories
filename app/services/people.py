@@ -500,9 +500,10 @@ async def upsert_person_for_user(
 ) -> Person:
     """
     Idempotently ensure a Person exists for this owner and surface name, and add an alias.
-    - Prefer matching by exact display_name (case-insensitive) for this owner.
-    - If not found, match by alias for this owner.
-    - Otherwise create a new Person.
+    - If the user belongs to a KinGroup, search the shared group pool first.
+    - Prefer matching by exact display_name (case-insensitive).
+    - If not found, match by alias.
+    - Otherwise create a new Person scoped to the group (or privately to the user).
     - Always ensure a PersonAlias row exists for the submitted surface string.
     - Store/merge role_hint into Person.meta without clobbering other meta keys.
     """
@@ -510,40 +511,79 @@ async def upsert_person_for_user(
     if not name:
         raise ValueError("display_name is required")
 
-    # 1) Try exact display_name match for this owner (case-insensitive)
-    q1 = (
-        select(Person)
-        .where(
-            Person.owner_user_id == owner_user_id,
-            func.lower(Person.display_name) == func.lower(name),
-        )
-        .limit(1)
-    )
-    person = (await db.execute(q1)).scalars().first()
+    # 0) Look up the user's KinGroup membership (exactly one group → shared scope)
+    memberships = (await db.execute(
+        select(KinMembership.group_id).where(KinMembership.user_id == owner_user_id)
+    )).scalars().all()
+    group_id: int | None = memberships[0] if len(memberships) == 1 else None
 
-    # 2) Otherwise, try alias match for this owner
-    if not person:
-        q2 = (
+    person: Person | None = None
+
+    if group_id is not None:
+        # 1a) Exact display_name match in the shared group pool
+        person = (await db.execute(
             select(Person)
-            .join(PersonAlias, PersonAlias.person_id == Person.id)
             .where(
-                Person.owner_user_id == owner_user_id,
-                func.lower(PersonAlias.alias) == func.lower(name),
+                Person.group_id == group_id,
+                func.lower(Person.display_name) == func.lower(name),
             )
             .limit(1)
-        )
-        person = (await db.execute(q2)).scalars().first()
+        )).scalars().first()
+
+        # 1b) Alias match in the shared group pool
+        if not person:
+            person = (await db.execute(
+                select(Person)
+                .join(PersonAlias, PersonAlias.person_id == Person.id)
+                .where(
+                    Person.group_id == group_id,
+                    func.lower(PersonAlias.alias) == func.lower(name),
+                )
+                .limit(1)
+            )).scalars().first()
+    else:
+        # 1) Try exact display_name match for this owner (case-insensitive)
+        person = (await db.execute(
+            select(Person)
+            .where(
+                Person.owner_user_id == owner_user_id,
+                func.lower(Person.display_name) == func.lower(name),
+            )
+            .limit(1)
+        )).scalars().first()
+
+        # 2) Otherwise, try alias match for this owner
+        if not person:
+            person = (await db.execute(
+                select(Person)
+                .join(PersonAlias, PersonAlias.person_id == Person.id)
+                .where(
+                    Person.owner_user_id == owner_user_id,
+                    func.lower(PersonAlias.alias) == func.lower(name),
+                )
+                .limit(1)
+            )).scalars().first()
 
     # 3) Create if still missing
     if not person:
         given, family = _split_display_name(name)
-        person = Person(
-            owner_user_id=owner_user_id,
-            display_name=name,
-            given_name=given,
-            family_name=family,
-            meta={},
-        )
+        if group_id is not None:
+            person = Person(
+                group_id=group_id,
+                owner_user_id=owner_user_id,  # attribution only
+                display_name=name,
+                given_name=given,
+                family_name=family,
+                meta={},
+            )
+        else:
+            person = Person(
+                owner_user_id=owner_user_id,
+                display_name=name,
+                given_name=given,
+                family_name=family,
+                meta={},
+            )
         db.add(person)
         await db.flush()  # ensure person.id
 

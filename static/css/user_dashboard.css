@@ -5,7 +5,10 @@
 #promptBand:focus-visible { box-shadow: 0 0 0 3px rgba(255,255,255,.6), 0 0 0 6px rgba(194,24,157,.35); border-radius: 1rem; }
 
 /* Mic pill pulse */
-.prompt-cta{ position: absolute; top: .75rem; right: .75rem; z-index: 30; border-radius: 999px; padding: 6px 10px; font-size: .85rem; font-weight: 700; color: #111; background: rgba(255,255,255,.10); border: 1px solid rgba(0,0,0,.15); box-shadow: 0 8px 20px rgba(0,0,0,.15), inset 0 1px 0 rgba(255,255,255,.6); }
+.prompt-cta{ position: absolute; top: .75rem; right: .75rem; z-index: 30; border-radius: 999px; padding: 6px 10px; font-size: .85rem; font-weight: 700; color: #111; background: rgba(255,255,255,.10); border: 1px solid rgba(0,0,0,.15); box-shadow: 0 8px 20px rgba(0,0,0,.15), inset 0 1px 0 rgba(255,255,255,.6); display: inline-flex; align-items: center; }
+@media (max-width: 640px){
+  .prompt-cta{ position: static; display: inline-flex; margin: 0 0 .5rem .25rem; float: right; }
+}
 .prompt-cta::after{ content:""; position:absolute; inset:-6px; border-radius: inherit; box-shadow: 0 0 0 0 rgba(255,255,255,.35); animation: var(--pulse-anim, none); will-change: transform, box-shadow, opacity; }
 @keyframes promptPulse{ 0%{ box-shadow:0 0 0 0 rgba(255,255,255,.35); opacity:1; transform:scale(1)} 70%{ box-shadow:0 0 0 12px rgba(255,255,255,0); opacity:.25; transform:scale(1.03)} 100%{ box-shadow:0 0 0 0 rgba(255,255,255,0); opacity:0; transform:scale(1)} }
 .prompt-cta.pulse::after{ animation: promptPulse 1.8s ease-out infinite !important; }

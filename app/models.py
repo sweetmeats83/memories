@@ -454,7 +454,10 @@ class ResponseSegment(Base):
 class Person(Base):
     __tablename__ = "person"
     id = Column(Integer, primary_key=True)
-    owner_user_id = Column(ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)
+    # owner_user_id: nullable — attribution/created-by only. NULL for group-scoped persons.
+    owner_user_id = Column(ForeignKey("user.id", ondelete="SET NULL"), index=True, nullable=True)
+    # group_id: when set, person is shared across all KinGroup members.
+    group_id = Column(ForeignKey("kin_group.id", ondelete="SET NULL"), index=True, nullable=True)
     display_name = Column(String(128), nullable=False)
     given_name = Column(String(64))
     family_name = Column(String(64))
@@ -477,14 +480,20 @@ class PersonAlias(Base):
 class RelationshipEdge(Base):
     __tablename__ = "relationship_edge"
     id = Column(Integer, primary_key=True)
-    user_id = Column(ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)
+    # user_id: set for social/private edges (friend-of, coworker-of, etc.). NULL for group family edges.
+    user_id = Column(ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=True)
+    # group_id: set for family edges shared across a KinGroup. NULL for private social edges.
+    group_id = Column(ForeignKey("kin_group.id", ondelete="CASCADE"), index=True, nullable=True)
     src_id = Column(ForeignKey("person.id", ondelete="CASCADE"), index=True, nullable=False)
     dst_id = Column(ForeignKey("person.id", ondelete="CASCADE"), index=True, nullable=False)
     rel_type = Column(String(48), index=True, nullable=False)  # parent-of, spouse-of, sibling-of, friend-of, mentor-of ...
     confidence = Column(Float, default=0.8)
     notes = Column(Text)
     meta  = Column(JSON)  # [{"response_id":..,"span":"..."}]
-    __table_args__ = (UniqueConstraint("user_id", "src_id", "dst_id", "rel_type", name="uq_rel_once"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "src_id", "dst_id", "rel_type", name="uq_rel_once"),
+        # Partial unique for group-scoped edges (enforced at DB level by migration index)
+    )
 
 class ResponsePerson(Base):
     __tablename__ = "response_person"
