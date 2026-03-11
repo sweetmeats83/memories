@@ -572,6 +572,16 @@ console.info("people_graph.js — click path & hover path build loaded");
       adjPath.get(s)?.add(d);
       adjPath.get(d)?.add(s);
     });
+    // Include all spouse edges so paths traverse through married-in relatives
+    // (e.g. great-uncle reachable via great-aunt's spouse edge).
+    // Use optional chaining — unknown/user nodes simply won't be in the map.
+    all.forEach(e => {
+      if (isSpouse(e.rel)) {
+        const s = SID(e.s), d = SID(e.d);
+        adjPath.get(s)?.add(d);
+        adjPath.get(d)?.add(s);
+      }
+    });
     const meIdStr = state.meId ? SID(state.meId) : null;
     const anchorLinks = meIdStr ? all.filter(e => SID(e.s) === meIdStr || SID(e.d) === meIdStr) : [];
     const anchorCore  = anchorLinks.filter(e => isParentChild(e.rel) || isSpouse(e.rel));
@@ -631,8 +641,18 @@ console.info("people_graph.js — click path & hover path build loaded");
       return rec && String(rec.kind||'').toLowerCase() === 'user';
     };
     const spousePerson = all.filter(e => isSpouse(e.rel) && !isUserId(e.s) && !isUserId(e.d));
-    // BFS from meId over adjPath (bio+sibling+spouse) to find family-reachable persons.
-    // Social edges from me to someone already reachable via family are hidden (redundant lines).
+    // Build spouse adjacency for all person nodes (used in meReachable BFS below)
+    const adjSpouseAll = new Map();
+    spousePerson.forEach(e => {
+      const s = SID(e.s), d = SID(e.d);
+      if (!adjSpouseAll.has(s)) adjSpouseAll.set(s, new Set());
+      if (!adjSpouseAll.has(d)) adjSpouseAll.set(d, new Set());
+      adjSpouseAll.get(s).add(d);
+      adjSpouseAll.get(d).add(s);
+    });
+    // BFS from meId over adjPath (bio+sibling+me's-spouse) PLUS all spouse edges,
+    // so married-in relatives (great-uncle by marriage, etc.) are included.
+    // Social edges from me to anyone reachable via this family graph are hidden.
     const meReachable = new Set();
     if (meIdStr) {
       const q = [meIdStr];
@@ -640,6 +660,9 @@ console.info("people_graph.js — click path & hover path build loaded");
       while (q.length) {
         const cur = q.pop();
         for (const nb of (adjPath.get(cur) || new Set())) {
+          if (!meReachable.has(nb)) { meReachable.add(nb); q.push(nb); }
+        }
+        for (const nb of (adjSpouseAll.get(cur) || new Set())) {
           if (!meReachable.has(nb)) { meReachable.add(nb); q.push(nb); }
         }
       }
