@@ -596,6 +596,94 @@ async def api_chapters_meta(db: AsyncSession = Depends(get_db)):
     return out
 
 
+@router.get('/admin/chapters_json')
+async def admin_chapters_json(db: AsyncSession = Depends(get_db), admin=Depends(require_admin_user)):
+    """Same as /api/chapters_meta but admin-auth protected — used by chapter meta modal."""
+    metas = (await db.execute(select(ChapterMeta))).scalars().all()
+    out = []
+    for m in metas:
+        out.append({
+            'name': m.name,
+            'display_name': m.display_name,
+            'order': m.order,
+            'tint': m.tint,
+            'description': m.description,
+            'keywords': m.keywords,
+            'llm_guidance': m.llm_guidance,
+        })
+    out.sort(key=lambda d: (d.get('order') or 0, (d.get('display_name') or '').lower()))
+    return out
+
+
+class ChapterReorderItem(BaseModel):
+    name: str
+    display_name: Optional[str] = None
+    order: Optional[int] = None
+    tint: Optional[str] = None
+    description: Optional[str] = None
+    keywords: Optional[str] = None
+    llm_guidance: Optional[str] = None
+
+
+@router.post('/admin/chapters/reorder')
+async def admin_chapters_reorder(items: list[ChapterReorderItem], db: AsyncSession = Depends(get_db), admin=Depends(require_admin_user)):
+    """Upsert ChapterMeta rows for a list of chapters (order, display_name, tint, meta fields)."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    for item in items:
+        name = (item.name or '').strip()
+        if not name:
+            continue
+        display = (item.display_name or name).strip()
+        values = dict(
+            name=name,
+            display_name=display,
+            order=item.order if item.order is not None else 0,
+        )
+        if item.tint is not None:
+            values['tint'] = item.tint or None
+        if item.description is not None:
+            values['description'] = item.description or None
+        if item.keywords is not None:
+            values['keywords'] = item.keywords or None
+        if item.llm_guidance is not None:
+            values['llm_guidance'] = item.llm_guidance or None
+        stmt = pg_insert(ChapterMeta.__table__).values(**values).on_conflict_do_update(
+            index_elements=['name'],
+            set_={k: v for k, v in values.items() if k != 'name'},
+        )
+        await db.execute(stmt)
+    await db.commit()
+    return {'ok': True}
+
+
+@router.post('/admin/chapters/rename')
+async def admin_chapters_rename(
+    old_name: str = Form(...),
+    new_name: str = Form(...),
+    tint: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin_user),
+):
+    """Rename a chapter: update all Prompt.chapter values and the ChapterMeta row."""
+    old = old_name.strip()
+    new = new_name.strip()
+    if not old or not new:
+        raise HTTPException(400, 'old_name and new_name are required')
+    # Update all prompts in this chapter
+    await db.execute(update(Prompt).where(Prompt.chapter == old).values(chapter=new))
+    # Rename the ChapterMeta row if it exists, else create it
+    existing = (await db.execute(select(ChapterMeta).where(ChapterMeta.name == old))).scalar_one_or_none()
+    if existing:
+        existing.name = new
+        existing.display_name = new
+        if tint is not None:
+            existing.tint = tint or None
+    else:
+        db.add(ChapterMeta(name=new, display_name=new, order=0, tint=tint or None))
+    await db.commit()
+    return RedirectResponse('/admin_dashboard', status_code=303)
+
+
 @router.post('/api/polish-transcript')
 async def api_polish_transcript(request: Request):
     body = await request.json()

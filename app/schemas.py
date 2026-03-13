@@ -211,3 +211,4 @@ class ChapterStatusDTO(BaseModel):
     ready: bool
     missing_prompts: List[Dict[str, Any]] = []  # [{id, text}]
     latest_compilation: Optional[ChapterCompilationDTO] = None
+    is_compiling: bool = False

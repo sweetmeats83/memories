@@ -2,78 +2,292 @@
 {% set title = display_name ~ " – Chapter" %}
 {% block content %}
 
-<section class="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen">
-  <div class="mx-auto w-full max-w-[1400px] px-3 sm:px-6">
+<section class="mx-auto pb-[35vh] max-w-[1100px]">
 
-    <div class="flex items-center gap-3 mt-6 mb-3">
-      <a href="/user_dashboard" class="pill">Back to Memories</a>
-      <h1 class="text-2xl font-semibold tracking-tight">{{ display_name }}</h1>
-      <span class="ml-auto text-sm opacity-70" id="chapterStatusBadge"></span>
+  <a href="/user_dashboard" class="pill select-none inline-flex items-center cursor-pointer" role="button">
+    Back to Memories
+  </a>
+
+  <!-- Header -->
+  <header class="mb-6 text-center mt-4">
+    <h1 class="font-baskerville leading-tight text-[clamp(1.9rem,5.5vw,3.2rem)]">{{ display_name }}</h1>
+    <div class="mt-2 text-sm opacity-70 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+      <span id="chapterStatusBadge"></span>
+      {% if latest_compilation %}
+        <span>Version <span class="font-semibold">{{ latest_compilation.version }}</span></span>
+      {% endif %}
+    </div>
+  </header>
+
+  <!-- Gated state -->
+  {% if not ready %}
+    <div class="paper-card mx-auto py-12">
+      <div class="book-body">
+        <div class="page-column">
+          <div class="flex items-center gap-2 mb-4">
+            <div class="pill bg-white hover:shadow-lg">Locked</div>
+            <p class="font-medium">Complete these prompts to unlock compilation:</p>
+          </div>
+          <ul class="grid sm:grid-cols-2 gap-2">
+            {% for p in missing_prompts %}
+            <li class="border border-black rounded-lg bg-white/70 hover:bg-white transition p-2">
+              <div class="flex items-center justify-between gap-3">
+                <div class="text-sm">{{ p.text }}</div>
+                <a class="pill" href="/user_record/{{ p.id }}">Open</a>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
     </div>
 
-    <!-- Gated state -->
-    {% if not ready %}
-      <div class="border border-black rounded-xl bg-white/60 backdrop-blur-md shadow-xl p-4">
-        <div class="flex items-center gap-2">
-          <div class="pill bg-white hover:shadow-lg">Locked</div>
-          <p class="font-medium">Complete these prompts to unlock compilation:</p>
+  {% else %}
+
+    <!-- Paper card -->
+    <div class="stream-item">
+      <article class="paper-card mx-auto py-12 group">
+
+        <!-- Hover toolbar: Compile / Re-compile / Publish / Print -->
+        <div class="article-toolbar" onclick="event.stopPropagation()">
+          <button id="btnCompile" class="btn-icon" title="Compile Chapter">
+            <span class="material-symbols-outlined">auto_stories</span>
+          </button>
+          <button id="btnRecompile" class="btn-icon hidden" title="Re-compile">
+            <span class="material-symbols-outlined">refresh</span>
+          </button>
+          <button id="btnPublish" class="btn-icon hidden" title="Publish">
+            <span class="material-symbols-outlined">publish</span>
+          </button>
+          <button class="btn-icon" title="Print" onclick="event.stopPropagation(); window.print()">
+            <span class="material-symbols-outlined">print</span>
+          </button>
         </div>
-        <ul class="mt-3 grid sm:grid-cols-2 gap-2">
-          {% for p in missing_prompts %}
-          <li class="border border-black rounded-lg bg-white/70 hover:bg-white transition p-2">
-            <div class="flex items-center justify-between gap-3">
-              <div class="text-sm">{{ p.text }}</div>
-              <a class="pill" href="/user_record/{{ p.id }}">Open</a>
+
+        <!-- Compile progress (inside card, above book body) -->
+        <div id="compileProgress" class="hidden px-6 pb-2">
+          <div class="p-6 bg-white/70 backdrop-blur rounded-2xl border border-black/10 text-center">
+            <h2 class="text-xl font-semibold">Compiling your chapter…</h2>
+            <p class="mt-1 text-sm text-slate-600">This usually takes 5–15 minutes. You can keep this tab open — we'll show the result when it's ready.</p>
+            <div class="mt-6 space-y-3">
+              <div class="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+                <div class="h-full w-full bg-slate-500 animate-pulse"></div>
+              </div>
+              <p id="spinner" class="text-sm text-slate-700">Pass 1 of 4 — Organizing your responses into themes…</p>
             </div>
-          </li>
-          {% endfor %}
-        </ul>
-      </div>
-    {% else %}
-
-      <!-- Ready state -->
-      <div class="flex flex-col lg:flex-row gap-4">
-
-        <!-- main / draft -->
-        <div class="flex-1 border border-black rounded-xl bg-white/60 backdrop-blur-md shadow-xl p-4">
-          <div class="flex items-center gap-3">
-            <button id="btnCompile" class="pill hover:shadow-lg">Compile Chapter</button>
-            <div id="spinner" class="hidden text-sm opacity-70">Compiling…</div>
-            <button id="btnRecompile" class="pill hidden">Re-compile</button>
-            <button id="btnPublish" class="pill hidden">Publish</button>
+            <p class="mt-5 text-xs text-slate-500">You can safely close this tab — the result will be here when you return.</p>
           </div>
-
-          <article id="draftArea" class="prose max-w-none mt-4">
-            {% if latest_compilation %}
-              {{ latest_compilation.compiled_markdown | safe }}
-            {% else %}
-              <p class="opacity-70">No draft yet. Click “Compile Chapter”.</p>
-            {% endif %}
-          </article>
         </div>
 
-        <!-- right rail / gaps -->
-        <aside class="w-full lg:w-[360px] border border-black rounded-xl bg-white/60 backdrop-blur-md shadow-xl p-4">
-          <h3 class="font-semibold mb-2">Proposed Follow-ups</h3>
-          <div id="gapChips" class="flex flex-wrap gap-2">
-            {% if latest_compilation and latest_compilation.gap_questions %}
-              {% for g in latest_compilation.gap_questions %}
-                <button class="pill" title="{{ g.why or '' }}">{{ g.question }}</button>
-              {% endfor %}
-            {% else %}
-              <div class="text-sm opacity-70">None yet.</div>
+        <!-- Source response media (audio/video/image from compiled responses) -->
+        {% if source_media %}
+        <div class="mt-4 mb-2 flex flex-col items-center gap-4 px-6">
+          {% for m in source_media %}
+            {% set mime = (m.primary_mime_type or '')|lower %}
+            {% set url_raw = (m.primary_media_url or '') %}
+            {% set rel = url_raw.lstrip('/') %}
+            {% set base_rel = rel.startswith('uploads/') and rel or ('uploads/' ~ rel) %}
+            {% set media_url = '/media/auth/' ~ base_rel %}
+
+            {% if 'audio' in mime %}
+              {% set play_rel = m.primary_wav_path and ('uploads/' ~ m.primary_wav_path.lstrip('/')) or base_rel %}
+              <figure class="article-player w-full">
+                <audio controls data-plyr>
+                  <source src="/media/auth/{{ play_rel }}">
+                </audio>
+              </figure>
+
+            {% elif 'video' in mime %}
+              {% set thumb_url = m.primary_thumbnail_path and ('/media/auth/' ~ m.primary_thumbnail_path.lstrip('/')) or '' %}
+              <button type="button" class="thumb thumb-lg" data-kind="video" data-src="{{ media_url }}"
+                      {% if thumb_url %}data-poster="{{ thumb_url }}"{% endif %}
+                      aria-label="Play video{{ ' – ' ~ m.title if m.title else '' }}">
+                <span class="thumb-bg" {% if thumb_url %}style="background-image:url('{{ thumb_url }}')"{% endif %}></span>
+                <span class="thumb-icon material-symbols-outlined">play_circle</span>
+              </button>
+
+            {% elif 'image' in mime %}
+              <button type="button" class="thumb thumb-lg" data-kind="image" data-src="{{ media_url }}"
+                      aria-label="Open image{{ ' – ' ~ m.title if m.title else '' }}">
+                <span class="thumb-bg" style="background-image:url('{{ media_url }}')"></span>
+              </button>
             {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Compiled draft -->
+        <div class="book-body">
+          <div class="page-column">
+            <div id="draftArea">
+              {% if latest_compilation and latest_compilation.compiled_markdown %}
+                <div class="chapter-prose">{{ latest_compilation.compiled_markdown | markdown }}</div>
+              {% else %}
+                <div class="italic opacity-70">No draft yet — hover the card and click <span class="material-symbols-outlined text-base align-middle">auto_stories</span> to compile.</div>
+              {% endif %}
+            </div>
           </div>
-        </aside>
+        </div>
 
+      </article>
+    </div>
+
+    <!-- Proposed Follow-ups — full width, below the card -->
+    <div class="mt-10 mx-auto max-w-[1000px]">
+      <h3 class="font-baskerville text-xl mb-1">Proposed Follow-ups</h3>
+      <p class="text-sm opacity-60 mb-4">Click any question to add it as a prompt and record your response.</p>
+      <div id="gapChips" class="flex flex-col gap-3">
+        {% if latest_compilation and latest_compilation.gap_questions %}
+          {% for g in latest_compilation.gap_questions %}
+            <button class="gap-card text-left border border-black/20 rounded-xl bg-white/60 backdrop-blur-md p-3 flex items-start gap-3 hover:bg-white/80 hover:border-black/40 transition group"
+                    data-question="{{ g.question | e }}"
+                    data-chapter="{{ chapter_key | e }}">
+              <span class="material-symbols-outlined text-base mt-0.5 opacity-40 group-hover:opacity-70 transition">lightbulb</span>
+              <div class="flex-1">
+                <div class="font-medium text-sm">{{ g.question }}</div>
+                {% if g.why %}
+                  <div class="text-xs opacity-60 mt-0.5">{{ g.why }}</div>
+                {% endif %}
+              </div>
+              <span class="material-symbols-outlined text-base mt-0.5 opacity-0 group-hover:opacity-50 transition">arrow_forward</span>
+            </button>
+          {% endfor %}
+        {% else %}
+          <div class="text-sm opacity-70">None yet — compile the chapter to generate follow-up ideas.</div>
+        {% endif %}
       </div>
-    {% endif %}
+    </div>
 
-  </div>
+  {% endif %}
+
 </section>
 
-<script defer src="/static/js/chapter_view.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script defer src="/static/js/chapter_view.js?v=20260312h"></script>
 <script>
   window.CHAPTER_KEY = {{ chapter_key|tojson }};
+  window.INITIAL_VERSION = {{ (latest_compilation.version if latest_compilation else none)|tojson }};
 </script>
+
+<style>
+  /* ---------- Paper card (book look) — mirrors response_view ---------- */
+  .paper-card{
+    position:relative; border-radius:1rem;
+    background: linear-gradient(180deg,#FCFAF3 0%, #F7F2E7 100%);
+    box-shadow: 0 18px 50px rgba(0,0,0,.10);
+    max-width: 1000px;
+    margin-bottom: 4rem;
+  }
+  .paper-card::before{
+    content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.04), inset 0 0 60px rgba(0,0,0,.08);
+  }
+  .paper-card::after{
+    content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none; mix-blend-mode:multiply; opacity:.32;
+    background-image:
+      radial-gradient(rgba(0,0,0,.06) .6px, rgba(0,0,0,0) .6px),
+      radial-gradient(rgba(0,0,0,.04) .8px, rgba(0,0,0,0) .8px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='0 0.05 0.1 0.15 0.2 0.25'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 2px 2px, 4px 4px, 160px 160px;
+    background-position: 0 0, 1px 1px, 0 0;
+  }
+
+  .book-body{ position:relative; z-index:1; padding: 26px 20px; }
+  @media (min-width:680px){ .book-body{ padding: 34px 54px; } }
+
+  .page-column{ max-width:64ch; margin:0 auto; padding:0 1rem; }
+  @media (min-width:720px){ .page-column{ padding:0; } }
+
+  /* Chapter prose — Baskerville, book-like */
+  .chapter-prose{
+    font-family: var(--brand-serif, ui-serif, Georgia, Cambria, "Times New Roman", Times, serif);
+    font-size: clamp(1.05rem, 1.2vw, 1.22rem);
+    line-height: 1.85;
+    letter-spacing: .002em;
+    color: #111827;
+  }
+  .chapter-prose h1,.chapter-prose h2{
+    font-family: var(--brand-serif);
+    font-size: clamp(1.4rem, 2.5vw, 1.9rem);
+    font-weight: 700;
+    margin: 2rem 0 .75rem;
+    line-height: 1.3;
+    text-indent: 0;
+  }
+  .chapter-prose h3{
+    font-family: var(--brand-serif);
+    font-size: clamp(1.1rem, 1.8vw, 1.4rem);
+    font-weight: 700;
+    margin: 1.5rem 0 .5rem;
+    text-indent: 0;
+  }
+  .chapter-prose p{ margin: 0 0 1.1em; text-indent: 1.25em; }
+  .chapter-prose p:first-child,
+  .chapter-prose h1 + p,
+  .chapter-prose h2 + p,
+  .chapter-prose h3 + p{ text-indent: 0; }
+  .chapter-prose strong{ font-weight:700; }
+  .chapter-prose em{ font-style:italic; }
+  .chapter-prose hr{ border:none; border-top:1px solid rgba(0,0,0,.12); margin:2rem 0; }
+
+  /* Toolbar */
+  .article-toolbar{
+    position:absolute; top:17px; right:17px;
+    display:flex; gap:8px;
+    opacity:0; pointer-events:none;
+    transition:opacity .2s ease;
+    z-index:2;
+  }
+  .paper-card:hover .article-toolbar,
+  .paper-card:focus-within .article-toolbar{
+    opacity:1; pointer-events:auto;
+  }
+  .btn-icon{
+    height:36px; width:36px; display:grid; place-items:center;
+    color:#6b7280; border-radius:.5rem;
+    border:1px solid rgba(0,0,0,.15);
+    background:#fff7; backdrop-filter:blur(6px);
+    transition:background .15s, color .15s;
+  }
+  .btn-icon:hover{ color:#374151; background:#fff; }
+
+  /* Audio/video player */
+  .article-player{
+    max-width:64ch; margin:0 auto 1.25rem;
+    padding:0; background:transparent; border:0; box-shadow:none;
+    --plyr-color-main:#000;
+    --plyr-audio-controls-background:transparent;
+    --plyr-audio-control-color:#000;
+  }
+  .article-player .plyr,
+  .article-player .plyr__video-wrapper{ background:transparent !important; box-shadow:none !important; border:0 !important; }
+  .article-player .plyr--audio .plyr__controls,
+  .article-player .plyr--video .plyr__controls{ background:transparent !important; border:0 !important; box-shadow:none !important; }
+  .article-player audio,
+  .article-player video{ display:block; width:100%; background:transparent !important; border:none !important; outline:none !important; }
+
+  /* Thumbnails */
+  .thumb,.thumb-lg{
+    position:relative; display:inline-grid; place-items:center;
+    border-radius:1rem; overflow:hidden; background:transparent;
+    box-shadow:0 10px 26px rgba(0,0,0,.10);
+  }
+  .thumb{ width:104px; height:104px; }
+  .thumb-lg,.thumb.thumb-lg{ width:256px; height:256px; }
+  @media (min-width:1024px){ .thumb-lg,.thumb.thumb-lg{ width:288px; height:288px; } }
+  .thumb .thumb-bg,.thumb-lg .thumb-bg{ position:absolute; inset:0; background-size:cover; background-position:center; }
+  .thumb[data-kind="video"],.thumb[data-kind="audio"],
+  .thumb-lg[data-kind="video"],.thumb-lg[data-kind="audio"]{
+    background:rgba(255,255,255,.28); border:1px solid rgba(255,255,255,.45);
+    backdrop-filter:blur(10px) saturate(1.12);
+  }
+  .thumb-icon{ position:relative; z-index:1; font-size:48px; color:#6b7280; }
+
+  @media print{
+    body{ background:#fff !important; }
+    .article-toolbar,button{ display:none !important; }
+    .paper-card{ box-shadow:none !important; }
+  }
+</style>
+
 {% endblock %}

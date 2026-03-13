@@ -11,7 +11,8 @@ module.exports = {
     'flex',
     'ring-1',
     'ring-2',
-    'ring-black/10'
+    'ring-black/10',
+    'prose-invert',
   ],
   theme: {
     extend: {
@@ -20,5 +21,5 @@ module.exports = {
       }
     }
   },
-  plugins: []
+  plugins: [require('@tailwindcss/typography')]
 };

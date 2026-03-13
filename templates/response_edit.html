@@ -178,7 +178,7 @@
         <p class="text-xs text-gray-400" id="tx-elapsed"></p>
       </div>
       {% endif %}
-      <div id="editor">{{ (response.transcription or '')|safe }}</div>
+      <div id="editor">{{ (response.transcription or response.response_text or '')|safe }}</div>
     </div>
     <input type="hidden" name="transcription" id="transcription">
       <!-- Response Tags -->
@@ -401,10 +401,10 @@
     }
   });
 
-  // Save HTML from Quill on submit
+  // Save plain text from Quill on submit
   const form = document.getElementById('edit-form');
   form.addEventListener('submit', function () {
-    document.getElementById('transcription').value = quill.root.innerHTML;
+    document.getElementById('transcription').value = quill.getText().trim();
   });
 
   // --- Transcription polling ---
@@ -737,7 +737,7 @@
       }
     } finally {
       const hidden = document.getElementById('transcription');
-      if (hidden && window.quill) hidden.value = quill.root.innerHTML;
+      if (hidden && window.quill) hidden.value = quill.getText().trim();
       form?.requestSubmit();
     }
   });
@@ -1033,7 +1033,7 @@
 
   // --- state ---
   let lastSavedTitle = (titleI?.value || '').trim();
-  let lastSavedHtml  = (window.quill ? quill.root.innerHTML : (hidden?.value || '')).trim();
+  let lastSavedHtml  = (window.quill ? quill.getText().trim() : (hidden?.value || '')).trim();
   let dirty = false;
   let idleTimer = 0;
   let periodicTimer = 0;
@@ -1068,8 +1068,8 @@
 
   // helper to build payload from current UI
   function buildFormData(){
-    // ensure hidden has latest HTML
-    const html = window.quill ? quill.root.innerHTML : (hidden?.value || '');
+    // ensure hidden has latest plain text
+    const html = window.quill ? quill.getText().trim() : (hidden?.value || '');
     if (hidden) hidden.value = html;
     const fd = new FormData(form);
     // title already in form; transcription now up to date in hidden
@@ -1080,7 +1080,7 @@
     if (saving) return; // collapse bursts
     // compare to last saved snapshot
     const currentTitle = (titleI?.value || '').trim();
-    const currentHtml  = (window.quill ? quill.root.innerHTML : (hidden?.value || '')).trim();
+    const currentHtml  = (window.quill ? quill.getText().trim() : (hidden?.value || '')).trim();
     if (!dirty && currentTitle===lastSavedTitle && currentHtml===lastSavedHtml) return;
 
     saving = true;
@@ -1120,7 +1120,7 @@
   form?.addEventListener('submit', () => {
     // update snapshot immediately; server response will come after navigation
     lastSavedTitle = (titleI?.value || '').trim();
-    lastSavedHtml  = (window.quill ? quill.root.innerHTML : (hidden?.value || '')).trim();
+    lastSavedHtml  = (window.quill ? quill.getText().trim() : (hidden?.value || '')).trim();
     dirty = false;
   });
 
@@ -1655,7 +1655,7 @@
     } finally {
       // make sure the transcription hidden field is up to date, then submit
       const hidden = document.getElementById('transcription');
-      if (hidden && window.quill) hidden.value = quill.root.innerHTML;
+      if (hidden && window.quill) hidden.value = quill.getText().trim();
       form?.requestSubmit();
       setTimeout(()=>{ _mergeInFlight = false; }, 1500); // allow again after short delay
     }

@@ -20,9 +20,18 @@ from app.services.assignment import get_on_deck_candidates, skip_current_prompt 
 from app.llm_client import make_llm_followup_prompt
 from app.services.chapter_compile import compile_chapter, chapter_status
 from app.schemas import ChapterCompilationDTO, ChapterStatusDTO
+from app.background import spawn
+
+# In-memory set of (user_id, chapter_key) pairs currently being compiled.
+# Good enough for a single-server setup; cleared on restart (harmless).
+_compiling: set[tuple[int, str]] = set()
 
 router = APIRouter()
 templates = Jinja2Templates(directory='templates')
+
+import markdown as _md
+from markupsafe import Markup
+templates.env.filters['markdown'] = lambda text: Markup(_md.markdown(text or '', extensions=['extra', 'nl2br']))
 
 
 class WeeklyRow(BaseModel):
@@ -340,13 +349,50 @@ async def api_weekly_on_deck(user_id: int, k: int=Query(5, ge=1, le=25), admin=D
 
 @router.get('/chapter/{chapter_id}', response_class=HTMLResponse)
 async def chapter_view(chapter_id: str, request: Request, user=Depends(require_authenticated_html_user), db: AsyncSession=Depends(get_db)):
+    from app.models import Response as ResponseModel
     stat = await chapter_status(db, chapter_id, user.id)
-    ctx = {'request': request, 'user': user, 'chapter_key': stat.chapter, 'display_name': stat.display_name, 'ready': stat.ready, 'missing_prompts': stat.missing_prompts, 'latest_compilation': stat.latest_compilation.dict() if stat.latest_compilation else None}
+
+    # Fetch source response media for the compiled chapter
+    source_media = []
+    if stat.latest_compilation and stat.latest_compilation.used_blocks:
+        resp_ids = list({b.response_id for b in stat.latest_compilation.used_blocks if b.response_id})
+        if resp_ids:
+            rows = (await db.execute(
+                select(ResponseModel).where(
+                    ResponseModel.id.in_(resp_ids),
+                    ResponseModel.user_id == user.id,
+                    ResponseModel.primary_media_url.isnot(None),
+                )
+            )).unique().scalars().all()
+            for r in rows:
+                source_media.append({
+                    'response_id': r.id,
+                    'primary_media_url': r.primary_media_url,
+                    'primary_mime_type': r.primary_mime_type or '',
+                    'primary_thumbnail_path': r.primary_thumbnail_path,
+                    'primary_wav_path': r.primary_wav_path,
+                    'title': r.title or '',
+                })
+
+    ctx = {
+        'request': request,
+        'user': user,
+        'chapter_key': stat.chapter,
+        'display_name': stat.display_name,
+        'ready': stat.ready,
+        'missing_prompts': stat.missing_prompts,
+        'latest_compilation': stat.latest_compilation.dict() if stat.latest_compilation else None,
+        'source_media': source_media,
+    }
     return templates.TemplateResponse('chapter_view.html', ctx)
 
 @router.get('/api/chapter/{chapter_id}/status', response_model=ChapterStatusDTO)
 async def api_chapter_status(chapter_id: str, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
-    return await chapter_status(db, chapter_id, user.id)
+    from app.services.chapter_compile import _resolve_chapter_key
+    chapter_key, _ = await _resolve_chapter_key(db, chapter_id)
+    stat = await chapter_status(db, chapter_id, user.id)
+    stat.is_compiling = (user.id, chapter_key) in _compiling
+    return stat
 
 @router.get('/api/chapter/{chapter_id}/gaps', response_model=list[dict])
 async def api_chapter_gaps(chapter_id: str, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
@@ -354,13 +400,79 @@ async def api_chapter_gaps(chapter_id: str, user=Depends(require_authenticated_u
     latest = stat.latest_compilation
     return [g.dict() for g in (latest.gap_questions if latest else [])]
 
-@router.post('/api/chapter/{chapter_id}/compile', response_model=ChapterCompilationDTO)
+@router.post('/api/chapter/{chapter_id}/gap/create')
+async def api_chapter_gap_create(
+    chapter_id: str,
+    request: Request,
+    user=Depends(require_authenticated_user),
+    db: AsyncSession=Depends(get_db),
+):
+    """Turn a gap follow-up question into a real Prompt + UserPrompt and return the prompt_id."""
+    from app.models import UserPrompt
+    from app.services.chapter_compile import _resolve_chapter_key
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    body = await request.json()
+    question = (body.get('question') or '').strip()
+    if not question:
+        raise HTTPException(status_code=422, detail='question is required')
+
+    chapter_key, _ = await _resolve_chapter_key(db, chapter_id)
+
+    # Find or create a Prompt with this exact text in this chapter
+    existing = (await db.execute(
+        select(Prompt).where(Prompt.text == question, Prompt.chapter == chapter_key)
+    )).scalars().first()
+
+    if existing:
+        prompt = existing
+    else:
+        prompt = Prompt(text=question, chapter=chapter_key)
+        db.add(prompt)
+        await db.flush()
+        # Tag it so it's identifiable as AI-generated
+        try:
+            from app.routes_shared import _get_or_create_tag
+            tag = await _get_or_create_tag(db, 'source:ai-followup')
+            if tag:
+                prompt.tags = [tag]
+        except Exception:
+            pass
+
+    # Assign to user if not already assigned
+    existing_up = (await db.execute(
+        select(UserPrompt).where(UserPrompt.user_id == user.id, UserPrompt.prompt_id == prompt.id)
+    )).scalars().first()
+
+    if not existing_up:
+        db.add(UserPrompt(user_id=user.id, prompt_id=prompt.id, status='active'))
+
+    await db.commit()
+    return {'prompt_id': prompt.id, 'url': f'/user_record/{prompt.id}'}
+
+
+@router.post('/api/chapter/{chapter_id}/compile')
 async def api_chapter_compile(chapter_id: str, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    from app.services.chapter_compile import _resolve_chapter_key
+    from app.database import async_session_maker
+    chapter_key, _ = await _resolve_chapter_key(db, chapter_id)
     stat = await chapter_status(db, chapter_id, user.id)
     if not stat.ready:
         raise HTTPException(status_code=400, detail='Chapter is not ready: complete all assigned prompts.')
-    dto = await compile_chapter(db, chapter_id, user.id)
-    return dto
+    if (user.id, chapter_key) in _compiling:
+        return JSONResponse({'compiling': True, 'already_running': True})
+
+    _compiling.add((user.id, chapter_key))
+
+    async def _run():
+        async with async_session_maker() as session:
+            try:
+                await compile_chapter(session, chapter_key, user.id)
+            finally:
+                _compiling.discard((user.id, chapter_key))
+
+    spawn(_run(), name=f'compile-{user.id}-{chapter_key}')
+    return JSONResponse({'compiling': True, 'chapter': chapter_key})
 
 @router.post('/api/chapter/{chapter_id}/publish')
 async def api_chapter_publish(chapter_id: str, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):

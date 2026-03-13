@@ -1,4 +1,5 @@
 fastapi
+markdown
 uvicorn[standard]
 sqlalchemy
 alembic

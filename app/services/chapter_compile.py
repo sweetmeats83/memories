@@ -1,25 +1,88 @@
 # app/services/chapter_compile.py
 from __future__ import annotations
-import json, math, asyncio
+import json, asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+
+import re as _re
+from html.parser import HTMLParser
 
 from app.models import (
     Prompt, Response, UserPrompt, ChapterMeta, ChapterCompilation
 )
 from app.schemas import ChapterCompilationDTO, GapQuestion, UsedBlock, ChapterStatusDTO
-from app.llm_client import your_chat_completion, OLLAMA_MODEL
+from app.llm_client import OLLAMA_BASE_URL, OLLAMA_MODEL
 
-# ---------- helpers ----------
+
+def _strip_html(html: str) -> str:
+    """Convert HTML (from Quill editor) to plain text."""
+    if not html:
+        return ""
+    # Replace block-level tags with newlines before stripping
+    text = _re.sub(r'<br\s*/?>', '\n', html, flags=_re.IGNORECASE)
+    text = _re.sub(r'</(p|div|li|h[1-6]|blockquote)>', '\n', text, flags=_re.IGNORECASE)
+    # Strip all remaining tags
+    text = _re.sub(r'<[^>]+>', '', text)
+    # Decode common HTML entities
+    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>') \
+               .replace('&nbsp;', ' ').replace('&#39;', "'").replace('&quot;', '"')
+    # Collapse excessive blank lines
+    text = _re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+# ---------------------------------------------------------------------------
+# Low-level LLM helpers (longer timeout than the global llm_client helpers)
+# ---------------------------------------------------------------------------
+
+async def _llm_json(system: str, user: str, timeout: int = 180) -> dict:
+    """Call Ollama and parse the response as JSON. Returns {} on failure."""
+    import httpx
+    prompt = f"{system}\n\nReturn ONLY valid JSON, no commentary.\n\nUSER:\n{user}"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.15, "num_ctx": 8192},
+        "think": False,  # disable thinking mode (Qwen3/3.5) to prevent <think> bleed in JSON
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(f"{OLLAMA_BASE_URL}/api/generate", json=payload)
+            r.raise_for_status()
+            raw = (r.json() or {}).get("response", "").strip()
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+async def _llm_prose(system: str, user: str, timeout: int = 300) -> str:
+    """Call Ollama for free-form prose. Returns plain text string."""
+    import httpx
+    prompt = f"{system}\n\nUSER:\n{user}"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0.3},
+        "think": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(f"{OLLAMA_BASE_URL}/api/generate", json=payload)
+            r.raise_for_status()
+            return (r.json() or {}).get("response", "").strip()
+    except Exception as e:
+        raise RuntimeError(f"LLM prose call failed: {e}") from e
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 async def _resolve_chapter_key(db: AsyncSession, chapter_id: str | int) -> Tuple[str, str]:
-    """
-    Accept a numeric ChapterMeta.id or the string key (Prompt.chapter / ChapterMeta.name).
-    Returns (chapter_key, display_name).
-    """
-    # If numeric → lookup meta by id
     name, display = None, None
     try:
         cid = int(chapter_id)
@@ -28,8 +91,6 @@ async def _resolve_chapter_key(db: AsyncSession, chapter_id: str | int) -> Tuple
             return meta.name, (meta.display_name or meta.name)
     except Exception:
         pass
-
-    # Else treat input as the key
     nm = str(chapter_id).strip()
     meta = (await db.execute(select(ChapterMeta).where(ChapterMeta.name == nm))).scalars().first()
     if meta:
@@ -37,32 +98,49 @@ async def _resolve_chapter_key(db: AsyncSession, chapter_id: str | int) -> Tuple
     return nm, nm
 
 
+def _format_responses(pairs: list) -> str:
+    """Format prompt/response pairs as a numbered list for LLM input."""
+    lines = []
+    for i, (p, r) in enumerate(pairs, 1):
+        title = getattr(r, "title", None) or ""
+        # Audio responses store HTML (Quill editor) in transcription; typed responses use response_text
+        raw = (r.response_text or r.transcription or "")
+        text = _strip_html(raw) if raw else ""
+        if not text:
+            continue  # skip responses with no text content at all
+        lines.append(
+            f"[{i}] PROMPT: {p.text}\n"
+            + (f"    TITLE: {title}\n" if title else "")
+            + f"    RESPONSE:\n{text}\n"
+        )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# chapter_status (unchanged logic)
+# ---------------------------------------------------------------------------
+
 async def chapter_status(db: AsyncSession, chapter_id: str | int, user_id: int) -> ChapterStatusDTO:
     chapter_key, display = await _resolve_chapter_key(db, chapter_id)
 
-    # All prompts ASSIGNED to this user in this chapter
     assigned_rows = await db.execute(
         select(UserPrompt.prompt_id).join(Prompt, Prompt.id == UserPrompt.prompt_id)
         .where((UserPrompt.user_id == user_id) & (Prompt.chapter == chapter_key))
     )
     assigned_ids = set(assigned_rows.scalars().all())
 
-    # Completed responses
     resp_rows = await db.execute(
         select(Response.prompt_id).where((Response.user_id == user_id) & (Response.prompt_id.in_(assigned_ids)))
     )
     completed_ids = set(resp_rows.scalars().all())
-
     missing_ids = list(assigned_ids - completed_ids)
 
     missing_prompts = []
     if missing_ids:
         prs = await db.execute(select(Prompt).where(Prompt.id.in_(missing_ids)))
-        # If Prompt has joined eager loads on collections, require unique() before scalars()
         for p in prs.unique().scalars().all():
             missing_prompts.append({"id": p.id, "text": p.text})
 
-    # latest draft for this user/chapter
     latest = (
         await db.execute(
             select(ChapterCompilation)
@@ -102,35 +180,9 @@ async def chapter_status(db: AsyncSession, chapter_id: str | int, user_id: int) 
     )
 
 
-# ---------- compile service ----------
-
-SYSTEM_PROMPT = """You are a compassionate memoir editor.
-You will receive a CHAPTER meta block and a list of RESPONSES from one person.
-Tasks:
-1) Weave the chapter into a compelling, readable narrative in MARKDOWN. Keep the speaker’s authentic voice.
-2) You MAY reorder, group, and lightly rewrite for flow and clarity. Do not invent facts.
-3) Identify important GAPS or unclear areas. Propose 3–8 concise follow-up questions.
-4) Keep a traceable ORDER array mapping which responses/excerpts you used and in what order.
-
-Return STRICT JSON with keys:
-{
-  "chapter_markdown": "...",
-  "gap_questions": [{"question":"...", "why":"...", "tags":["optional","slugs"]}, ...],
-  "order": [{"prompt_id": 12, "response_id": 34, "title":"optional","used_excerpt":"optional"}]
-}
-"""
-
-def _responses_payload(items: list[tuple[Prompt, Response]]) -> list[dict]:
-    out = []
-    for p, r in items:
-        out.append({
-            "prompt_id": p.id,
-            "prompt_text": p.text,
-            "response_id": r.id,
-            "response_title": getattr(r, "title", None),
-            "response_text": (r.response_text or "").strip(),
-        })
-    return out
+# ---------------------------------------------------------------------------
+# Multi-pass compile
+# ---------------------------------------------------------------------------
 
 async def compile_chapter(
     db: AsyncSession,
@@ -139,11 +191,10 @@ async def compile_chapter(
 ) -> ChapterCompilationDTO:
     chapter_key, display = await _resolve_chapter_key(db, chapter_id)
 
-    # load meta (guidance signals)
     meta = (await db.execute(select(ChapterMeta).where(ChapterMeta.name == chapter_key))).scalars().first()
-    guidance = (meta.llm_guidance or "") if meta else None
+    guidance = (meta.llm_guidance or "").strip() if meta else ""
+    description = (meta.description or "").strip() if meta else ""
 
-    # gather ALL responses for this user in this chapter (only from assigned prompts is fine too)
     rows = await db.execute(
         select(Prompt, Response)
         .join(Response, Response.prompt_id == Prompt.id)
@@ -151,36 +202,144 @@ async def compile_chapter(
         .where((Prompt.chapter == chapter_key) & (Response.user_id == user_id))
         .order_by(Response.created_at.asc())
     )
-    pairs = rows.all()  # list[(Prompt, Response)]
+    pairs = rows.unique().all()
 
-    # build user payload
-    user_payload = {
-        "chapter": {"key": chapter_key, "display_name": display, "llm_guidance": guidance},
-        "style": {
-            "tone": "warm, first-person, clear",
-            "paragraphing": "short paragraphs with natural breaks",
-            "avoid": ["inventing facts", "changing meaning"],
-        },
-        "responses": _responses_payload(pairs),
-    }
-    user_str = json.dumps(user_payload, ensure_ascii=False)
+    if not pairs:
+        raise RuntimeError("No responses found for this chapter.")
 
-    # call LLM via existing helper (returns string; we parse JSON)
-    # NOTE: using your existing llm_client -> your_chat_completion with strict JSON return
-    # (We still tag the DTO with the model name we *intended*, and also record OLLAMA_MODEL used.)
-    raw = await your_chat_completion(system=SYSTEM_PROMPT, user=user_str, response_format="json", temperature=0.2)
+    # Warn loudly if responses have no text — catches the audio-only case early
+    empty = [(p.text, r.id) for p, r in pairs if not _strip_html(r.response_text or r.transcription or "")]
+    if empty:
+        import logging
+        logging.getLogger(__name__).warning(
+            "compile_chapter: %d response(s) have no text or transcription and will be skipped: %s",
+            len(empty), empty
+        )
 
-    try:
-        data = json.loads(raw)
-    except Exception:
-        # defensive fallback schema
-        data = {"chapter_markdown": raw.strip() or "# (empty)", "gap_questions": [], "order": []}
+    responses_text = _format_responses(pairs)
+    idx_to_ids = {i + 1: (p.id, r.id) for i, (p, r) in enumerate(pairs)}
 
-    chapter_md = (data.get("chapter_markdown") or "").strip() or "# (empty)"
-    gaps = data.get("gap_questions") or []
-    order = data.get("order") or []
+    # -----------------------------------------------------------------------
+    # Pass 1 — Thematic grouping
+    # -----------------------------------------------------------------------
+    p1_system = f"""\
+You are organizing memoir content for the chapter "{display}".
+{f'Chapter description: {description}' if description else ''}
+{f'Editorial guidance: {guidance}' if guidance else ''}
 
-    # save as a new version
+Read all the question-response pairs below (numbered [1], [2], …).
+Group them into 3–6 thematic sections that will flow well together in a memoir chapter.
+Each section should have a short evocative title and a list of the response numbers that belong.
+
+Return ONLY JSON in this exact shape:
+{{
+  "sections": [
+    {{"title": "section title", "theme": "one sentence describing what ties these together", "response_numbers": [1, 3, 5]}},
+    ...
+  ]
+}}"""
+
+    p1_data = await _llm_json(p1_system, responses_text, timeout=180)
+    sections = p1_data.get("sections") or []
+
+    # Fallback: if grouping failed, treat all as one section
+    if not sections:
+        sections = [{"title": display, "theme": "memoir narrative", "response_numbers": list(range(1, len(pairs) + 1))}]
+
+    # -----------------------------------------------------------------------
+    # Pass 2 — Draft each section as flowing prose
+    # -----------------------------------------------------------------------
+    p2_system = """\
+You are a memoir ghostwriter editing a real person's recorded answers into prose.
+
+STRICT RULES — failure to follow these will ruin the memoir:
+1. Write ONLY in the FIRST PERSON ("I", "my", "we").
+2. Use ONLY the names, places, dates, and events that appear in the responses below.
+   DO NOT invent, assume, or add ANY detail not explicitly stated in the responses.
+3. If a response is vague, keep the prose vague — do not fill gaps with guesses.
+4. Preserve the person's own phrasing and vocabulary as much as possible.
+5. Write 2–4 flowing paragraphs with a warm, honest, conversational tone.
+6. Output ONLY the prose paragraphs — no headers, no JSON, no commentary, no preamble."""
+
+    section_drafts: list[str] = []
+    used_blocks: list[dict] = []
+
+    for sec in sections:
+        title = sec.get("title", "")
+        theme = sec.get("theme", "")
+        nums = [n for n in (sec.get("response_numbers") or []) if 1 <= n <= len(pairs)]
+        if not nums:
+            continue
+
+        # Build the subset of responses for this section
+        subset_pairs = [pairs[n - 1] for n in nums]
+        subset_text = _format_responses(subset_pairs)
+
+        p2_user = (
+            f'Section title: "{title}"\n'
+            f'Theme: {theme}\n\n'
+            f"Responses to use:\n{subset_text}"
+        )
+        draft = await _llm_prose(p2_system, p2_user, timeout=300)
+        section_drafts.append(f"### {title}\n\n{draft}")
+
+        for n in nums:
+            pid, rid = idx_to_ids.get(n, (None, None))
+            if pid:
+                used_blocks.append({"prompt_id": pid, "response_id": rid, "section": title})
+
+    # -----------------------------------------------------------------------
+    # Pass 3 — Assemble and polish the full chapter
+    # -----------------------------------------------------------------------
+    combined_draft = "\n\n".join(section_drafts)
+
+    p3_system = f"""\
+You are a senior memoir editor. Below are drafted sections of a memoir chapter \
+titled "{display}".
+{f'Editorial guidance: {guidance}' if guidance else ''}
+
+Your task:
+1. Write a compelling OPENING paragraph drawn from the actual content — be specific
+   and vivid using only details already present in the drafts.
+2. Arrange the sections in the most natural narrative order.
+3. Write smooth TRANSITION sentences between sections so the chapter flows as one piece.
+4. Write a CLOSING paragraph that brings the chapter to a satisfying close using
+   only details already present in the drafts.
+5. Preserve the first-person voice throughout.
+6. CRITICAL: Do NOT add, invent, or assume any names, places, events, or details
+   that are not already in the drafted sections. Light editing only.
+
+Output the complete, polished chapter as clean markdown (use ## for the chapter \
+title, ### for section headers if needed). No JSON, no commentary, no preamble."""
+
+    p3_user = f"CHAPTER TITLE: {display}\n\nDRAFTED SECTIONS:\n\n{combined_draft}"
+    final_markdown = await _llm_prose(p3_system, p3_user, timeout=360)
+
+    if not final_markdown.strip():
+        final_markdown = combined_draft  # fallback to unpolished draft
+
+    # -----------------------------------------------------------------------
+    # Pass 4 — Gap analysis (small, fast call)
+    # -----------------------------------------------------------------------
+    p4_system = f"""\
+You have just read a memoir chapter about "{display}".
+Identify 3–6 important gaps — things that seem missing, underdeveloped, or \
+worth exploring further that would enrich this chapter.
+Return ONLY JSON:
+{{
+  "gap_questions": [
+    {{"question": "...", "why": "one sentence on why this would enrich the chapter"}},
+    ...
+  ]
+}}"""
+
+    p4_user = f"CHAPTER CONTENT (summary):\n\n{final_markdown[:3000]}"  # cap to avoid timeout
+    p4_data = await _llm_json(p4_system, p4_user, timeout=120)
+    gaps = p4_data.get("gap_questions") or []
+
+    # -----------------------------------------------------------------------
+    # Save result
+    # -----------------------------------------------------------------------
     latest_ver = (
         await db.execute(
             select(func.max(ChapterCompilation.version))
@@ -194,10 +353,10 @@ async def compile_chapter(
         chapter=chapter_key,
         version=new_ver,
         status="draft",
-        compiled_markdown=chapter_md,
+        compiled_markdown=final_markdown,
         gap_questions=gaps,
-        used_blocks=order,
-        model_name=OLLAMA_MODEL,     # actual model used underneath
+        used_blocks=used_blocks,
+        model_name=OLLAMA_MODEL,
         prompt_tokens=None,
         completion_tokens=None,
         total_tokens=None,

@@ -55,6 +55,7 @@ def _parse_cors_origins() -> list[str]:
 
 app = FastAPI(title="Memories App")
 templates = Jinja2Templates(directory="templates")
+
 # Static file serving
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
