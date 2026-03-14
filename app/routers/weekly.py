@@ -406,14 +406,22 @@ async def api_chapter_gap_create(
     request: Request,
     user=Depends(require_authenticated_user),
     db: AsyncSession=Depends(get_db),
+    question: str = Form(None),
 ):
-    """Turn a gap follow-up question into a real Prompt + UserPrompt and return the prompt_id."""
+    """Turn a gap follow-up question into a real Prompt + UserPrompt, then redirect to the record page."""
     from app.models import UserPrompt
     from app.services.chapter_compile import _resolve_chapter_key
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-    body = await request.json()
-    question = (body.get('question') or '').strip()
+    # question comes from form data; for JSON API callers it will be None here
+    if not question:
+        ct = request.headers.get('content-type', '')
+        if 'application/json' in ct:
+            try:
+                body = await request.json()
+                question = (body.get('question') or '').strip()
+            except Exception:
+                pass
+    question = (question or '').strip()
     if not question:
         raise HTTPException(status_code=422, detail='question is required')
 
@@ -439,16 +447,13 @@ async def api_chapter_gap_create(
         except Exception:
             pass
 
-    # Assign to user if not already assigned
-    existing_up = (await db.execute(
-        select(UserPrompt).where(UserPrompt.user_id == user.id, UserPrompt.prompt_id == prompt.id)
-    )).scalars().first()
-
-    if not existing_up:
-        db.add(UserPrompt(user_id=user.id, prompt_id=prompt.id, status='active'))
-
     await db.commit()
-    return {'prompt_id': prompt.id, 'url': f'/user_record/{prompt.id}'}
+    # If called from a form POST, redirect directly; otherwise return JSON for JS callers
+    accept = request.headers.get('accept', '')
+    content_type = request.headers.get('content-type', '')
+    if 'application/json' in content_type:
+        return {'prompt_id': prompt.id, 'url': f'/user_record/{prompt.id}'}
+    return RedirectResponse(url=f'/user_record/{prompt.id}', status_code=303)
 
 
 @router.post('/api/chapter/{chapter_id}/compile')
@@ -457,7 +462,8 @@ async def api_chapter_compile(chapter_id: str, user=Depends(require_authenticate
     from app.database import async_session_maker
     chapter_key, _ = await _resolve_chapter_key(db, chapter_id)
     stat = await chapter_status(db, chapter_id, user.id)
-    if not stat.ready:
+    # Block first-time compile if prompts are missing; allow recompile once a draft exists
+    if not stat.ready and stat.latest_compilation is None:
         raise HTTPException(status_code=400, detail='Chapter is not ready: complete all assigned prompts.')
     if (user.id, chapter_key) in _compiling:
         return JSONResponse({'compiling': True, 'already_running': True})
@@ -473,6 +479,29 @@ async def api_chapter_compile(chapter_id: str, user=Depends(require_authenticate
 
     spawn(_run(), name=f'compile-{user.id}-{chapter_key}')
     return JSONResponse({'compiling': True, 'chapter': chapter_key})
+
+@router.post('/api/chapter/{chapter_id}/save-edit')
+async def api_chapter_save_edit(chapter_id: str, request: Request, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    """Save manually edited compiled_markdown back to the latest ChapterCompilation."""
+    from app.models import ChapterCompilation
+    from app.services.chapter_compile import _resolve_chapter_key
+    chapter_key, _ = await _resolve_chapter_key(db, chapter_id)
+    body = await request.json()
+    new_md = (body.get('compiled_markdown') or '').strip()
+    if not new_md:
+        raise HTTPException(status_code=422, detail='compiled_markdown is required')
+    latest = (await db.execute(
+        select(ChapterCompilation)
+        .where(ChapterCompilation.user_id == user.id, ChapterCompilation.chapter == chapter_key)
+        .order_by(ChapterCompilation.version.desc())
+        .limit(1)
+    )).scalars().first()
+    if not latest:
+        raise HTTPException(status_code=404, detail='No compilation to edit')
+    latest.compiled_markdown = new_md
+    await db.commit()
+    return {'ok': True}
+
 
 @router.post('/api/chapter/{chapter_id}/publish')
 async def api_chapter_publish(chapter_id: str, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):

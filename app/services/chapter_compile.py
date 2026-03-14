@@ -219,6 +219,10 @@ async def compile_chapter(
     responses_text = _format_responses(pairs)
     idx_to_ids = {i + 1: (p.id, r.id) for i, (p, r) in enumerate(pairs)}
 
+    # Release the DB connection back to the pool before the long LLM calls.
+    # asyncpg returns the connection on commit; subsequent writes re-acquire one.
+    await db.commit()
+
     # -----------------------------------------------------------------------
     # Pass 1 — Thematic grouping
     # -----------------------------------------------------------------------

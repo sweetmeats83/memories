@@ -39,7 +39,6 @@
     _msgIdx = 0;
     sp.textContent = COMPILE_MSGS[0];
     card.classList.remove('hidden');
-    $('#draftArea')?.classList.add('hidden');
     _progressTimer = setInterval(() => {
       _msgIdx = Math.min(_msgIdx + 1, COMPILE_MSGS.length - 1);
       _stampElapsed();
@@ -58,7 +57,6 @@
     clearInterval(_progressTimer);
     clearInterval(_elapsedTimer);
     $('#compileProgress')?.classList.add('hidden');
-    $('#draftArea')?.classList.remove('hidden');
   }
 
   // ── Gap chips ─────────────────────────────────────────────────────────────
@@ -94,10 +92,18 @@
   }
 
   // ── Render a completed compilation ────────────────────────────────────────
-  // Reload the page so the server renders the markdown cleanly.
-  function renderCompilation(_comp) {
+  // Open the Quill editor with the fresh compiled text so the user can review
+  // before the content appears on the card.
+  function renderCompilation(comp) {
     stopProgress();
-    window.location.reload();
+    const md = (comp && comp.compiled_markdown) ? comp.compiled_markdown : '';
+    window.INITIAL_MARKDOWN = md;
+    // Show edit/recompile buttons now that a version exists
+    $('#btnEdit')?.classList.remove('hidden');
+    $('#btnRecompile')?.classList.remove('hidden');
+    $('#btnPublish')?.classList.remove('hidden');
+    $('#btnCompile')?.classList.add('hidden');
+    enterEditMode();
   }
 
   // ── Poll for background compile result ────────────────────────────────────
@@ -198,18 +204,111 @@
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────
-  // Chapter HTML is rendered server-side; just show the action buttons if a
-  // compilation already exists.
   if (window.INITIAL_VERSION != null) {
-    document.addEventListener('DOMContentLoaded', () => {
-      $('#btnPublish')?.classList.remove('hidden');
-      $('#btnRecompile')?.classList.remove('hidden');
-    });
+    $('#btnPublish')?.classList.remove('hidden');
+    $('#btnRecompile')?.classList.remove('hidden');
+    $('#btnEdit')?.classList.remove('hidden');
   }
 
   $('#btnCompile')?.addEventListener('click', compileNow);
   $('#btnRecompile')?.addEventListener('click', compileNow);
   $('#btnPublish')?.addEventListener('click', publishNow);
+
+  // ── Inline edit (Quill) ───────────────────────────────────────────────────
+  let _quill = null;
+
+  function enterEditMode() {
+    const editArea = $('#editArea');
+    if (!editArea) return;
+
+    // Lazy-init Quill
+    if (!_quill && typeof Quill !== 'undefined') {
+      _quill = new Quill('#quillEditor', {
+        theme: 'snow',
+        modules: { toolbar: [
+          ['bold','italic','underline'],
+          [{ header: [1,2,3,false] }],
+          [{ list: 'ordered'},{ list: 'bullet' }],
+          ['clean'],
+        ]},
+      });
+    }
+    // Pre-populate with current markdown as plain text
+    if (_quill) {
+      _quill.setText(window.INITIAL_MARKDOWN || '');
+    }
+
+    // Hide paper card; show editor in its place
+    $('#cardWrapper')?.classList.add('hidden');
+    editArea.classList.remove('hidden');
+    editArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('#btnEdit')?.classList.add('hidden');
+    $('#btnCompile')?.classList.add('hidden');
+    $('#btnRecompile')?.classList.add('hidden');
+    $('#btnPublish')?.classList.add('hidden');
+  }
+
+  function exitEditMode() {
+    $('#cardWrapper')?.classList.remove('hidden');
+    $('#editArea')?.classList.add('hidden');
+    if (window.INITIAL_VERSION != null || window.INITIAL_MARKDOWN) {
+      $('#btnEdit')?.classList.remove('hidden');
+      $('#btnRecompile')?.classList.remove('hidden');
+      $('#btnPublish')?.classList.remove('hidden');
+    }
+  }
+
+  $('#btnEdit')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    enterEditMode();
+  });
+
+  $('#btnCancelEdit')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    exitEditMode();
+  });
+
+  $('#btnSaveEdit')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!_quill) return;
+    const newMd = _quill.getText().trim();
+    if (!newMd) return;
+    const btn = $('#btnSaveEdit');
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch(
+        `/api/chapter/${encodeURIComponent(window.CHAPTER_KEY)}/save-edit`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ compiled_markdown: newMd }),
+        }
+      ).then(r => r.json());
+      if (r?.ok) {
+        window.INITIAL_MARKDOWN = newMd;
+        // Create or update the chapter-prose element in draftArea
+        const draftArea = $('#draftArea');
+        let prose = draftArea && $('#draftArea .chapter-prose');
+        if (!prose && draftArea) {
+          draftArea.innerHTML = '';
+          prose = document.createElement('div');
+          prose.className = 'chapter-prose';
+          draftArea.appendChild(prose);
+        }
+        if (prose && typeof marked !== 'undefined') {
+          prose.innerHTML = marked.parse(newMd, { breaks: true });
+        }
+        exitEditMode();
+      } else {
+        alert('Save failed. Please try again.');
+      }
+    } catch (err) {
+      alert('Error saving: ' + (err.message || err));
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
 
   refreshStatus();
 

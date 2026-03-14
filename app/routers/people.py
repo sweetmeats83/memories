@@ -27,6 +27,9 @@ from app.models import (
 )
 from app.utils import require_authenticated_user, require_authenticated_html_user, slugify
 from app.services.people import upsert_person_for_user, resolve_person
+
+# In-memory set of user_ids currently running infer/run-all — prevents concurrent DB-heavy runs
+_inferring: set[int] = set()
 from app.services.auto_tag import WHITELIST, reload_whitelist
 from app.services.kinship import classify_kinship
 from app.services.infer import infer_edges_for_person, commit_inferred_edges, infer_all_for_user, FAMILY_EDGE_TYPES
@@ -1324,9 +1327,10 @@ async def api_people_add(payload: PersonCreateReq, user=Depends(require_authenti
         meta = {}
     meta['inferred'] = False
     meta['hidden'] = False
-    meta['connect_to_owner'] = True
     if payload.role_hint:
         meta['role_hint'] = payload.role_hint
+        meta['connect_to_owner'] = True
+    # If no role_hint, person is added to graph without auto-connecting to the user
     p.meta = meta
     try:
         flag_modified(p, 'meta')
@@ -1349,7 +1353,7 @@ async def api_people_add(payload: PersonCreateReq, user=Depends(require_authenti
                 if dn and (dn == uname or dn == uemail or dn == 'you'):
                     me_pid = rpid
                     break
-        if me_pid and p.id != me_pid:
+        if me_pid and p.id != me_pid and payload.role_hint:
             r = (payload.role_hint or '').strip().lower() or 'friend'
 
             def _map_role_to_rel(role: str) -> str:
@@ -1566,6 +1570,16 @@ async def api_join_group(payload: GroupJoinReq, db: AsyncSession=Depends(get_db)
 @router.post('/api/people/infer/run-all')
 async def api_infer_run_all(db: AsyncSession=Depends(get_db), user=Depends(require_authenticated_user)):
     """Run inference across all of this user's people and commit high-confidence edges."""
+    if user.id in _inferring:
+        return {'ok': True, 'committed': 0, 'skipped': 'already_running'}
+    _inferring.add(user.id)
+    try:
+        return await _do_infer_run_all(db, user)
+    finally:
+        _inferring.discard(user.id)
+
+
+async def _do_infer_run_all(db: AsyncSession, user):
     # Require at least 3 edges before bothering
     edge_count = (await db.execute(
         select(func.count()).select_from(RelationshipEdge).where(RelationshipEdge.user_id == user.id)

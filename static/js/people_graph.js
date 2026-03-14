@@ -1394,30 +1394,26 @@ console.info("people_graph.js — click path & hover path build loaded");
       body: JSON.stringify({ src_person_id: state.selectedId, dst_person_id: other, rel_type: rel, confidence: 0.9 })
     });
     await refreshGraph();
-    if ((state.edges || []).length >= 3) {
-      fetch('/api/people/infer/run-all', { method:'POST', credentials:'include' }).catch(()=>{});
-    }
     await openPanel(state.selectedId);
   });
 
   // Quick add person (toolbar)
   npAdd?.addEventListener('click', async () => {
     const name = (npName?.value || '').trim();
-    const role = (npRole && npRole.value) ? npRole.value.trim().toLowerCase() : 'friend';
+    const role = (npRole && npRole.value) ? npRole.value.trim().toLowerCase() : '';
     if (!name) return;
+    const addBody = { display_name: name };
+    if (role) addBody.role_hint = role;
     const r = await fetch('/api/people/add', {
       method:'POST', credentials:'include', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ display_name: name, role_hint: role || 'friend' })
+      body: JSON.stringify(addBody)
     });
     const j = await r.json().catch(()=>({}));
     const pid = j && (j.person_id ?? j.id);
     npName.value = ''; if (npRole) npRole.value = '';
     // Auto-add high-confidence edges from role_hint (e.g. "mother" → parent-of You)
-    if (pid) await fetch(`/api/people/${pid}/infer/auto`, { method:'POST', credentials:'include' }).catch(()=>{});
+    if (pid && role) await fetch(`/api/people/${pid}/infer/auto`, { method:'POST', credentials:'include' }).catch(()=>{});
     await refreshGraph();
-    if ((state.edges || []).length >= 3) {
-      fetch('/api/people/infer/run-all', { method:'POST', credentials:'include' }).catch(()=>{});
-    }
     const node = pid ? state.nodes.find(n => String(n.id) === String(pid))
                      : state.nodes.find(n => n.kind==='person' && (n.label||'').toLowerCase() === name.toLowerCase());
     if (node) { state.selectedId = node.id; await openPanel(node.id); }
@@ -1824,22 +1820,41 @@ console.info("people_graph.js — click path & hover path build loaded");
         const conns = Array.isArray(d.connections)
           ? d.connections.filter(c => c && c.direction === 'out')
           : [];
+        const canEditView = !!d.editable;
         if (!conns.length) {
           const e = document.createElement('div'); e.className='text-xs text-stone-600'; e.textContent='No connections yet'; pvEdges.appendChild(e);
         } else {
           conns.forEach(c => {
-            const row = document.createElement('div'); row.className='text-sm my-0.5';
+            const row = document.createElement('div'); row.className='flex items-center gap-2 my-0.5';
             const subjName = pvName.textContent || ('#'+d.id);
             const objName  = c.name || ('#'+c.person_id);
-            row.textContent = `${subjName} is ${relLabel(c.rel_type)} of ${objName}`;
+            const lbl_span = document.createElement('span');
+            lbl_span.className = 'text-sm flex-1';
+            lbl_span.textContent = `${subjName} is ${relLabel(c.rel_type)} of ${objName}`;
             (async () => {
               try {
                 const lbl = await fetchKinshipLabel(c.person_id, d.id);
                 if (lbl && String(lbl).toLowerCase() !== 'related') {
-                  row.textContent = `${subjName} is ${lbl} of ${objName}`;
+                  lbl_span.textContent = `${subjName} is ${lbl} of ${objName}`;
                 }
               } catch {}
             })();
+            row.appendChild(lbl_span);
+            if (canEditView) {
+              const rmBtn = document.createElement('button');
+              rmBtn.textContent = 'Remove';
+              rmBtn.className = 'graph-btn text-xs';
+              rmBtn.addEventListener('click', async (ev) => {
+                ev.stopPropagation();
+                const edgeId = c.edge_id ?? c.id;
+                if (!edgeId) return;
+                await fetch(`/api/people/edges/${edgeId}`, { method:'DELETE', credentials:'include' });
+                await refreshGraph();
+                // Re-open view panel for same person to refresh connections list
+                await openDisplay(d.id);
+              });
+              row.appendChild(rmBtn);
+            }
             pvEdges.appendChild(row);
           });
         }
