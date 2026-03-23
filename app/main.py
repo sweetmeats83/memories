@@ -271,11 +271,11 @@ async def pwa_manifest():
 
 @app.get("/reset_password", response_class=HTMLResponse)
 async def reset_password_page(request: Request):
-    return templates.TemplateResponse("reset_password.html", {"request": request})
+    return templates.TemplateResponse(request, "reset_password.html", {"request": request})
 
 @app.get("/set_password", response_class=HTMLResponse)
 async def set_password_page(request: Request):
-    return templates.TemplateResponse("set_password.html", {"request": request})
+    return templates.TemplateResponse(request, "set_password.html", {"request": request})
 
 @app.get("/health")
 async def health_check():

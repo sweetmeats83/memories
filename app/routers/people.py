@@ -260,7 +260,7 @@ async def people_graph_page(request: Request, user=Depends(require_authenticated
             await db.rollback()
         except Exception:
             pass
-    return templates.TemplateResponse('people_graph.html', {'request': request, 'user': user, 'me_person_id': me_person_id})
+    return templates.TemplateResponse(request, 'people_graph.html', {'request': request, 'user': user, 'me_person_id': me_person_id})
 
 
 @router.get('/api/people/graph/version')

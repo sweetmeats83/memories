@@ -425,7 +425,7 @@ async def create_response(
         except Exception as e:
             logger.exception('weekly rotate after response failed: %s', e)
         await db.commit()
-        return templates.TemplateResponse('thank_you.html', {'request': request, 'user': None})
+        return templates.TemplateResponse(request, 'thank_you.html', {'request': request, 'user': None})
     _wants_json = 'application/json' in (request.headers.get('accept') or '') or request.headers.get('x-requested-with') == 'XMLHttpRequest'
     if _wants_json:
         return {'id': new_response.id, 'processing_state': new_response.processing_state}
@@ -468,7 +468,7 @@ async def response_view(
         'segments': segments,
         'is_token_link': False,
     }
-    return templates.TemplateResponse('response_view.html', ctx)
+    return templates.TemplateResponse(request, 'response_view.html', ctx)
 
 
 @router.get('/response/{response_id}/edit', response_class=HTMLResponse, name='edit_response_page')
@@ -503,7 +503,7 @@ async def edit_response_page(
             ][:20]
     except Exception:
         pass
-    return templates.TemplateResponse('response_edit.html', {
+    return templates.TemplateResponse(request, 'response_edit.html', {
         'request': request,
         'user': user,
         'response': response,
@@ -534,7 +534,7 @@ async def response_processing_page(
         'error': getattr(response, 'processing_error', None),
         'redirect_url': f'/response/{response_id}/edit',
     }
-    return templates.TemplateResponse('response_processing.html', ctx)
+    return templates.TemplateResponse(request, 'response_processing.html', ctx)
 
 
 @router.get('/api/responses/{response_id}/status')
@@ -713,6 +713,7 @@ async def share_response_view(token: str, request: Request, db: AsyncSession = D
         raise HTTPException(status_code=404, detail='Response not found')
     if getattr(resp, 'processing_state', 'ready') != 'ready':
         return templates.TemplateResponse(
+            request,
             'response_processing_public.html',
             {'request': request, 'message': 'This response is still processing. Please try again in a few minutes.'},
             status_code=202,
@@ -727,7 +728,7 @@ async def share_response_view(token: str, request: Request, db: AsyncSession = D
         'is_token_link': True,
         'share_token': token,
     }
-    return templates.TemplateResponse('response_view.html', ctx)
+    return templates.TemplateResponse(request, 'response_view.html', ctx)
 
 
 @router.get('/media/share/{token}/{path:path}')
@@ -957,7 +958,7 @@ async def response_next(
     prompt_media = list(next_resp.prompt.media) if next_resp.prompt and next_resp.prompt.media else []
     supporting_media = list(next_resp.supporting_media or [])
     segments = list(next_resp.segments or [])
-    return templates.TemplateResponse('response_view__article_partial.html', {
+    return templates.TemplateResponse(request, 'response_view__article_partial.html', {
         'request': request,
         'user': user,
         'response': next_resp,

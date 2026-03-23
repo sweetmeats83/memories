@@ -33,7 +33,7 @@ router = APIRouter()
 
 @router.get('/login', response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse('login.html', {'request': request, 'user': None})
+    return templates.TemplateResponse(request, 'login.html', {'request': request, 'user': None})
 
 
 @router.get('/settings', response_class=HTMLResponse)
@@ -151,7 +151,7 @@ async def settings_page(
         'notification_options': notification_options,
         'all_profile_tags': all_profile_tags,
     }
-    return templates.TemplateResponse('settings.html', ctx)
+    return templates.TemplateResponse(request, 'settings.html', ctx)
 
 
 @router.delete('/settings/profile-tags/{slug:path}')
@@ -466,7 +466,7 @@ async def user_dashboard(
         'chapter_styles': chapter_styles,
         'skipped_prompts': skipped_prompts,
     }
-    return templates.TemplateResponse('user_dashboard.html', ctx)
+    return templates.TemplateResponse(request, 'user_dashboard.html', ctx)
 
 
 @router.get('/user_record', response_class=HTMLResponse, name='user_record_latest')
@@ -483,6 +483,7 @@ async def user_record(
     )).scalars().first()
 
     return templates.TemplateResponse(
+        request,
         'user_record.html',
         {
             'request': request,
@@ -502,6 +503,7 @@ async def user_record_freeform(
     chapters_res = await db.execute(select(Prompt.chapter).distinct().order_by(Prompt.chapter))
     chapters = [row[0] for row in chapters_res.all() if row[0]]
     return templates.TemplateResponse(
+        request,
         'user_record.html',
         {
             'request': request,
@@ -565,6 +567,7 @@ async def user_record_with_prompt(
 
     media = [m for m in media if _can_view(m, viewer_id)]
     return templates.TemplateResponse(
+        request,
         'user_record.html',
         {
             'request': request,

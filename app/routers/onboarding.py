@@ -65,6 +65,7 @@ async def onboarding_home(
         return RedirectResponse(url="/onboarding/done", status_code=303)
     role_options = _role_options_from_whitelist()
     return templates.TemplateResponse(
+        request,
         "onboarding_steps.html",
         {"request": request, "user": user, "step": step, "role_options": role_options, "profile": prof},
     )

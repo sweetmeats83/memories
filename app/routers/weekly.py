@@ -384,7 +384,7 @@ async def chapter_view(chapter_id: str, request: Request, user=Depends(require_a
         'latest_compilation': stat.latest_compilation.dict() if stat.latest_compilation else None,
         'source_media': source_media,
     }
-    return templates.TemplateResponse('chapter_view.html', ctx)
+    return templates.TemplateResponse(request, 'chapter_view.html', ctx)
 
 @router.get('/api/chapter/{chapter_id}/status', response_model=ChapterStatusDTO)
 async def api_chapter_status(chapter_id: str, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):

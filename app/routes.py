@@ -143,7 +143,7 @@ async def admin_dashboard(request: Request, user: User = Depends(require_admin_u
         for uid, pid in rows:
             if uid in umap:
                 assignments_by_prompt.setdefault(pid, []).append(umap[uid])
-    return templates.TemplateResponse('admin_dashboard.html', {
+    return templates.TemplateResponse(request, 'admin_dashboard.html', {
         'request': request,
         'user': user,
         'chapters': chapters,
@@ -530,8 +530,8 @@ async def admin_edit_prompt_page(
         'partial': request.query_params.get('partial') == '1',
     }
     if request.query_params.get('partial') == '1':
-        return templates.TemplateResponse('admin_edit_prompt_partial.html', ctx)
-    return templates.TemplateResponse('admin_edit_prompt.html', ctx)
+        return templates.TemplateResponse(request, 'admin_edit_prompt_partial.html', ctx)
+    return templates.TemplateResponse(request, 'admin_edit_prompt.html', ctx)
 
 
 @router.get('/admin_dashboard_partial')
@@ -545,7 +545,7 @@ async def admin_dashboard_partial(request: Request, user=Depends(require_admin_u
         chapters.setdefault(p.chapter, []).append(p)
         tags_map[p.id] = [{'id': t.id, 'name': t.name, 'slug': t.slug, 'color': t.color} for t in p.tags or []]
         media_map[p.id] = [{'id': m.id, 'file_path': m.file_path, 'media_type': m.media_type, 'thumbnail_url': m.thumbnail_url} for m in p.media or []]
-    return templates.TemplateResponse('prompt_list.html', {
+    return templates.TemplateResponse(request, 'prompt_list.html', {
         'request': request,
         'user': user,
         'chapters': chapters,

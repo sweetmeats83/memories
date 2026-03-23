@@ -225,7 +225,7 @@ async def admin_response_view(
     )).scalars().first()
     if not resp:
         raise HTTPException(status_code=404, detail='Response not found')
-    return templates.TemplateResponse('response_view.html', {
+    return templates.TemplateResponse(request, 'response_view.html', {
         'request': request,
         'user': admin,
         'response': resp,
@@ -260,7 +260,7 @@ async def admin_edit_response_page(
         select(PromptMedia).where(PromptMedia.prompt_id == response.prompt_id)
     )).scalars().all()
     admin_api_base = f'/admin/users/{user_id}/responses/{response_id}'
-    return templates.TemplateResponse('response_edit.html', {
+    return templates.TemplateResponse(request, 'response_edit.html', {
         'request': request,
         'user': admin,
         'response': response,

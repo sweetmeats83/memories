@@ -56,6 +56,7 @@ async def invite_accept(
         if used or (exp and exp < now):
             invalid = True
     return templates.TemplateResponse(
+        request,
         "invite_create_password.html",
         {
             "request": request,
@@ -78,6 +79,7 @@ async def invite_set_password(
     now = datetime.now(timezone.utc)
     if not invite or invite.used_at or (invite.expires_at and invite.expires_at < now):
         return templates.TemplateResponse(
+            request,
             "invite_create_password.html",
             {
                 "request": request,
