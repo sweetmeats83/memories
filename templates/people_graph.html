@@ -94,9 +94,11 @@
         0 4px 12px rgba(200, 119, 207, 0.25),
         inset 0 2px 4px rgba(0, 0, 0, 0.2);
     }
-    /* Edit button reveal on hover for the display panel */
-    #panel_view .edit-btn { opacity: 0; transition: opacity .2s ease; }
-    #panel_view:hover .edit-btn { opacity: 1; }
+    /* Edit button reveal on hover for the display panel (desktop only) */
+    @media (min-width: 640px) {
+      #panel_view .edit-btn { opacity: 0; transition: opacity .2s ease; }
+      #panel_view:hover .edit-btn { opacity: 1; }
+    }
     /* Active cleanup tab */
     .cleanup-tab.is-active { background: rgba(255,156,234,0.35); border-color: rgba(200,119,207,0.6); }
 
@@ -158,29 +160,71 @@
       background: rgba(239,68,68,0.15) !important;
       color: #ff6b6b !important;
     }
+
+    /* ── Mobile layout ────────────────────────────────────────────────── */
+    @media (max-width: 639px) {
+      /* View and edit panels slide up from bottom */
+      #panel_view, #panel {
+        position: fixed !important;
+        right: 0 !important; left: 0 !important;
+        bottom: 0 !important; top: auto !important;
+        width: 100% !important; max-width: 100% !important;
+        max-height: 70vh;
+        border-radius: 20px 20px 0 0;
+        overflow-y: auto;
+      }
+      /* Drag handle pill at top of mobile panels */
+      #pv_header::before, #p_header::before {
+        content: '';
+        display: block;
+        width: 36px; height: 4px;
+        background: rgba(0,0,0,0.18);
+        border-radius: 999px;
+        margin: 0 auto 10px;
+      }
+      html.dark #pv_header::before, html.dark #p_header::before {
+        background: rgba(255,255,255,0.22);
+      }
+      /* Cleanup panel also slides up */
+      #cleanup_panel {
+        position: fixed !important;
+        left: 0 !important; right: 0 !important;
+        bottom: 0 !important; top: auto !important;
+        width: 100% !important; max-width: 100% !important;
+        max-height: 75vh;
+        border-radius: 20px 20px 0 0;
+        overflow-y: auto;
+      }
+      /* No resize handles on touch */
+      .resize-handle { display: none !important; }
+      /* cursor-move label on panel headers is moot on touch */
+      #pv_header, #p_header { cursor: default; }
+    }
   </style>
 
   <!-- Top toolbar (beneath site navbar) -->
-  <div class="fixed top-20 left-3 right-3 z-30 flex items-center gap-2">
-    <a href="/user_dashboard"
-   class="pill select-none inline-flex items-center cursor-pointer"
-   role="button">
-  Back to Memories
-</a>
-    <div class="ml-2 text-sm opacity-80">Hover a dot to focus • Drag to reposition</div>
-    <button id="inf_dock" class="pill" style="display:none" title="Unconfirmed mentions"></button>
-    <!-- Quick add person -->
-    <div class="flex items-center gap-2 ml-2">
-      <input id="np_name" placeholder="Add person..." class="graph-input w-40" />
-      <input id="np_role" list="np_roles_list" placeholder="Role (optional) e.g., you, mother, friend" class="graph-input w-56" />
-      <datalist id="np_roles_list"></datalist>
-      <button id="np_add" class="graph-btn">Add</button>
+  <div class="fixed top-20 left-3 right-3 z-30 flex flex-col gap-1.5">
+    <!-- Row 1: nav + search -->
+    <div class="flex items-center gap-2">
+      <a href="/user_dashboard" class="pill select-none inline-flex items-center cursor-pointer shrink-0" role="button">← Back</a>
+      <div class="hidden sm:block text-sm opacity-70 truncate">Drag to pan · Scroll to zoom · Click a dot to view</div>
+      <button id="inf_dock" class="pill shrink-0" style="display:none" title="Unconfirmed mentions"></button>
+      <div class="relative ml-auto flex items-center gap-2">
+        <!-- Mobile: toggle add-person row -->
+        <button id="np_toggle" class="graph-btn sm:hidden" title="Add person" style="padding:6px 12px;font-size:20px;line-height:1">+</button>
+        <button id="cleanup_btn" class="graph-btn shrink-0" title="Clean up people" style="display:inline-flex;align-items:center;padding:6px 8px;"><span class="material-symbols-outlined" style="font-size:18px;line-height:1">cleaning_services</span></button>
+        <div class="relative">
+          <input id="pg_search" type="search" placeholder="Search…" class="graph-input w-32 sm:w-56" autocomplete="off" />
+          <div id="pgSearchDD" class="absolute z-40 right-0 mt-1 w-72 max-h-64 overflow-auto bg-white/90 border border-black rounded-lg shadow hidden"></div>
+        </div>
+      </div>
     </div>
-    <!-- People search (right-aligned) -->
-    <div class="relative ml-auto flex items-center gap-2">
-      <button id="cleanup_btn" class="graph-btn" title="Clean up false positives" style="display:inline-flex;align-items:center;padding:4px 6px;"><span class="material-symbols-outlined" style="font-size:18px;line-height:1">cleaning_services</span></button>
-      <input id="pg_search" type="search" placeholder="Search people..." class="graph-input w-64" autocomplete="off" />
-      <div id="pgSearchDD" class="absolute z-40 right-0 mt-1 w-72 max-h-64 overflow-auto bg-white/90 border border-black rounded-lg shadow hidden"></div>
+    <!-- Row 2: add person (always visible on desktop, toggleable on mobile) -->
+    <div id="np_form_row" class="hidden sm:flex items-center gap-2">
+      <input id="np_name" placeholder="Add person…" class="graph-input w-36" />
+      <input id="np_role" list="np_roles_list" placeholder="Role: mother, friend…" class="graph-input w-44" />
+      <datalist id="np_roles_list"></datalist>
+      <button id="np_add" class="graph-btn shrink-0">Add</button>
     </div>
   </div>
 
@@ -322,7 +366,7 @@
   </div>
 
 
-<script type="module" src="{{ url_for('static', path='js/people_graph.js') }}?v=20260322a"></script>
+<script type="module" src="{{ url_for('static', path='js/people_graph.js') }}?v=20260322c"></script>
 
 </section>
 

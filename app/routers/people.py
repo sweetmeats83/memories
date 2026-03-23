@@ -407,7 +407,7 @@ async def api_people_graph(user=Depends(require_authenticated_user), db: AsyncSe
         ))).scalars().all()
     else:
         ers = (await db.execute(select(RelationshipEdge).where(RelationshipEdge.user_id == user.id, RelationshipEdge.group_id.is_(None)))).scalars().all()
-    edges = [{'src': e.src_id, 'dst': e.dst_id, 'rel': e.rel_type, 'confidence': getattr(e, 'confidence', None), 'generation': int((e.meta or {}).get('generation')) if isinstance(getattr(e, 'meta', None), dict) and (e.meta or {}).get('generation') is not None else None} for e in ers if e.src_id in node_ids and e.dst_id in node_ids]
+    edges = [{'id': e.id, 'src': e.src_id, 'dst': e.dst_id, 'rel': e.rel_type, 'confidence': getattr(e, 'confidence', None), 'generation': int((e.meta or {}).get('generation')) if isinstance(getattr(e, 'meta', None), dict) and (e.meta or {}).get('generation') is not None else None, 'hide_line': bool((e.meta or {}).get('hide_line', False))} for e in ers if e.src_id in node_ids and e.dst_id in node_ids]
     try:
         # me_pid was resolved above via _get_self_person_id
         if me_pid is not None:
@@ -814,10 +814,10 @@ async def api_people_detail(person_id: int, user=Depends(require_authenticated_u
         return None
 
     for e in edges_out:
-        conns.append({'edge_id': e.id, 'person_id': e.dst_id, 'name': neighbors.get(e.dst_id, 'Unknown'), 'rel_type': e.rel_type, 'direction': 'out', 'generation': _gen_from_meta(e)})
+        conns.append({'edge_id': e.id, 'person_id': e.dst_id, 'name': neighbors.get(e.dst_id, 'Unknown'), 'rel_type': e.rel_type, 'direction': 'out', 'generation': _gen_from_meta(e), 'hide_line': bool((e.meta or {}).get('hide_line', False))})
     for e in edges_in:
         inv = _invert(e.rel_type)
-        conns.append({'edge_id': e.id, 'person_id': e.src_id, 'name': neighbors.get(e.src_id, 'Unknown'), 'rel_type': inv, 'direction': 'out', 'generation': _gen_from_meta(e)})
+        conns.append({'edge_id': e.id, 'person_id': e.src_id, 'name': neighbors.get(e.src_id, 'Unknown'), 'rel_type': inv, 'direction': 'out', 'generation': _gen_from_meta(e), 'hide_line': bool((e.meta or {}).get('hide_line', False))})
     seen_keys = set()
     deduped: list[dict] = []
     for c in conns:
@@ -1175,6 +1175,39 @@ async def api_people_edge_delete(edge_id: int, user=Depends(require_authenticate
         pass
     await db.commit()
     return {'ok': True}
+
+
+@router.patch('/api/people/edges/{edge_id}')
+async def api_people_edge_patch(edge_id: int, body: dict = Body(...), user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    e = await db.get(RelationshipEdge, edge_id)
+    if not e:
+        raise HTTPException(404, 'Edge not found')
+    src_p = await db.get(Person, e.src_id)
+    dst_p = await db.get(Person, e.dst_id)
+    if not src_p or not dst_p:
+        raise HTTPException(404, 'Edge endpoints not found')
+    if src_p.owner_user_id != user.id and dst_p.owner_user_id != user.id:
+        raise HTTPException(403, 'Not allowed to edit this connection')
+    if 'hide_line' in body:
+        meta = dict(e.meta or {})
+        meta['hide_line'] = bool(body['hide_line'])
+        e.meta = meta
+        # Mirror onto the inverse edge so both directions agree
+        inv_rel = _invert_rel(e.rel_type)
+        inv_edge = (await db.execute(
+            select(RelationshipEdge).where(
+                RelationshipEdge.src_id == e.dst_id,
+                RelationshipEdge.dst_id == e.src_id,
+                RelationshipEdge.rel_type == inv_rel,
+            )
+        )).scalars().first()
+        if inv_edge:
+            inv_meta = dict(inv_edge.meta or {})
+            inv_meta['hide_line'] = bool(body['hide_line'])
+            inv_edge.meta = inv_meta
+    await db.commit()
+    return {'ok': True}
+
 
 class MergePersonReq(BaseModel):
     keep_id: int

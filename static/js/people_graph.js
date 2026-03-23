@@ -518,7 +518,7 @@ console.info("people_graph.js — click path & hover path build loaded");
             }
           }
         } catch {}
-        all.push({ s: e.src, d: e.dst, rel: relNorm, cat, chan, k, w });
+        all.push({ s: e.src, d: e.dst, rel: relNorm, cat, chan, k, w, id: e.id, hide_line: !!e.hide_line });
       }
     });
 
@@ -669,6 +669,7 @@ console.info("people_graph.js — click path & hover path build loaded");
     }
     const socialPerson = all.filter(e => {
       if (e.cat !== 'social' || isUserId(e.s) || isUserId(e.d)) return false;
+      if (e.hide_line) return false;
       // Suppress social edge if one end is me and the other is family-reachable
       if (meIdStr) {
         const s = SID(e.s), d = SID(e.d);
@@ -678,7 +679,7 @@ console.info("people_graph.js — click path & hover path build loaded");
       return true;
     });
     const petPerson    = all.filter(e => e.cat === 'pet'    && !isUserId(e.s) && !isUserId(e.d));
-    const userSocial = all.filter(e => (isUserId(e.s) || isUserId(e.d)) && e.cat === 'social');
+    const userSocial = all.filter(e => (isUserId(e.s) || isUserId(e.d)) && e.cat === 'social' && !e.hide_line);
     const userPet    = all.filter(e => (isUserId(e.s) || isUserId(e.d)) && e.cat === 'pet');
     const userSibling = all.filter(e => (isUserId(e.s) || isUserId(e.d)) && isSibling(e.rel));
     const sibRaw = all.filter(e => isSibling(e.rel) && !isUserId(e.s) && !isUserId(e.d));
@@ -1165,12 +1166,21 @@ console.info("people_graph.js — click path & hover path build loaded");
     state.cursor.active = false;
   });
 
-  // Drag nodes
+  // Drag nodes / pan canvas
   let dragging = false;
+  let panningCanvas = false, panMouseStart = null;
+  canvas.style.cursor = 'grab';
   canvas.addEventListener('mousedown', (ev) => {
     markInteract();
     const n = pickNode(ev.clientX, ev.clientY);
-    if (n) { state.dragId = n.id; dragging = true; n.fixed = true; }
+    if (n) {
+      state.dragId = n.id; dragging = true; n.fixed = true;
+      canvas.style.cursor = 'move';
+    } else {
+      panningCanvas = true;
+      panMouseStart = { x: ev.clientX, y: ev.clientY, tx: state.cam.tx || 0, ty: state.cam.ty || 0 };
+      canvas.style.cursor = 'grabbing';
+    }
   });
   window.addEventListener('mouseup', () => {
     markInteract();
@@ -1178,14 +1188,22 @@ console.info("people_graph.js — click path & hover path build loaded");
     const n = getNode(state.dragId);
     if (n) n.fixed = false;
     state.dragId = null;
+    panningCanvas = false;
+    panMouseStart = null;
+    canvas.style.cursor = 'grab';
   });
   window.addEventListener('mousemove', (ev) => {
-    if (!dragging) return;
-    markInteract();
-    const n = getNode(state.dragId);
-    if (!n) return;
-    const [xw, yw] = screenToWorld(ev.clientX, ev.clientY);
-    n.x = xw; n.y = yw; n.vx = 0; n.vy = 0;
+    if (dragging) {
+      markInteract();
+      const n = getNode(state.dragId);
+      if (!n) return;
+      const [xw, yw] = screenToWorld(ev.clientX, ev.clientY);
+      n.x = xw; n.y = yw; n.vx = 0; n.vy = 0;
+    } else if (panningCanvas && panMouseStart) {
+      markInteract();
+      state.cam.tx = panMouseStart.tx + (ev.clientX - panMouseStart.x) * DPR;
+      state.cam.ty = panMouseStart.ty + (ev.clientY - panMouseStart.y) * DPR;
+    }
   });
 
   // Click selection & sticky path logic
@@ -1515,6 +1533,16 @@ console.info("people_graph.js — click path & hover path build loaded");
   });
 
   // Quick add person (toolbar)
+  // Mobile toggle for add-person row
+  const npToggle = document.getElementById('np_toggle');
+  const npFormRow = document.getElementById('np_form_row');
+  npToggle?.addEventListener('click', () => {
+    if (!npFormRow) return;
+    const open = !npFormRow.classList.contains('hidden');
+    npFormRow.classList.toggle('hidden', open);
+    if (!open) npName?.focus();
+  });
+
   npAdd?.addEventListener('click', async () => {
     const name = (npName?.value || '').trim();
     const role = (npRole && npRole.value) ? npRole.value.trim().toLowerCase() : '';
@@ -1528,6 +1556,8 @@ console.info("people_graph.js — click path & hover path build loaded");
     const j = await r.json().catch(()=>({}));
     const pid = j && (j.person_id ?? j.id);
     npName.value = ''; if (npRole) npRole.value = '';
+    // Collapse add-form on mobile after adding
+    if (npFormRow && window.innerWidth < 640) npFormRow.classList.add('hidden');
     // Auto-add high-confidence edges from role_hint (e.g. "mother" → parent-of You)
     if (pid && role) await fetch(`/api/people/${pid}/infer/auto`, { method:'POST', credentials:'include' }).catch(()=>{});
     await refreshGraph();
@@ -1958,12 +1988,32 @@ console.info("people_graph.js — click path & hover path build loaded");
             })();
             row.appendChild(lbl_span);
             if (canEditView) {
+              const edgeId = c.edge_id ?? c.id;
+              // Line visibility toggle — only for social edges (friend, coworker, etc.)
+              const SOCIAL_RELS = ['friend-of','neighbor-of','coworker-of','colleague-of','mentor-of','teacher-of','student-of','acquaintance-of'];
+              if (edgeId && SOCIAL_RELS.includes(c.rel_type)) {
+                const lineBtn = document.createElement('button');
+                lineBtn.className = 'graph-btn text-xs';
+                lineBtn.title = c.hide_line ? 'Show connection line on graph' : 'Hide connection line on graph';
+                lineBtn.textContent = c.hide_line ? 'Show line' : 'Hide line';
+                lineBtn.addEventListener('click', async (ev) => {
+                  ev.stopPropagation();
+                  await fetch(`/api/people/edges/${edgeId}`, {
+                    method: 'PATCH',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hide_line: !c.hide_line }),
+                  });
+                  await refreshGraph();
+                  await openDisplay(d.id);
+                });
+                row.appendChild(lineBtn);
+              }
               const rmBtn = document.createElement('button');
               rmBtn.textContent = 'Remove';
               rmBtn.className = 'graph-btn text-xs';
               rmBtn.addEventListener('click', async (ev) => {
                 ev.stopPropagation();
-                const edgeId = c.edge_id ?? c.id;
                 if (!edgeId) return;
                 await fetch(`/api/people/edges/${edgeId}`, { method:'DELETE', credentials:'include' });
                 await refreshGraph();
