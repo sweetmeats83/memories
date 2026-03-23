@@ -163,7 +163,7 @@ console.info("people_graph.js — click path & hover path build loaded");
     hoverId: null,
     dragId: null,
     selectedId: null,
-    cam: { s: 1.0 },
+    cam: { s: 1.0, tx: 0, ty: 0 },
 
     // Sticky (from clicks) and Hover (ephemeral) path layers
     pathEdgesSticky: [],
@@ -861,8 +861,9 @@ console.info("people_graph.js — click path & hover path build loaded");
     const sy = (py - rect.top)  * DPR;
     const w = canvas.width, h = canvas.height;
     const s = state.cam.s || 1.0;
-    const xw = (sx - w/2) / s + w/2;
-    const yw = (sy - h/2) / s + h/2;
+    const tx = state.cam.tx || 0, ty = state.cam.ty || 0;
+    const xw = (sx - w/2 - tx) / s + w/2;
+    const yw = (sy - h/2 - ty) / s + h/2;
     return [xw, yw];
   }
 
@@ -939,13 +940,14 @@ console.info("people_graph.js — click path & hover path build loaded");
     ctx.clearRect(0, 0, w, h);
 
     const s = state.cam.s || 1.0;
+    const tx = state.cam.tx || 0, ty = state.cam.ty || 0;
     const hoverId = state.hoverId;
     const selectedId = state.selectedId;
     const neighbors = hoverId && state.adj.get(hoverId) ? state.adj.get(hoverId) : new Set();
     const filtering = state.filterText && state.filterIds && state.filterIds.size > 0;
 
-    function sx(x) { return (x - w/2) * s + w/2; }
-    function sy(y) { return (y - h/2) * s + h/2; }
+    function sx(x) { return (x - w/2) * s + w/2 + tx; }
+    function sy(y) { return (y - h/2) * s + h/2 + ty; }
 
     // Choose which path to glow: sticky (from clicks) overrides hover
     const glowEdges = (state.pathEdgesSticky.length ? state.pathEdgesSticky : state.pathEdgesHover);
@@ -1280,6 +1282,121 @@ console.info("people_graph.js — click path & hover path build loaded");
     newS = Math.max(MIN_Z, Math.min(MAX_Z, newS));
     state.cam.s = newS;
   }, { passive: false });
+
+  // Touch support: pinch-to-zoom (zoom around midpoint + pan), 1-finger pan/node-drag, tap-to-click
+  (function () {
+    const MIN_Z = 0.35, MAX_Z = 3.0;
+    let pinchDist0 = null, pinchS0 = 1;
+    let pinchWorldOffX = 0, pinchWorldOffY = 0;
+    let panStart = null;       // {x, y, tx, ty} for 1-finger canvas pan
+    let tapStart = null;       // {x, y, time} for tap detection
+    let touchDragActive = false;
+
+    function touchDist(a, b) {
+      return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+    }
+
+    canvas.addEventListener('touchstart', (ev) => {
+      ev.preventDefault();
+      markInteract();
+      if (ev.touches.length === 2) {
+        // Begin pinch-zoom: record starting state
+        const rect = canvas.getBoundingClientRect();
+        const w = canvas.width, h = canvas.height;
+        pinchDist0 = touchDist(ev.touches[0], ev.touches[1]);
+        pinchS0 = state.cam.s || 1;
+        const midX_c = ((ev.touches[0].clientX + ev.touches[1].clientX) / 2 - rect.left) * DPR;
+        const midY_c = ((ev.touches[0].clientY + ev.touches[1].clientY) / 2 - rect.top)  * DPR;
+        // World offset of midpoint (in units where world-center = 0)
+        pinchWorldOffX = (midX_c - w/2 - (state.cam.tx || 0)) / pinchS0;
+        pinchWorldOffY = (midY_c - h/2 - (state.cam.ty || 0)) / pinchS0;
+        panStart = null;
+        touchDragActive = false;
+        tapStart = null;
+      } else if (ev.touches.length === 1) {
+        pinchDist0 = null;
+        const t = ev.touches[0];
+        tapStart = { x: t.clientX, y: t.clientY, time: Date.now() };
+        const n = pickNode(t.clientX, t.clientY);
+        if (n) {
+          state.dragId = n.id;
+          touchDragActive = true;
+          n.fixed = true;
+          panStart = null;
+        } else {
+          touchDragActive = false;
+          panStart = { x: t.clientX, y: t.clientY, tx: state.cam.tx || 0, ty: state.cam.ty || 0 };
+        }
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (ev) => {
+      ev.preventDefault();
+      markInteract();
+      if (ev.touches.length === 2 && pinchDist0) {
+        const rect = canvas.getBoundingClientRect();
+        const w = canvas.width, h = canvas.height;
+        const d = touchDist(ev.touches[0], ev.touches[1]);
+        const newS = Math.max(MIN_Z, Math.min(MAX_Z, pinchS0 * (d / pinchDist0)));
+        state.cam.s = newS;
+        // Keep the world point under the initial midpoint fixed under the current midpoint
+        const midX_c = ((ev.touches[0].clientX + ev.touches[1].clientX) / 2 - rect.left) * DPR;
+        const midY_c = ((ev.touches[0].clientY + ev.touches[1].clientY) / 2 - rect.top)  * DPR;
+        state.cam.tx = midX_c - w/2 - pinchWorldOffX * newS;
+        state.cam.ty = midY_c - h/2 - pinchWorldOffY * newS;
+        tapStart = null;
+      } else if (ev.touches.length === 1) {
+        const t = ev.touches[0];
+        if (tapStart && Math.hypot(t.clientX - tapStart.x, t.clientY - tapStart.y) > 8) {
+          tapStart = null;
+        }
+        if (touchDragActive) {
+          const n = getNode(state.dragId);
+          if (n) {
+            const [xw, yw] = screenToWorld(t.clientX, t.clientY);
+            n.x = xw; n.y = yw; n.vx = 0; n.vy = 0;
+          }
+        } else if (panStart) {
+          state.cam.tx = panStart.tx + (t.clientX - panStart.x) * DPR;
+          state.cam.ty = panStart.ty + (t.clientY - panStart.y) * DPR;
+        }
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', (ev) => {
+      ev.preventDefault();
+      markInteract();
+      if (touchDragActive && ev.touches.length === 0) {
+        const n = getNode(state.dragId);
+        if (n) n.fixed = false;
+        state.dragId = null;
+        touchDragActive = false;
+      }
+      if (ev.touches.length < 2) pinchDist0 = null;
+      // Tap → fire synthetic click
+      if (tapStart && ev.changedTouches.length && ev.touches.length === 0) {
+        const t = ev.changedTouches[0];
+        if (Math.hypot(t.clientX - tapStart.x, t.clientY - tapStart.y) < 15 &&
+            (Date.now() - tapStart.time) < 400) {
+          canvas.dispatchEvent(new MouseEvent('click', {
+            clientX: t.clientX, clientY: t.clientY, bubbles: true, cancelable: true
+          }));
+        }
+        tapStart = null;
+      }
+      if (ev.touches.length === 0) panStart = null;
+    }, { passive: false });
+
+    canvas.addEventListener('touchcancel', () => {
+      touchDragActive = false;
+      pinchDist0 = null;
+      panStart = null;
+      tapStart = null;
+      const n = getNode(state.dragId);
+      if (n) n.fixed = false;
+      state.dragId = null;
+    }, { passive: false });
+  })();
 
   // Panel drag limiter (avoid going under navbar)
   (function () {
@@ -1883,6 +2000,7 @@ console.info("people_graph.js — click path & hover path build loaded");
     }
   }
   document.addEventListener('mousedown', persistPanelIfOpen);
+  document.addEventListener('touchstart', persistPanelIfOpen);
   pvClose?.addEventListener('click', () => { panelView.style.display='none'; state.selectedId=null; });
   // Prevent off-click handler from firing when pressing Edit
   pvEdit?.addEventListener('mousedown', (ev) => { ev.stopPropagation(); });
