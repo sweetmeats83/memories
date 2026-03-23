@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A memory is waiting for you</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f5f7;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:#111;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f4f5f7;">
+      <tr>
+        <td align="center" style="padding:24px 12px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:640px;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+            <tr>
+              <td style="padding:14px 18px;background:#111;color:#fff;font-weight:700;letter-spacing:.3px;">
+                Memories
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px 28px 12px 28px;">
+                <p style="margin:0 0 10px 0;">Hi {{ display_name }},</p>
+                <p style="margin:0 0 20px 0;font-size:17px;line-height:1.5;color:#374151;">{{ reminder_message }}</p>
+                {% if prompt_title %}
+                <p style="margin:0 0 6px 0;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">Your current prompt</p>
+                <h2 style="margin:0 0 20px 0;font-size:18px;line-height:1.4;">{{ prompt_title }}</h2>
+                {% endif %}
+                <p style="margin:18px 0 10px 0;">
+                  <a href="{{ dashboard_url }}" style="display:inline-block;border:1px solid #111;border-radius:9999px;background:#111;color:#ffffff;text-decoration:none;padding:12px 22px;font-weight:700;">
+                    Record a Memory
+                  </a>
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 28px 22px 28px;">
+                <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0 14px 0;">
+                <p style="margin:0;font-size:12px;color:#9ca3af;">
+                  You're receiving this because you enabled daily reminders in your settings.
+                  <a href="{{ settings_url }}" style="color:#6b7280;">Manage settings</a>.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

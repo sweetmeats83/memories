@@ -145,6 +145,10 @@
       <h2 class="text-lg font-semibold mb-3">Notifications</h2>
       <form method="post" action="/settings/notifications" class="space-y-3">
         <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="notify_daily_reminders" value="on" class="h-4 w-4" {% if notify_daily_reminders_enabled %}checked{% endif %}>
+          <span>Daily email reminder to record a memory</span>
+        </label>
+        <label class="flex items-center gap-2 text-sm">
           <input type="checkbox" name="notify_new_responses" value="on" class="h-4 w-4" {% if notify_new_responses_enabled %}checked{% endif %}>
           <span>Email me when someone creates a new response</span>
         </label>

@@ -61,6 +61,7 @@ class User(Base):
     is_superuser = Column(Boolean, default=False)
     must_change_password = Column(Boolean, default=False)
     notify_new_responses = Column(Boolean, default=False, nullable=False)
+    notify_daily_reminders = Column(Boolean, default=False, nullable=False)
     relationship_status = Column(String, nullable=True)  # ✅ renamed
     goals = Column(String, nullable=True)
     # ---- Weekly pointers & state ----

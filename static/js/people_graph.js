@@ -1440,7 +1440,7 @@ console.info("people_graph.js — click path & hover path build loaded");
         confirm.addEventListener('click', async ()=>{
           await fetch(`/api/people/${it.id}`, {
             method:'PATCH', credentials:'include', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ inferred:false, connect_to_owner:true, hidden:false, role_hint: 'friend' })
+            body: JSON.stringify({ inferred:false, connect_to_owner:false, hidden:false })
           });
           await refreshGraph();
           const node = state.nodes.find(n => String(n.id) === String(it.id));
@@ -1722,7 +1722,7 @@ console.info("people_graph.js — click path & hover path build loaded");
       pRole.innerHTML='';
       const blank = document.createElement('option'); blank.value=''; blank.textContent='Select role'; pRole.appendChild(blank);
       roleList.forEach(r => { if (r?.slug?.startsWith('role:')) { const base=r.slug.split(':')[1]; const o=document.createElement('option'); o.value=base; o.textContent=r.label; pRole.appendChild(o); } });
-      try { if ([...pRole.options].some(opt => String(opt.value).toLowerCase()==='friend')) { pRole.value = 'friend'; } } catch {}
+      // No default role — leave blank until user explicitly sets one
     }
 
     // Fetch detail and hydrate controls
@@ -1743,7 +1743,7 @@ console.info("people_graph.js — click path & hover path build loaded");
         }
       }
 
-      const savedBase = (d.role_hint || '').toString().toLowerCase() || 'friend';
+      const savedBase = (d.role_hint || '').toString().toLowerCase();
       try {
         if (pRole && pRole.options && pRole.options.length > 0) {
           for (let i=0;i<pRole.options.length;i++) {

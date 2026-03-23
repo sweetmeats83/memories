@@ -6,12 +6,13 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from sqlalchemy import select
-from app.models import User, WeeklyState
+from app.models import User, WeeklyState, PushSubscription, Prompt
 from app.services.utils_weekly import get_or_refresh_active_token, _now
 from app.services.assignment import ensure_weekly_prompt
 from app.services.mailer import send_weekly_email
 from app.services.push import send_push_to_user, push_enabled
-from app.models import PushSubscription
+from app.services.invite import send_email as smtp_send
+from fastapi.templating import Jinja2Templates as _JinjaTemplates
 from app.database import async_session_maker
 from datetime import datetime, timedelta
 try:
@@ -165,50 +166,88 @@ _reminder_index = 0
 
 
 async def job_daily_reminder():
-    """Send a gentle morning reminder push to users with an unrecorded active prompt."""
+    """Send a gentle morning reminder to users with an unrecorded active prompt.
+
+    Sends push to subscribed users (if push enabled) and email to users who opted
+    in to daily reminder emails via notify_daily_reminders.
+    """
     global _reminder_index
-    if not push_enabled():
-        return
+
+    pending_states = (
+        WeeklyState.sent,
+        WeeklyState.queued,
+        WeeklyState.opened,
+        WeeklyState.clicked,
+        WeeklyState.not_sent,
+    )
+
+    body = _REMINDER_MESSAGES[_reminder_index % len(_REMINDER_MESSAGES)]
+    _reminder_index += 1
+
+    base_url = (os.getenv("BASE_URL", "").rstrip("/")) or "http://localhost:8000"
+    reminder_template = None
+    try:
+        reminder_template = _JinjaTemplates(directory="templates").get_template("email/daily_reminder.html")
+    except Exception:
+        pass
 
     async with async_session_maker() as db:
-        # States where the prompt was sent but not yet recorded
-        pending_states = (
-            WeeklyState.sent,
-            WeeklyState.queued,
-            WeeklyState.opened,
-            WeeklyState.clicked,
-        )
-
-        # Find users who have push subscriptions AND a pending prompt
-        from sqlalchemy import exists
+        # All active users with a current prompt (for both push and email)
         users = (await db.execute(
             select(User).where(
                 User.is_active == True,
-                User.weekly_state.in_(pending_states),
                 User.weekly_current_prompt_id.isnot(None),
-                exists().where(PushSubscription.user_id == User.id),
+                User.weekly_state.in_(pending_states),
             )
         )).scalars().all()
 
-        if not users:
-            return
-
-        body = _REMINDER_MESSAGES[_reminder_index % len(_REMINDER_MESSAGES)]
-        _reminder_index += 1
+        push_count = 0
+        email_count = 0
 
         for u in users:
-            try:
-                await send_push_to_user(
-                    db, u.id,
-                    title="Memories",
-                    body=body,
-                    url="/",
-                    tag="memories-reminder",
-                )
-            except Exception:
-                logger.exception("Daily reminder push failed for user %s", u.id)
+            # ── Push ──────────────────────────────────────────────────────────
+            if push_enabled():
+                has_push = (await db.execute(
+                    select(PushSubscription.id).where(PushSubscription.user_id == u.id).limit(1)
+                )).first()
+                if has_push:
+                    try:
+                        await send_push_to_user(
+                            db, u.id,
+                            title="Memories",
+                            body=body,
+                            url="/",
+                            tag="memories-reminder",
+                        )
+                        push_count += 1
+                    except Exception:
+                        logger.exception("Daily reminder push failed for user %s", u.id)
 
-        logger.info("Daily reminder sent to %d users", len(users))
+            # ── Email ─────────────────────────────────────────────────────────
+            if getattr(u, 'notify_daily_reminders', False) and (u.email or '').strip():
+                try:
+                    prompt = await db.get(Prompt, u.weekly_current_prompt_id)
+                    prompt_title = getattr(prompt, 'text', '') or ''
+                    ctx = {
+                        'display_name': u.username or u.email,
+                        'reminder_message': body,
+                        'prompt_title': prompt_title,
+                        'dashboard_url': f"{base_url}/user_dashboard",
+                        'settings_url': f"{base_url}/settings",
+                    }
+                    html_body = reminder_template.render(ctx) if reminder_template else None
+                    text_body = (
+                        f"Hi {ctx['display_name']},\n\n{body}\n\n"
+                        + (f"Your current prompt: {prompt_title}\n\n" if prompt_title else "")
+                        + f"Record a memory: {ctx['dashboard_url']}\n\n"
+                        + f"Manage settings: {ctx['settings_url']}\n"
+                    )
+                    smtp_send(u.email, subject="A memory is waiting for you", text_body=text_body, html_body=html_body)
+                    email_count += 1
+                except Exception:
+                    logger.exception("Daily reminder email failed for user %s", u.id)
+
+        logger.info("Daily reminder: %d push, %d email", push_count, email_count)
 
 
 async def job_cleanup_tmp_uploads():

@@ -145,6 +145,7 @@ async def settings_page(
         'interests_for_form': interests_for_form,
         'gender': gender,
         'places_for_form': places_for_form,
+        'notify_daily_reminders_enabled': bool(getattr(user, 'notify_daily_reminders', False)),
         'notify_new_responses_enabled': bool(getattr(user, 'notify_new_responses', False)),
         'notification_watchers': watchers,
         'notification_options': notification_options,
@@ -287,6 +288,7 @@ async def settings_profile_update(
 
 @router.post('/settings/notifications')
 async def settings_notifications_update(
+    notify_daily_reminders: bool = Form(False),
     notify_new_responses: bool = Form(False),
     watchers: List[int] = Form([]),
     user=Depends(require_authenticated_user),
@@ -295,6 +297,7 @@ async def settings_notifications_update(
     db_user = (await db.execute(select(User).where(User.id == user.id))).scalars().first()
     if not db_user:
         raise HTTPException(status_code=404, detail='User not found')
+    db_user.notify_daily_reminders = bool(notify_daily_reminders)
     db_user.notify_new_responses = bool(notify_new_responses)
     await db.execute(delete(ResponseNotificationTarget).where(ResponseNotificationTarget.owner_user_id == user.id))
     watcher_ids = []

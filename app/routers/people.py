@@ -446,41 +446,31 @@ async def api_people_graph(user=Depends(require_authenticated_user), db: AsyncSe
                 confirmed = False
                 if isinstance(meta, dict):
                     role = meta.get('role_hint') or 'you'
-                    confirmed = bool(meta.get('connect_to_owner')) or bool(meta.get('role_hint'))
-                if confirmed or mention_map_local.get(pid, 0) > 0:
-                    if pid in node_ids and me_pid in node_ids:
-                        r_inj = (role or '').strip().lower()
-                        inj_rel = None
-                        if r_inj in {'mother', 'father', 'parent'}:
-                            inj_rel = 'child-of'
-                        elif r_inj in {'son', 'daughter', 'child'}:
-                            inj_rel = 'parent-of'
-                        elif r_inj in {'spouse', 'partner', 'husband', 'wife'}:
-                            inj_rel = 'spouse-of'
-                        elif r_inj in {'sibling', 'brother', 'sister'}:
-                            inj_rel = 'sibling-of'
-                        elif r_inj in {'friend', 'neighbor', 'coworker', 'colleague'}:
-                            inj_rel = f'{r_inj}-of'
-                        if not inj_rel and mention_map_local.get(pid, 0) > 0:
-                            inj_rel = 'friend-of'
-                        if inj_rel:
-                            edges.append({'src': me_pid, 'dst': pid, 'rel': inj_rel})
-                        r = (role or '').strip().lower()
-                        if r in {'you', 'self', 'me'}:
-                            continue
-                        if r in {'mother', 'father', 'parent'}:
-                            await _persist_edge_pair(pid, me_pid, 'parent-of')
-                        elif r in {'son', 'daughter', 'child'}:
-                            await _persist_edge_pair(me_pid, pid, 'parent-of')
-                        elif r in {'spouse', 'partner', 'husband', 'wife'}:
-                            await _persist_edge_pair(me_pid, pid, 'spouse-of')
-                        elif r in {'sibling', 'brother', 'sister'}:
-                            await _persist_edge_pair(me_pid, pid, 'sibling-of')
-                        elif r in {'friend', 'neighbor', 'coworker', 'colleague'}:
-                            base = r if r.endswith('-of') else f'{r}-of'
-                            await _persist_edge_pair(me_pid, pid, base)
-                        elif not r and mention_map_local.get(pid, 0) > 0:
-                            await _persist_edge_pair(me_pid, pid, 'friend-of')
+                    confirmed = bool(meta.get('connect_to_owner')) and bool(meta.get('role_hint'))
+                # Only inject edges for explicitly confirmed people with a real role.
+                # Mention-only people are shown in the graph but NOT auto-connected.
+                if confirmed and pid in node_ids and me_pid in node_ids:
+                    r = (role or '').strip().lower()
+                    if r in {'you', 'self', 'me'}:
+                        continue
+                    inj_rel = None
+                    if r in {'mother', 'father', 'parent'}:
+                        inj_rel = 'child-of'
+                        await _persist_edge_pair(pid, me_pid, 'parent-of')
+                    elif r in {'son', 'daughter', 'child'}:
+                        inj_rel = 'parent-of'
+                        await _persist_edge_pair(me_pid, pid, 'parent-of')
+                    elif r in {'spouse', 'partner', 'husband', 'wife'}:
+                        inj_rel = 'spouse-of'
+                        await _persist_edge_pair(me_pid, pid, 'spouse-of')
+                    elif r in {'sibling', 'brother', 'sister'}:
+                        inj_rel = 'sibling-of'
+                        await _persist_edge_pair(me_pid, pid, 'sibling-of')
+                    elif r in {'friend', 'neighbor', 'coworker', 'colleague'}:
+                        inj_rel = f'{r}-of'
+                        await _persist_edge_pair(me_pid, pid, inj_rel)
+                    if inj_rel:
+                        edges.append({'src': me_pid, 'dst': pid, 'rel': inj_rel})
             try:
                 await db.commit()
             except Exception as _commit_err:
