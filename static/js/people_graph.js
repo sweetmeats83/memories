@@ -98,19 +98,19 @@ console.info("people_graph.js — click path & hover path build loaded");
     nodeHalo: 'rgba(0,0,0,0.10)',
     focusColor: '#eb9525ff',
     labelColor: '#111111',
-    repel: 3750,
-    spring: 0.045,
-    friction: 0.92,
-    centerK: 0.0012,
+    repel: 5200 * DPR * DPR,  // DPR-scaled so equilibrium distance is screen-density independent
+    spring: 0.042,
+    friction: 0.91,
+    centerK: 0.0009,
     centerKSelected: 0.02,
     wallMargin: 40,
     wallK: 0.025,
-    noise: 0.06,
+    noise: 0.025,
     fadeAlpha: 0.18,
     maxSpeed: 120,
     // orbit/jitter
-    degreeCenterBoost: 0.015,
-    jitterAmp: 0.35,
+    degreeCenterBoost: 0.003,  // reduced — was over-pulling high-degree nodes to center
+    jitterAmp: 0.15,
     jitterFreqMin: 0.3,
     jitterFreqMax: 0.8,
     driftK: 0.0020,
@@ -496,15 +496,17 @@ console.info("people_graph.js — click path & hover path build loaded");
         const relNorm = normalizeRel(e.rel);
         const cat  = relToCat(relNorm);
         const chan = channelOf(relNorm);
+        // Rest lengths define the natural node-to-node distance (Hooke's law).
+        // Lower k + explicit rest length = clean clusters without collapse.
         let k = CFG.spring;
-        if (cat === 'family') k = CFG.spring * 1.15;
-        else if (cat === 'spouse') k = CFG.spring * 1.35; // pull spouses closer together
-        else if (cat === 'pet') k = CFG.spring * (CFG.petSpringScale || 0.88);
-        else if (cat === 'social') k = CFG.spring * 0.35;
-        else k = CFG.spring * 0.6;
+        let restLen;  // canvas pixels; DPR-scaled so layout is consistent across screens
+        if (cat === 'family')      { k = CFG.spring * 0.55; restLen = 90  * DPR; }
+        else if (cat === 'spouse') { k = CFG.spring * 0.70; restLen = 68  * DPR; }
+        else if (cat === 'pet')    { k = CFG.spring * 0.26; restLen = 78  * DPR; }
+        else if (cat === 'social') { k = CFG.spring * 0.16; restLen = 215 * DPR; }
+        else                       { k = CFG.spring * 0.50; restLen = 90  * DPR; }
         const w = weightForChannel(chan);
-        // If this edge touches the user's person, add extra pull for spouse/children,
-        // and reduce pull by generation for distant kin.
+        // Extra pull for user's immediate family; reduce for distant generations
         try {
           const me = state.meId ? String(state.meId) : null;
           const touchesMe = me && ((String(e.src) === me) || (String(e.dst) === me));
@@ -518,7 +520,7 @@ console.info("people_graph.js — click path & hover path build loaded");
             }
           }
         } catch {}
-        all.push({ s: e.src, d: e.dst, rel: relNorm, cat, chan, k, w, id: e.id, hide_line: !!e.hide_line });
+        all.push({ s: e.src, d: e.dst, rel: relNorm, cat, chan, k, w, id: e.id, hide_line: !!e.hide_line, restLen });
       }
     });
 
@@ -779,13 +781,17 @@ console.info("people_graph.js — click path & hover path build loaded");
         n.vy += dy * kcur;
       }
     }
-    // springs
+    // springs — Hooke's law with rest length.
+    // stretch > 0 → attractive; stretch < 0 → repulsive (also helps prevent collapse).
     for (const e of edges) {
       const a = getNode(e.s), b = getNode(e.d);
       if (!a || !b) continue;
       const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.max(0.5, Math.hypot(dx, dy));
       const kk = (e.k != null ? e.k : CFG.spring);
-      const fx = dx * kk, fy = dy * kk;
+      const stretch = d - (e.restLen || 0);
+      const f = stretch * kk / d;  // signed scalar; direction given by dx/dy
+      const fx = f * dx, fy = f * dy;
       if (!a.fixed && SID(a.id) !== freezeId) { a.vx += fx; a.vy += fy; }
       if (!b.fixed && SID(b.id) !== freezeId) { b.vx -= fx; b.vy -= fy; }
     }
@@ -2220,11 +2226,11 @@ console.info("people_graph.js — click path & hover path build loaded");
       listEl.innerHTML = '';
       for (const row of rows) {
         const el = document.createElement('div');
-        el.className = 'flex items-center gap-2 py-1 border-b border-black/5' + (row.hidden ? ' opacity-50' : '');
+        el.className = 'flex flex-col gap-1 py-1.5 border-b border-black/5' + (row.hidden ? ' opacity-50' : '');
         el.dataset.id = row.id;
 
         const nameSpan = document.createElement('span');
-        nameSpan.className = 'flex-1 truncate font-medium';
+        nameSpan.className = 'font-medium break-words leading-snug';
         nameSpan.textContent = row.name + (row.hidden ? ' (hidden)' : '');
 
         // mention badge — red if 0, normal otherwise
@@ -2234,6 +2240,10 @@ console.info("people_graph.js — click path & hover path build loaded");
           (noMentions ? 'border-red-300 text-red-500 bg-red-50' : 'border-stone-300 text-stone-500 bg-stone-50');
         badge.textContent = noMentions ? 'no mentions' : `${row.mentions}×`;
         badge.title = `${row.mentions} mention${row.mentions === 1 ? '' : 's'}, ${row.edges} connection${row.edges === 1 ? '' : 's'}`;
+
+        // Buttons row sits below the name
+        const btnRow = document.createElement('div');
+        btnRow.className = 'flex items-center gap-1.5 flex-wrap';
 
         const toggleBtn = document.createElement('button');
         toggleBtn.textContent = row.hidden ? 'Unhide' : 'Hide';
@@ -2273,11 +2283,10 @@ console.info("people_graph.js — click path & hover path build loaded");
           const selfBadge = document.createElement('span');
           selfBadge.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-700 border border-pink-300 shrink-0';
           selfBadge.textContent = 'You';
-          el.appendChild(nameSpan);
-          el.appendChild(selfBadge);
-          el.appendChild(badge);
-          el.appendChild(toggleBtn);
-          el.appendChild(delBtn);
+          btnRow.appendChild(selfBadge);
+          btnRow.appendChild(badge);
+          btnRow.appendChild(toggleBtn);
+          btnRow.appendChild(delBtn);
         } else {
           const selfBtn = document.createElement('button');
           selfBtn.textContent = 'Set as me';
@@ -2291,19 +2300,19 @@ console.info("people_graph.js — click path & hover path build loaded");
               body: JSON.stringify({ person_id: row.id }),
             });
             if (r.ok) {
-              // refreshGraph updates state.meId; re-render list after so badge is correct
               await refreshGraph();
               renderList(filterEl?.value || '');
             } else {
               selfBtn.disabled = false;
             }
           });
-          el.appendChild(nameSpan);
-          el.appendChild(badge);
-          el.appendChild(toggleBtn);
-          el.appendChild(selfBtn);
-          el.appendChild(delBtn);
+          btnRow.appendChild(badge);
+          btnRow.appendChild(toggleBtn);
+          btnRow.appendChild(selfBtn);
+          btnRow.appendChild(delBtn);
         }
+        el.appendChild(nameSpan);
+        el.appendChild(btnRow);
         listEl.appendChild(el);
       }
     }
