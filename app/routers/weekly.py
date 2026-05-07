@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, Request, Form, Query, HTTPException, Response as FastResponse
 from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from typing import List, Optional
@@ -21,17 +20,13 @@ from app.llm_client import make_llm_followup_prompt
 from app.services.chapter_compile import compile_chapter, chapter_status
 from app.schemas import ChapterCompilationDTO, ChapterStatusDTO
 from app.background import spawn
+from app.routes_shared import templates
 
 # In-memory set of (user_id, chapter_key) pairs currently being compiled.
 # Good enough for a single-server setup; cleared on restart (harmless).
 _compiling: set[tuple[int, str]] = set()
 
 router = APIRouter()
-templates = Jinja2Templates(directory='templates')
-
-import markdown as _md
-from markupsafe import Markup
-templates.env.filters['markdown'] = lambda text: Markup(_md.markdown(text or '', extensions=['extra', 'nl2br']))
 
 
 class WeeklyRow(BaseModel):

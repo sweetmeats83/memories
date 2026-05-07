@@ -832,7 +832,7 @@ async def api_people_detail(person_id: int, user=Depends(require_authenticated_u
 @router.get('/api/people/{person_id}/infer/preview')
 async def api_people_infer_preview(person_id: int, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
     p = await db.get(Person, person_id)
-    if not p or p.owner_user_id != user.id:
+    if not p or not await _can_edit_person(p, user.id, db):
         raise HTTPException(404, 'Person not found')
     cands = await infer_edges_for_person(db, user_id=user.id, person_id=person_id)
     out = []
@@ -855,7 +855,7 @@ async def api_people_infer_preview(person_id: int, user=Depends(require_authenti
 @router.post('/api/people/{person_id}/infer/commit')
 async def api_people_infer_commit(person_id: int, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
     p = await db.get(Person, person_id)
-    if not p or p.owner_user_id != user.id:
+    if not p or not await _can_edit_person(p, user.id, db):
         raise HTTPException(404, 'Person not found')
     cands = await infer_edges_for_person(db, user_id=user.id, person_id=person_id)
     n = await commit_inferred_edges(db, user_id=user.id, candidates=cands)
@@ -872,7 +872,7 @@ async def api_people_infer_auto(person_id: int, user=Depends(require_authenticat
     """Auto-commit only high-confidence (>=0.80) inferred edges.
     Safe to call silently after saving a person — will not create speculative links."""
     p = await db.get(Person, person_id)
-    if not p or p.owner_user_id != user.id:
+    if not p or not await _can_edit_person(p, user.id, db):
         raise HTTPException(404, 'Person not found')
     cands = await infer_edges_for_person(db, user_id=user.id, person_id=person_id)
     high_conf = [c for c in cands if c.confidence >= 0.80]
@@ -1411,7 +1411,7 @@ async def api_people_add(payload: PersonCreateReq, user=Depends(require_authenti
 @router.post('/api/people/{person_id}/photo')
 async def api_people_photo_upload(person_id: int, file: UploadFile=File(...), user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
     p: Person | None = await db.get(Person, person_id)
-    if not p or p.owner_user_id != user.id:
+    if not p or not await _can_edit_person(p, user.id, db):
         raise HTTPException(404, 'Person not found')
     if not file or not file.filename:
         raise HTTPException(422, 'No file uploaded')
@@ -1449,7 +1449,7 @@ async def api_people_photo_upload(person_id: int, file: UploadFile=File(...), us
 @router.delete('/api/people/{person_id}/photo')
 async def api_people_photo_delete(person_id: int, user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
     p: Person | None = await db.get(Person, person_id)
-    if not p or p.owner_user_id != user.id:
+    if not p or not await _can_edit_person(p, user.id, db):
         raise HTTPException(404, 'Person not found')
     rel = (p.photo_url or '').strip()
     if rel:

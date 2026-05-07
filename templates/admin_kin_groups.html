@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-[1000px] pb-32 px-4">
+
+  <a href="/admin_dashboard" class="pill select-none inline-flex items-center cursor-pointer mb-6 mt-4 block">
+    ← Admin Dashboard
+  </a>
+
+  <header class="mb-8">
+    <h1 class="font-baskerville text-[clamp(1.6rem,4vw,2.4rem)] leading-tight">Family Groups</h1>
+    <p class="text-sm opacity-60 mt-1">
+      Each group is an isolated family — members share their people graph and wiki.
+      Users in different groups cannot see each other's data.
+    </p>
+  </header>
+
+  <!-- Ungrouped users warning -->
+  {% if ungrouped_users %}
+  <div class="mb-6 border border-amber-300 bg-amber-50/60 rounded-2xl p-4 text-sm">
+    <span class="font-semibold text-amber-800">{{ ungrouped_users | length }} user(s) not in any group</span>
+    <span class="text-amber-700 ml-2">— they can log in but have no shared graph.</span>
+    <ul class="mt-2 space-y-1">
+      {% for u in ungrouped_users %}
+      <li class="flex items-center gap-3">
+        <span class="opacity-70">{{ u.username or u.email }}</span>
+        <select id="addTo-{{ u.user_id }}" class="text-xs border border-black/20 rounded-lg px-2 py-1 bg-white/60">
+          <option value="">Add to group…</option>
+          {% for g in groups %}
+          <option value="{{ g.id }}">{{ g.name }}</option>
+          {% endfor %}
+        </select>
+        <button onclick="addToGroup({{ u.user_id }}, document.getElementById('addTo-{{ u.user_id }}').value)"
+                class="pill text-xs px-2 py-0.5">Add</button>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <!-- Create new group -->
+  <div class="ud-glass-card p-5 mb-6">
+    <h2 class="font-semibold mb-3">Create New Group</h2>
+    <div class="flex gap-2">
+      <input id="newGroupName" type="text" placeholder="e.g. The Blankenship Family"
+             class="flex-1 border border-black/20 rounded-xl px-3 py-2 text-sm bg-white/60 focus:outline-none focus:ring-2 focus:ring-black/20">
+      <button onclick="createGroup()" class="pill px-4 py-2 text-sm font-medium">Create</button>
+    </div>
+    <div id="createMsg" class="text-xs mt-2 hidden"></div>
+  </div>
+
+  <!-- Groups list -->
+  <div class="space-y-4" id="groupsList">
+    {% for g in groups %}
+    <div class="ud-glass-card p-5" id="group-{{ g.id }}">
+      <div class="flex items-start justify-between gap-4 mb-3">
+        <div>
+          <h3 class="font-semibold text-lg">{{ g.name }}</h3>
+          <div class="text-xs opacity-50">{{ g.kind }} · {{ g.member_count }} member(s) · ID {{ g.id }}</div>
+        </div>
+        <button onclick="deleteGroup({{ g.id }}, '{{ g.name | e }}')"
+                class="pill text-xs px-2 py-0.5 opacity-50 hover:opacity-100 text-red-700 border-red-300">
+          Delete
+        </button>
+      </div>
+
+      <!-- Current members -->
+      {% if g.members %}
+      <ul class="divide-y divide-black/5 mb-4">
+        {% for m in g.members %}
+        <li class="flex items-center justify-between py-2 text-sm">
+          <div>
+            <span class="font-medium">{{ m.username or '(no username)' }}</span>
+            <span class="opacity-50 ml-2">{{ m.email }}</span>
+            <span class="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-black/5">{{ m.role }}</span>
+          </div>
+          <button onclick="removeMember({{ g.id }}, {{ m.user_id }}, '{{ m.username or m.email | e }}')"
+                  class="pill text-xs px-2 py-0.5 opacity-40 hover:opacity-100 text-red-700 border-red-300">
+            Remove
+          </button>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-sm opacity-40 mb-4">No members yet.</p>
+      {% endif %}
+
+      <!-- Add member -->
+      <div class="flex gap-2 items-center">
+        <select id="addUser-{{ g.id }}"
+                class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/60">
+          <option value="">Add a user to this group…</option>
+          {% for u in all_users %}
+          <option value="{{ u.user_id }}">{{ u.username or u.email }}</option>
+          {% endfor %}
+        </select>
+        <button onclick="addToGroup(document.getElementById('addUser-{{ g.id }}').value, {{ g.id }})"
+                class="pill text-sm px-3 py-1.5">Add</button>
+      </div>
+    </div>
+    {% else %}
+    <div class="ud-glass-card p-8 text-center text-sm opacity-50">
+      No groups yet. Create one above.
+    </div>
+    {% endfor %}
+  </div>
+
+</section>
+
+<script>
+async function createGroup() {
+  const name = document.getElementById('newGroupName').value.trim();
+  const msg = document.getElementById('createMsg');
+  if (!name) { showMsg(msg, 'Enter a group name.', 'error'); return; }
+  const r = await fetch('/api/admin/kin-groups', {
+    method: 'POST', credentials: 'include',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name}),
+  });
+  if (r.ok) {
+    showMsg(msg, 'Group created — reloading…', 'ok');
+    setTimeout(() => location.reload(), 800);
+  } else {
+    const d = await r.json().catch(() => ({}));
+    showMsg(msg, d.detail || 'Error creating group.', 'error');
+  }
+}
+
+async function deleteGroup(groupId, name) {
+  if (!confirm(`Delete group "${name}"? Members will be removed. This cannot be undone.`)) return;
+  const r = await fetch(`/api/admin/kin-groups/${groupId}`, {
+    method: 'DELETE', credentials: 'include',
+  });
+  if (r.ok) {
+    document.getElementById(`group-${groupId}`)?.remove();
+  } else {
+    alert('Error deleting group.');
+  }
+}
+
+async function addToGroup(userId, groupId) {
+  if (!userId || !groupId) { alert('Select a user and a group.'); return; }
+  const r = await fetch(`/api/admin/kin-groups/${groupId}/members`, {
+    method: 'POST', credentials: 'include',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({user_id: parseInt(userId)}),
+  });
+  if (r.ok) {
+    location.reload();
+  } else {
+    const d = await r.json().catch(() => ({}));
+    alert(d.detail || 'Error adding member.');
+  }
+}
+
+async function removeMember(groupId, userId, label) {
+  if (!confirm(`Remove ${label} from this group?`)) return;
+  const r = await fetch(`/api/admin/kin-groups/${groupId}/members/${userId}`, {
+    method: 'DELETE', credentials: 'include',
+  });
+  if (r.ok) {
+    location.reload();
+  } else {
+    alert('Error removing member.');
+  }
+}
+
+function showMsg(el, text, type) {
+  el.textContent = text;
+  el.className = `text-xs mt-2 ${type === 'error' ? 'text-red-600' : 'text-green-700'}`;
+  el.classList.remove('hidden');
+}
+</script>
+{% endblock %}

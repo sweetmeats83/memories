@@ -393,6 +393,14 @@ async def user_dashboard(
     if not user or not user.is_active:
         raise HTTPException(status_code=403, detail='Unauthorized')
 
+    # Ensure user has a self-person node in the graph (no-op if already set)
+    try:
+        from app.services.people import ensure_self_person
+        display = user.username or (user.email.split("@")[0] if user.email else "Me")
+        await ensure_self_person(db, user.id, display)
+    except Exception:
+        pass  # Never block the dashboard for a graph setup issue
+
     stmt = (
         select(Response)
         .join(Prompt, Prompt.id == Response.prompt_id)

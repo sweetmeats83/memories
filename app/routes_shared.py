@@ -9,6 +9,8 @@ import re
 import logging
 from pathlib import Path as FSPath
 
+import markdown as _md
+from markupsafe import Markup
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +25,9 @@ STATIC_DIR = BASE_DIR / "static"
 UPLOAD_DIR = str(STATIC_DIR / "uploads")
 
 templates = Jinja2Templates(directory="templates")
+templates.env.filters["markdown"] = lambda text: Markup(
+    _md.markdown(text or "", extensions=["extra", "nl2br"])
+)
 PIPELINE  = MediaPipeline(static_root=STATIC_DIR, path_strategy=UserBucketsStrategy())
 
 

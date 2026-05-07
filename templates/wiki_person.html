@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+{% set title = display_name ~ " – Wiki" %}
+{% block content %}
+
+<section class="mx-auto pb-[35vh] max-w-[1100px]">
+
+  <a href="/user_dashboard" class="pill select-none inline-flex items-center cursor-pointer" role="button">
+    ← Back to Memories
+  </a>
+
+  <!-- Person header -->
+  <header class="mt-6 mb-8 flex flex-col sm:flex-row items-center sm:items-start gap-6">
+    {% if photo_url %}
+      <img src="{{ photo_url }}" alt="{{ display_name }}"
+           class="w-28 h-28 rounded-full object-cover border-2 border-black/10 shadow-md flex-shrink-0">
+    {% else %}
+      <div class="w-28 h-28 rounded-full bg-black/10 flex items-center justify-center flex-shrink-0 text-4xl font-bold text-black/30">
+        {{ display_name[0] | upper }}
+      </div>
+    {% endif %}
+    <div class="text-center sm:text-left">
+      <h1 class="font-baskerville leading-tight text-[clamp(1.9rem,5.5vw,3.2rem)]">{{ display_name }}</h1>
+      {% if aliases %}
+        <p class="text-sm opacity-60 mt-1">Also known as: {{ aliases | join(", ") }}</p>
+      {% endif %}
+      <p class="text-sm opacity-70 mt-1">
+        {% if birth_year or death_year %}
+          <span>{{ birth_year or "?" }}{% if death_year %} – {{ death_year }}{% endif %}</span>
+        {% endif %}
+        {% if edges %}
+          <span class="ml-2 opacity-60">·</span>
+          <span class="ml-2">{{ edges | length }} relationship{{ 's' if edges | length != 1 else '' }}</span>
+        {% endif %}
+        {% if mentions %}
+          <span class="ml-2 opacity-60">·</span>
+          <span class="ml-2">{{ mentions | length }} stor{{ 'ies' if mentions | length != 1 else 'y' }}</span>
+        {% endif %}
+      </p>
+    </div>
+  </header>
+
+  <!-- Main layout: article + sidebar -->
+  <div class="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-8">
+
+    <!-- Left: paper card with wiki article -->
+    <div>
+      <div id="cardWrapper" class="stream-item">
+        <article class="paper-card mx-auto py-10 group" id="wikiCard">
+
+          <!-- Hover toolbar -->
+          <div class="article-toolbar" onclick="event.stopPropagation()">
+            <button id="btnGenerate" class="btn-icon" title="Generate wiki article"
+                    onclick="triggerGenerate()">
+              <span class="material-symbols-outlined">auto_stories</span>
+            </button>
+            <button id="btnRegenerate" class="btn-icon {% if not article or not article.content_md %}hidden{% endif %}"
+                    title="Regenerate" onclick="triggerGenerate()">
+              <span class="material-symbols-outlined">refresh</span>
+            </button>
+            <button class="btn-icon" title="Print" onclick="event.stopPropagation(); window.print()">
+              <span class="material-symbols-outlined">print</span>
+            </button>
+          </div>
+
+          <!-- Progress state -->
+          <div id="generateProgress" class="{% if article and article.status == 'generating' %}block{% else %}hidden{% endif %} px-6 pb-2">
+            <div class="p-6 bg-white/70 backdrop-blur rounded-2xl border border-black/10 text-center">
+              <h2 class="text-xl font-semibold">Writing the wiki article…</h2>
+              <p class="mt-1 text-sm text-slate-600">This usually takes 1–4 minutes. The page will update when it's ready.</p>
+              <div class="mt-6 w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+                <div class="h-full w-full bg-slate-500 animate-pulse"></div>
+              </div>
+              <p class="mt-5 text-xs text-slate-500">You can safely close this tab — the result will be here when you return.</p>
+            </div>
+          </div>
+
+          <!-- Wiki article content -->
+          <div class="book-body" id="articleBody"
+               {% if article and article.status == 'generating' %}style="display:none"{% endif %}>
+            <div class="page-column">
+              {% if article and article.content_md %}
+                <div class="chapter-prose" id="wikiContent">
+                  {{ article.content_md | markdown }}
+                </div>
+                {% if article.generated_at %}
+                  <p class="mt-8 text-xs opacity-40 text-right">
+                    Generated {{ article.generated_at.strftime('%B %d, %Y') }}
+                    {% if article.model_name %} · {{ article.model_name }}{% endif %}
+                    {% if article.source_count %} · {{ article.source_count }} source{{ 's' if article.source_count != 1 else '' }}{% endif %}
+                  </p>
+                {% endif %}
+              {% elif article and article.status == 'error' %}
+                <div class="italic opacity-60 text-sm">
+                  Generation failed: {{ article.error_msg or 'Unknown error' }}.
+                  <button onclick="triggerGenerate()" class="underline ml-1">Try again</button>
+                </div>
+              {% else %}
+                <div class="italic opacity-60">
+                  No article yet — hover this card and click
+                  <span class="material-symbols-outlined text-base align-middle">auto_stories</span>
+                  to generate one.
+                </div>
+              {% endif %}
+            </div>
+          </div>
+
+        </article>
+      </div>
+
+      <!-- Relationships section -->
+      {% if edges %}
+      <div class="mt-6 mx-auto max-w-[1000px]">
+        <h3 class="font-baskerville text-xl mb-3">Relationships</h3>
+        <div class="flex flex-wrap gap-2">
+          {% for edge in edges %}
+            <a href="/wiki/people/{{ edge.person_id }}"
+               class="pill select-none text-sm">
+              {{ edge.label }} · {{ edge.name }}
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Right: stories sidebar -->
+    <aside>
+      <div class="sticky top-20">
+        <h3 class="font-baskerville text-lg mb-3">In These Stories</h3>
+        {% if mentions %}
+          <ul class="flex flex-col gap-2">
+            {% for m in mentions %}
+              <li>
+                <a href="/response/{{ m.response_id }}"
+                   class="block border border-black/15 rounded-xl bg-white/50 hover:bg-white/80 backdrop-blur-sm px-3 py-2 transition text-sm">
+                  <div class="font-medium leading-snug">{{ m.title }}</div>
+                  {% if m.created_at %}
+                    <div class="text-xs opacity-50 mt-0.5">{{ m.created_at.strftime('%b %Y') }}</div>
+                  {% endif %}
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+          {% if mentions | length == 20 %}
+            <p class="text-xs opacity-50 mt-2 text-center">Showing 20 most recent</p>
+          {% endif %}
+        {% else %}
+          <p class="text-sm opacity-60">No stories mention this person yet.</p>
+        {% endif %}
+      </div>
+    </aside>
+
+  </div><!-- /grid -->
+
+</section>
+
+<script>
+window.PERSON_ID = {{ person_id | tojson }};
+window.WIKI_STATUS = {{ (article.status if article else 'none') | tojson }};
+
+async function triggerGenerate() {
+  const progress = document.getElementById('generateProgress');
+  const body = document.getElementById('articleBody');
+  const btnGen = document.getElementById('btnGenerate');
+  const btnRegen = document.getElementById('btnRegenerate');
+
+  // Optimistic UI
+  progress.classList.remove('hidden');
+  if (body) body.style.display = 'none';
+  btnGen.classList.add('hidden');
+  btnRegen.classList.add('hidden');
+
+  try {
+    const resp = await fetch(`/api/wiki/generate/person/${window.PERSON_ID}`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!resp.ok) {
+      alert('Failed to start generation. Please try again.');
+      progress.classList.add('hidden');
+      if (body) body.style.display = '';
+      return;
+    }
+    // Start polling
+    pollStatus();
+  } catch(e) {
+    alert('Network error. Please try again.');
+    progress.classList.add('hidden');
+    if (body) body.style.display = '';
+  }
+}
+
+async function pollStatus() {
+  const POLL_INTERVAL = 5000; // 5s
+  let attempts = 0;
+  const MAX_ATTEMPTS = 120; // 10 minutes
+
+  async function check() {
+    if (attempts++ > MAX_ATTEMPTS) return;
+    try {
+      const r = await fetch(`/api/wiki/status/person/${window.PERSON_ID}`, { credentials: 'include' });
+      if (!r.ok) { setTimeout(check, POLL_INTERVAL); return; }
+      const data = await r.json();
+      if (data.status === 'ready' || data.status === 'error') {
+        // Reload to show new content
+        window.location.reload();
+        return;
+      }
+    } catch(e) {}
+    setTimeout(check, POLL_INTERVAL);
+  }
+  check();
+}
+
+// If already generating on page load, start polling
+if (window.WIKI_STATUS === 'generating') {
+  pollStatus();
+}
+</script>
+
+<style>
+  /* ---------- Paper card (same as chapter_view) ---------- */
+  .paper-card {
+    position: relative; border-radius: 1rem;
+    background: linear-gradient(180deg, #FCFAF3 0%, #F7F2E7 100%);
+    border: none;
+    box-shadow: 0 18px 50px rgba(0,0,0,.10);
+    max-width: 1000px;
+    margin-bottom: 2rem;
+  }
+  .paper-card::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.04), inset 0 0 60px rgba(0,0,0,.08);
+  }
+  .paper-card::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    pointer-events: none; mix-blend-mode: multiply; opacity: .32;
+    background-image:
+      radial-gradient(rgba(0,0,0,.06) .6px, rgba(0,0,0,0) .6px),
+      radial-gradient(rgba(0,0,0,.04) .8px, rgba(0,0,0,0) .8px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='0 0.05 0.1 0.15 0.2 0.25'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 2px 2px, 4px 4px, 160px 160px;
+    background-position: 0 0, 1px 1px, 0 0;
+  }
+  .book-body { position: relative; z-index: 1; padding: 26px 20px; }
+  @media (min-width: 680px) { .book-body { padding: 34px 54px; } }
+  .page-column { max-width: 64ch; margin: 0 auto; padding: 0 1rem; }
+  @media (min-width: 720px) { .page-column { padding: 0; } }
+
+  /* ---------- Chapter prose (same as chapter_view) ---------- */
+  .chapter-prose {
+    font-family: var(--brand-serif, ui-serif, Georgia, Cambria, "Times New Roman", Times, serif);
+    font-size: clamp(1.05rem, 1.2vw, 1.22rem);
+    line-height: 1.85;
+    letter-spacing: .002em;
+    color: #111827;
+  }
+  .chapter-prose h1, .chapter-prose h2 {
+    font-family: var(--brand-serif);
+    font-size: clamp(1.4rem, 2.5vw, 1.9rem);
+    font-weight: 700;
+    margin: 2rem 0 .75rem;
+    line-height: 1.3;
+    text-indent: 0;
+  }
+  .chapter-prose h3 {
+    font-family: var(--brand-serif);
+    font-size: clamp(1.1rem, 1.8vw, 1.4rem);
+    font-weight: 700;
+    margin: 1.5rem 0 .5rem;
+    text-indent: 0;
+  }
+  .chapter-prose p { margin: 0 0 1.1em; text-indent: 1.25em; }
+  .chapter-prose p:first-child,
+  .chapter-prose h1 + p,
+  .chapter-prose h2 + p,
+  .chapter-prose h3 + p { text-indent: 0; }
+  .chapter-prose strong { font-weight: 700; }
+  .chapter-prose em { font-style: italic; }
+  .chapter-prose hr { border: none; border-top: 1px solid rgba(0,0,0,.12); margin: 2rem 0; }
+  .chapter-prose ul { margin: 0 0 1em 1.5em; list-style: disc; text-indent: 0; }
+  .chapter-prose li { margin-bottom: .35em; text-indent: 0; }
+
+  /* Inline citation links e.g. [Nathan 1] */
+  .chapter-prose a[href^="/response/"] {
+    font-size: 0.72em;
+    vertical-align: super;
+    line-height: 0;
+    color: #6b7280;
+    text-decoration: none;
+    border-bottom: 1px dotted #9ca3af;
+    white-space: nowrap;
+  }
+  .chapter-prose a[href^="/response/"]:hover { color: #111827; border-bottom-color: #374151; }
+
+  /* Sources section at the bottom */
+  .chapter-prose h2:last-of-type ~ ul,
+  .chapter-prose h2:last-of-type { opacity: 0.75; font-size: 0.9em; }
+  .chapter-prose .sources-list { font-size: 0.85em; opacity: 0.8; }
+
+  /* ---------- Toolbar (same as chapter_view) ---------- */
+  .article-toolbar {
+    position: absolute; top: 17px; right: 17px;
+    display: flex; gap: 8px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s ease;
+    z-index: 2;
+  }
+  .paper-card:hover .article-toolbar,
+  .paper-card:focus-within .article-toolbar {
+    opacity: 1; pointer-events: auto;
+  }
+  .btn-icon {
+    height: 36px; width: 36px; display: grid; place-items: center;
+    color: #6b7280; border-radius: .5rem;
+    border: 1px solid rgba(0,0,0,.15);
+    background: #fff7; backdrop-filter: blur(6px);
+    transition: background .15s, color .15s;
+    cursor: pointer;
+  }
+  .btn-icon:hover { color: #374151; background: #fff; }
+
+  @media print {
+    body { background: #fff !important; }
+    .article-toolbar, button, aside { display: none !important; }
+    .paper-card { box-shadow: none !important; }
+  }
+</style>
+
+{% endblock %}

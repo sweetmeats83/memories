@@ -1939,6 +1939,8 @@ console.info("people_graph.js — click path & hover path build loaded");
     // Show panel immediately from graph-state data so there's no perceived delay
     const graphNode = getNode(id);
     if (pvName) pvName.textContent = graphNode?.label || ('#'+id);
+    const pvWiki = document.getElementById('pv_wiki');
+    if (pvWiki) pvWiki.href = `/wiki/people/${id}`;
     if (pvRole)  pvRole.textContent = graphNode?.role ? graphNode.role.replace(/-/g,' ') : '—';
     if (pvYears) pvYears.textContent = '—';
     if (pvBio)   pvBio.textContent = '—';

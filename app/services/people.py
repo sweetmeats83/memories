@@ -2,6 +2,7 @@ import re, json, logging
 from typing import Optional, Iterable, Tuple
 from sqlalchemy import select, func
 from app.models import ResponsePerson, PersonShare, KinMembership, Person, PersonAlias
+from app.services.people_acl import visible_group_ids, person_visibility_filter
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.utils import slugify
 
@@ -135,6 +136,38 @@ _ROLE_PREFIXES: list[str] = sorted(
     key=len, reverse=True,
 )
 
+# Maps narrator-graph role labels (from _SRC_EDGE_TO_ROLE / _DST_EDGE_TO_ROLE) to
+# all synonyms a narrator might use for that role in text.
+# "parent" covers "mom", "dad", "mama", "papa" etc. so the fast-path doesn't miss them.
+def _build_narrator_role_synonyms() -> dict[str, frozenset[str]]:
+    def _words(*keys: str) -> frozenset[str]:
+        out: set[str] = set()
+        for k in keys:
+            out.update(w.lower() for w in ROLE_WORDS.get(k, []))
+        return frozenset(out)
+
+    return {
+        "parent":       _words("mother", "father", "parent"),
+        "step-parent":  _words("stepmother", "stepfather", "step-parent"),
+        "child":        _words("son", "daughter") | frozenset(["child", "kid"]),
+        "spouse":       _words("wife", "husband", "spouse"),
+        "partner":      _words("partner"),
+        "ex-spouse":    _words("ex-spouse", "ex-partner"),
+        "sibling":      _words("brother", "sister", "sibling", "half-sibling"),
+        "half-sibling": _words("half-sibling"),
+        "step-sibling": _words("step-sibling"),
+        "grandparent":  _words("grandmother", "grandfather", "grandparent"),
+        "grandchild":   frozenset(["grandson", "granddaughter", "grandchild", "grandkid"]),
+        "aunt or uncle":    _words("aunt", "uncle"),
+        "niece or nephew":  _words("niece", "nephew"),
+        "cousin":       _words("cousin"),
+        "mentor":       _words("mentor"),
+        "friend":       _words("friend"),
+        "neighbor":     _words("neighbor"),
+    }
+
+_NARRATOR_ROLE_SYNONYMS: dict[str, frozenset[str]] = _build_narrator_role_synonyms()
+
 
 def _split_display_name(display_name: str) -> tuple[str | None, str | None]:
     """
@@ -164,6 +197,80 @@ def _role_matches(stored: str | None, hint: str | None) -> bool:
     return s == h or s in h or h in s
 
 
+# Maps a relationship edge label (from the narrator's perspective) to a
+# plain role word the LLM and users will recognise.
+_SRC_EDGE_TO_ROLE: dict[str, str] = {
+    "child-of": "parent", "son-of": "parent", "daughter-of": "parent",
+    "spouse-of": "spouse", "partner-of": "partner",
+    "ex-spouse-of": "ex-spouse", "ex-partner-of": "ex-partner",
+    "sibling-of": "sibling", "half-sibling-of": "half-sibling",
+    "step-sibling-of": "step-sibling",
+    "grandchild-of": "grandparent",
+    "nephew-of": "aunt or uncle", "niece-of": "aunt or uncle",
+    "cousin-of": "cousin",
+    "student-of": "mentor", "friend-of": "friend",
+}
+_DST_EDGE_TO_ROLE: dict[str, str] = {
+    "parent-of": "parent", "mother-of": "parent", "father-of": "parent",
+    "adoptive-parent-of": "parent", "step-parent-of": "step-parent",
+    "child-of": "child", "son-of": "child", "daughter-of": "child",
+    "spouse-of": "spouse", "partner-of": "partner",
+    "sibling-of": "sibling",
+    "grandparent-of": "grandchild", "grandchild-of": "grandparent",
+    "aunt-of": "niece or nephew", "uncle-of": "niece or nephew",
+}
+
+
+async def build_narrator_graph(db: AsyncSession, user_id: int) -> list[dict]:
+    """
+    Return a list of {role, display_name, person_id} dicts describing the
+    narrator's direct family/social relationships, derived from their self-person
+    and the relationship graph.
+
+    Used to ground LLM extraction: when Nathan writes "my dad", the LLM can
+    substitute "John Smith" because the narrator graph says Nathan's parent is John Smith.
+    """
+    from app.models import UserProfile, RelationshipEdge
+
+    profile = await db.scalar(
+        select(UserProfile).where(UserProfile.user_id == user_id)
+    )
+    self_pid = (profile.privacy_prefs or {}).get("self_person_id") if profile else None
+    if not self_pid:
+        return []
+
+    src_rows = (await db.execute(
+        select(RelationshipEdge.rel_type, RelationshipEdge.dst_id)
+        .where(RelationshipEdge.src_id == self_pid)
+    )).all()
+
+    dst_rows = (await db.execute(
+        select(RelationshipEdge.rel_type, RelationshipEdge.src_id)
+        .where(RelationshipEdge.dst_id == self_pid)
+    )).all()
+
+    entries: list[dict] = []
+    seen_pids: set[int] = set()
+
+    for rel_type, other_id in src_rows:
+        role = _SRC_EDGE_TO_ROLE.get((rel_type or "").lower())
+        if role and other_id not in seen_pids:
+            p = await db.get(Person, other_id)
+            if p and p.display_name:
+                entries.append({"role": role, "display_name": p.display_name, "person_id": other_id})
+                seen_pids.add(other_id)
+
+    for rel_type, other_id in dst_rows:
+        role = _DST_EDGE_TO_ROLE.get((rel_type or "").lower())
+        if role and other_id not in seen_pids:
+            p = await db.get(Person, other_id)
+            if p and p.display_name:
+                entries.append({"role": role, "display_name": p.display_name, "person_id": other_id})
+                seen_pids.add(other_id)
+
+    return entries
+
+
 async def _llm_pick(candidates: list, mention: str, context_text: str | None) -> "Person | None":
     """Call the LLM disambiguator and return the winning Person, or None."""
     try:
@@ -186,6 +293,7 @@ async def resolve_person(
     display_or_alias: str,
     role_hint: str | None = None,
     context_text: str | None = None,
+    narrator_graph: list[dict] | None = None,
 ) -> "Person | None":
     name = (display_or_alias or "").strip()
     if not name:
@@ -195,13 +303,35 @@ async def resolve_person(
         return p
 
     name_lower = name.lower()
+    _group_ids = await visible_group_ids(db, user_id)
+    _vis = person_visibility_filter(user_id, _group_ids)
+
+    # 0) Narrator-graph fast-path: if the extracted name is a role word that maps
+    #    unambiguously to ONE person in the narrator's graph, return that person.
+    #    Uses _NARRATOR_ROLE_SYNONYMS so "dad"/"mom" match the generic "parent" role,
+    #    and collects all candidates before deciding — two parents both matching
+    #    "parent" is ambiguous, so we skip rather than return the wrong one.
+    if narrator_graph:
+        graph_candidates: list[int] = []
+        for entry in narrator_graph:
+            synonyms = _NARRATOR_ROLE_SYNONYMS.get(entry["role"], frozenset())
+            if name_lower in synonyms or name_lower == entry["role"].lower():
+                graph_candidates.append(entry["person_id"])
+        if len(graph_candidates) == 1:
+            p = await db.get(Person, graph_candidates[0])
+            if p:
+                await add_alias_if_new(db, p.id, name)
+                return p
+        # Multiple matches → ambiguous role (e.g. two people with role "parent");
+        # fall through to name-based matching where the LLM already substituted
+        # a full name, or to fuzzy matching as last resort.
 
     # 1) Alias exact (case-insensitive)
     alias_row = await db.scalar(
         select(PersonAlias)
         .join(Person, Person.id == PersonAlias.person_id)
         .where(func.lower(PersonAlias.alias) == name_lower)
-        .where(Person.owner_user_id == user_id)
+        .where(_vis)
         .limit(1)
     )
     if alias_row:
@@ -211,7 +341,7 @@ async def resolve_person(
     person = await db.scalar(
         select(Person)
         .where(func.lower(Person.display_name) == name_lower)
-        .where(Person.owner_user_id == user_id)
+        .where(_vis)
         .limit(1)
     )
     if person:
@@ -219,12 +349,12 @@ async def resolve_person(
 
     # Load all persons and aliases once; reused across all fuzzy passes below.
     all_persons = (await db.execute(
-        select(Person).where(Person.owner_user_id == user_id)
+        select(Person).where(_vis)
     )).scalars().all()
     alias_rows = (await db.execute(
         select(PersonAlias)
         .join(Person, Person.id == PersonAlias.person_id)
-        .where(Person.owner_user_id == user_id)
+        .where(_vis)
     )).scalars().all()
 
     def _collect_fuzzy(search_lc: str) -> list:
@@ -366,26 +496,35 @@ def role_hint_near(text: str, start: int, end: int, window: int = 80) -> str | N
 
 
 _LLM_EXTRACT_SYSTEM = """You extract people mentioned in a personal story or memoir response.
-Given the story text and a list of people already in the narrator's family tree,
-identify each distinct person mentioned (by name, nickname, or relational role like "my mom" or "Uncle Dave").
+Given the story text, a list of people already in the narrator's family tree, and the narrator's
+known relationships, identify each distinct person mentioned.
+
+NARRATOR CONTEXT: If the narrator says "my dad" and the narrator's father is listed as "John Smith",
+output "John Smith" as the name — not "my dad". Always prefer the full name from the narrator's
+relationships when a role-based reference matches.
 
 Return STRICT JSON only:
 {
   "people": [
-    {"name": "the name or role used in the text", "role": "their relationship to the narrator, or null"}
+    {"name": "full name from narrator relationships if known, otherwise the name used in text",
+     "role": "their relationship to the narrator, or null"}
   ]
 }
 
 Rules:
-- Include both proper names AND role-based references ("Mom", "Uncle Dave", "my grandmother Rosa")
-- For role-only references with no name (e.g. "my dad"), use the role word as the name value
-- If the same person is mentioned multiple ways, pick the most specific name
+- Resolve role-based references ("my mom", "dad", "Uncle Dave") to full names using narrator_relationships
+- If no match in narrator_relationships, use the most specific name/nickname from the text
+- If the same person is mentioned multiple ways, pick the most specific / full name
 - Do NOT include the narrator themselves
 - Limit to 20 people maximum
 - If no people are mentioned, return {"people": []}"""
 
 
-async def llm_extract_people(text: str, known_names: list[str] | None = None) -> list[dict]:
+async def llm_extract_people(
+    text: str,
+    known_names: list[str] | None = None,
+    narrator_graph: list[dict] | None = None,
+) -> list[dict]:
     """
     Use the LLM to extract (name, role) pairs from a response/transcript.
     Returns a list of dicts: [{"name": str, "role": str | None}, ...]
@@ -395,9 +534,16 @@ async def llm_extract_people(text: str, known_names: list[str] | None = None) ->
         return []
     try:
         from app.llm_client import your_chat_completion
+        # narrator_relationships: [{role, display_name}] — tells LLM to resolve
+        # "my dad" → "John Smith" rather than outputting the role word as a name.
+        narrator_relationships = [
+            {"role": e["role"], "name": e["display_name"]}
+            for e in (narrator_graph or [])
+        ]
         user_payload = {
             "story": text.strip(),
             "known_family_tree": known_names or [],
+            "narrator_relationships": narrator_relationships,
         }
         raw = await your_chat_completion(
             system=_LLM_EXTRACT_SYSTEM,
@@ -419,6 +565,62 @@ async def llm_extract_people(text: str, known_names: list[str] | None = None) ->
     except Exception:
         logger.debug("llm_extract_people failed; caller will fall back", exc_info=True)
         return []
+
+async def ensure_self_person(db: AsyncSession, user_id: int, display_name: str) -> int:
+    """
+    Guarantee that a user has a self-person node in the graph.
+    Returns the person_id.
+
+    Priority:
+    1. self_person_id already pinned in UserProfile.privacy_prefs → use it
+    2. An owned person with connect_to_owner=True + role_hint in {you, self, me} → pin it
+    3. Create a new private self-person and pin it
+
+    Safe to call on every login/dashboard load — is a no-op if already set.
+    """
+    from app.models import UserProfile
+
+    profile = await db.scalar(select(UserProfile).where(UserProfile.user_id == user_id))
+    if profile is None:
+        profile = UserProfile(user_id=user_id, privacy_prefs={}, tag_weights={})
+        db.add(profile)
+        await db.flush()
+
+    prefs: dict = profile.privacy_prefs or {}
+
+    # 1) Already pinned
+    if prefs.get("self_person_id"):
+        existing = await db.get(Person, prefs["self_person_id"])
+        if existing:
+            return existing.id
+
+    # 2) Scan owned persons for a flagged self-person
+    owned = (await db.execute(
+        select(Person).where(Person.owner_user_id == user_id)
+    )).scalars().all()
+    for p in owned:
+        m = p.meta or {}
+        if isinstance(m, dict) and m.get("connect_to_owner") and str(m.get("role_hint", "")).lower() in {"you", "self", "me"}:
+            prefs["self_person_id"] = p.id
+            profile.privacy_prefs = prefs
+            await db.flush()
+            return p.id
+
+    # 3) Create a new self-person
+    self_person = Person(
+        owner_user_id=user_id,
+        display_name=display_name,
+        meta={"connect_to_owner": True, "role_hint": "you"},
+        visibility="private",
+    )
+    db.add(self_person)
+    await db.flush()
+    db.add(PersonAlias(person_id=self_person.id, alias=display_name))
+    prefs["self_person_id"] = self_person.id
+    profile.privacy_prefs = prefs
+    await db.commit()
+    return self_person.id
+
 
 async def add_alias_if_new(db: AsyncSession, person_id: int, alias: str) -> None:
     a = (alias or "").strip()

@@ -17,6 +17,9 @@ from .routers.onboarding import router as onboarding_router
 from .routers.admin_tags import router as admin_tags_router
 from .routers.admin_responses import router as admin_responses_router
 from .routers.push import router as push_router
+from .routers.wiki import router as wiki_router
+from .routers.admin_people import router as admin_people_router
+from .routers.admin_kin_groups import router as admin_kin_groups_router
 from .users import fastapi_users, auth_backend
 from .models import User, Tag
 from .utils import get_current_user
@@ -82,6 +85,9 @@ app.include_router(admin_responses_router)
 app.include_router(push_router)
 app.include_router(admin_prompts_router)
 app.include_router(invites_router)
+app.include_router(wiki_router)
+app.include_router(admin_people_router)
+app.include_router(admin_kin_groups_router)
 app.include_router(router)
 
 # Authentication Routes
@@ -127,7 +133,10 @@ async def _auth_redirect_handler(request: Request, exc: FastAPIHTTPException):
 # Auto-create admin user
 # ----------------------
 async def ensure_family_group():
-    """Create the one implicit family group and add all active users to it."""
+    """Create the one implicit family group and add all active users to it.
+    New users spin up into the default family automatically.
+    To isolate specific users (e.g. test accounts), use /admin/kin-groups to
+    remove them from this group and place them in their own separate group."""
     from .models import KinGroup, KinMembership
     async with async_session_maker() as session:
         group = (await session.execute(

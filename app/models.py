@@ -555,6 +555,31 @@ class PushSubscription(Base):
     user = relationship("User", backref="push_subscriptions")
 
 
+class WikiArticle(Base):
+    """LLM-generated biographical wiki article for a person (or future: place/theme)."""
+    __tablename__ = "wiki_article"
+
+    id = Column(Integer, primary_key=True)
+    entity_type = Column(String(16), nullable=False)          # "person" (extensible)
+    entity_id   = Column(Integer, nullable=False, index=True) # Person.id
+    user_id     = Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    content_md  = Column(Text, nullable=True)                 # generated markdown
+    status      = Column(String(16), nullable=False, default="pending")  # pending|generating|ready|error
+    error_msg   = Column(Text, nullable=True)
+
+    model_name   = Column(String(64), nullable=True)
+    source_count = Column(Integer, nullable=True)             # number of story excerpts used
+    generated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at   = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "entity_id", "user_id", name="uq_wiki_entity_user"),
+        Index("ix_wiki_entity", "entity_type", "entity_id"),
+    )
+
+
 class ChapterCompilation(Base):
     __tablename__ = "chapter_compilation"
 

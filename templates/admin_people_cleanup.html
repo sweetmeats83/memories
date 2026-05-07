@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-[1000px] pb-32 px-4">
+
+  <a href="/admin_dashboard" class="pill select-none inline-flex items-center cursor-pointer mb-6 mt-4 block">
+    ← Admin Dashboard
+  </a>
+
+  <header class="mb-8">
+    <h1 class="font-baskerville text-[clamp(1.6rem,4vw,2.4rem)] leading-tight">People Cleanup</h1>
+    <p class="text-sm opacity-60 mt-1">
+      Audit and repair person tagging created by the old extraction pipeline.
+    </p>
+  </header>
+
+  <!-- Stat cards -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8" id="statGrid">
+    <div class="ud-glass-card p-4 text-center">
+      <div class="text-3xl font-bold" id="statGhosts">{{ audit.ghost_persons }}</div>
+      <div class="text-xs opacity-60 mt-1">Ghost persons</div>
+    </div>
+    <div class="ud-glass-card p-4 text-center">
+      <div class="text-3xl font-bold" id="statBadLinks">{{ audit.ghost_response_person_rows }}</div>
+      <div class="text-xs opacity-60 mt-1">Bad story links</div>
+    </div>
+    <div class="ud-glass-card p-4 text-center">
+      <div class="text-3xl font-bold" id="statAffected">{{ audit.affected_responses }}</div>
+      <div class="text-xs opacity-60 mt-1">Affected stories</div>
+    </div>
+    <div class="ud-glass-card p-4 text-center">
+      <div class="text-3xl font-bold" id="statTotal">{{ audit.total_responses }}</div>
+      <div class="text-xs opacity-60 mt-1">Total stories</div>
+    </div>
+  </div>
+
+  <!-- Action panel -->
+  <div class="ud-glass-card p-6 mb-8">
+    <h2 class="font-semibold text-lg mb-1">Run Cleanup</h2>
+    <p class="text-sm opacity-60 mb-4">
+      The cleanup job re-runs person extraction using the narrator-aware pipeline.
+      Ghost persons that can now be correctly matched will be replaced;
+      orphaned ghosts with no remaining links will be deleted.
+    </p>
+
+    <div class="flex flex-wrap gap-3 items-center">
+      <button id="btnGhosts" onclick="startJob('ghosts')"
+              class="pill px-4 py-2 font-medium">
+        Fix ghost-linked stories
+      </button>
+      <button id="btnAll" onclick="startJob('all')"
+              class="pill px-4 py-2 font-medium opacity-70">
+        Reprocess all stories
+      </button>
+      <span class="text-xs opacity-50">
+        "All stories" is thorough but may take several minutes.
+      </span>
+    </div>
+
+    <!-- Progress / result -->
+    <div id="jobStatus" class="mt-5 hidden">
+      <div id="jobRunning" class="hidden flex items-center gap-3 text-sm">
+        <div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+        <span>Running — this may take a few minutes…</span>
+      </div>
+      <div id="jobResult" class="hidden">
+        <div class="text-sm font-medium mb-2 text-green-700">Cleanup complete</div>
+        <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1 text-sm" id="resultTable"></dl>
+      </div>
+      <div id="jobError" class="hidden text-sm text-red-600"></div>
+    </div>
+  </div>
+
+  <!-- Ghost person list -->
+  {% if audit.ghost_persons > 0 %}
+  <div class="ud-glass-card p-6">
+    <h2 class="font-semibold text-lg mb-1">
+      Ghost Persons
+      <span class="text-sm font-normal opacity-50">({{ audit.ghost_persons }} auto-created, unverified)</span>
+    </h2>
+    <p class="text-xs opacity-50 mb-5">
+      Rename a ghost to confirm it as a real person, merge it into an existing person, or delete it outright.
+    </p>
+
+    <div class="space-y-3" id="ghostList">
+      {% for g in audit.ghost_person_list %}
+      <div class="border border-black/10 rounded-2xl p-4 bg-white/40" id="ghost-{{ g.id }}">
+        <!-- Summary row -->
+        <div class="flex items-start gap-3 flex-wrap">
+          <div class="flex-1 min-w-0">
+            <div class="font-medium" id="gname-{{ g.id }}">{{ g.display_name }}</div>
+            <div class="text-xs opacity-50 mt-0.5">
+              ID {{ g.id }} · {{ g.response_count }} stor{{ 'y' if g.response_count == 1 else 'ies' }} · user {{ g.owner_user_id }}
+            </div>
+          </div>
+          <div class="flex gap-2 text-xs shrink-0">
+            <button onclick="toggleEdit({{ g.id }})"
+                    class="pill px-2 py-1">Edit</button>
+            <button onclick="deletePerson({{ g.id }}, '{{ g.display_name | e }}')"
+                    class="pill px-2 py-1 text-red-700 border-red-300">Delete</button>
+          </div>
+        </div>
+
+        <!-- Edit panel (hidden by default) -->
+        <div id="editPanel-{{ g.id }}" class="hidden mt-4 space-y-3 border-t border-black/5 pt-4">
+
+          <!-- Rename -->
+          <div>
+            <label class="text-xs font-semibold opacity-60 mb-1 block">Rename (also clears ghost flag)</label>
+            <div class="flex gap-2">
+              <input id="editName-{{ g.id }}" type="text" value="{{ g.display_name | e }}"
+                     class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+              <button onclick="renamePerson({{ g.id }})"
+                      class="pill text-sm px-3 py-1.5">Save</button>
+            </div>
+          </div>
+
+          <!-- Merge -->
+          <div>
+            <label class="text-xs font-semibold opacity-60 mb-1 block">
+              Merge into existing person
+              <span class="font-normal">(moves story links, adds alias, deletes ghost)</span>
+            </label>
+            <div class="flex gap-2">
+              <select id="mergeTarget-{{ g.id }}"
+                      class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70">
+                <option value="">Choose person…</option>
+                {% for rp in audit.all_person_list %}
+                {% if rp.id != g.id %}
+                <option value="{{ rp.id }}">{{ rp.display_name }}{% if rp.is_ghost %} ·ghost{% endif %}</option>
+                {% endif %}
+                {% endfor %}
+              </select>
+              <button onclick="mergePerson({{ g.id }})"
+                      class="pill text-sm px-3 py-1.5">Merge</button>
+            </div>
+          </div>
+
+          <!-- Linked stories -->
+          {% if g.stories %}
+          <div>
+            <label class="text-xs font-semibold opacity-60 mb-1 block">
+              Linked stories ({{ g.stories | length }}) — open to verify before merging
+            </label>
+            <ul class="space-y-1">
+              {% for s in g.stories %}
+              <li>
+                <a href="/response/{{ s.id }}" target="_blank"
+                   class="text-sm text-blue-600 hover:underline block truncate max-w-full">
+                  {{ s.title }}
+                </a>
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+
+          <div id="editMsg-{{ g.id }}" class="text-xs hidden"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="ud-glass-card p-6 text-center text-sm opacity-60">
+    No ghost persons found — the database looks clean.
+  </div>
+  {% endif %}
+
+</section>
+
+<script>
+let polling = null;
+
+async function startJob(scope) {
+  document.getElementById('jobStatus').classList.remove('hidden');
+  document.getElementById('jobRunning').classList.remove('hidden');
+  document.getElementById('jobResult').classList.add('hidden');
+  document.getElementById('jobError').classList.add('hidden');
+  document.getElementById('btnGhosts').disabled = true;
+  document.getElementById('btnAll').disabled = true;
+
+  try {
+    const r = await fetch('/api/admin/people/reprocess', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scope}),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      showError(d.error || `HTTP ${r.status}`);
+      return;
+    }
+  } catch(e) {
+    showError('Network error — ' + e.message);
+    return;
+  }
+
+  polling = setInterval(pollStatus, 3000);
+}
+
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/admin/people/reprocess/status', {credentials: 'include'});
+    const d = await r.json();
+    if (!d.running) {
+      clearInterval(polling);
+      polling = null;
+      document.getElementById('btnGhosts').disabled = false;
+      document.getElementById('btnAll').disabled = false;
+      document.getElementById('jobRunning').classList.add('hidden');
+      if (d.last_result) {
+        showResult(d.last_result);
+        // Refresh audit stats
+        refreshStats();
+      }
+    }
+  } catch(e) {}
+}
+
+function showResult(res) {
+  const tbl = document.getElementById('resultTable');
+  const labels = {
+    responses_processed: 'Stories processed',
+    people_linked: 'People re-linked',
+    ghost_persons_deleted: 'Ghosts deleted',
+    errors: 'Errors',
+  };
+  tbl.innerHTML = Object.entries(labels).map(([k, label]) =>
+    `<div><dt class="opacity-50">${label}</dt><dd class="font-semibold">${res[k] ?? '—'}</dd></div>`
+  ).join('');
+  document.getElementById('jobResult').classList.remove('hidden');
+}
+
+function showError(msg) {
+  clearInterval(polling);
+  document.getElementById('jobRunning').classList.add('hidden');
+  document.getElementById('jobError').textContent = 'Error: ' + msg;
+  document.getElementById('jobError').classList.remove('hidden');
+  document.getElementById('btnGhosts').disabled = false;
+  document.getElementById('btnAll').disabled = false;
+}
+
+async function refreshStats() {
+  try {
+    const r = await fetch('/api/admin/people/audit', {credentials: 'include'});
+    const d = await r.json();
+    document.getElementById('statGhosts').textContent  = d.ghost_persons;
+    document.getElementById('statBadLinks').textContent = d.ghost_response_person_rows;
+    document.getElementById('statAffected').textContent = d.affected_responses;
+    document.getElementById('statTotal').textContent   = d.total_responses;
+  } catch(e) {}
+}
+
+// If a job was already running when the page loaded, start polling
+{% if job.running %}
+document.getElementById('jobStatus').classList.remove('hidden');
+document.getElementById('jobRunning').classList.remove('hidden');
+polling = setInterval(pollStatus, 3000);
+{% endif %}
+
+// ---- Per-ghost edit helpers ----
+
+function toggleEdit(id) {
+  const panel = document.getElementById(`editPanel-${id}`);
+  panel.classList.toggle('hidden');
+}
+
+function ghostMsg(id, text, isError) {
+  const el = document.getElementById(`editMsg-${id}`);
+  el.textContent = text;
+  el.className = `text-xs mt-1 ${isError ? 'text-red-600' : 'text-green-700'}`;
+  el.classList.remove('hidden');
+}
+
+async function renamePerson(id) {
+  const newName = document.getElementById(`editName-${id}`).value.trim();
+  if (!newName) { ghostMsg(id, 'Enter a name.', true); return; }
+  try {
+    const r = await fetch(`/api/admin/people/${id}`, {
+      method: 'PATCH', credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({display_name: newName}),
+    });
+    if (r.ok) {
+      document.getElementById(`gname-${id}`).textContent = newName;
+      ghostMsg(id, 'Renamed — no longer marked as ghost.', false);
+    } else {
+      const d = await r.json().catch(() => ({}));
+      ghostMsg(id, d.detail || `Error ${r.status}`, true);
+    }
+  } catch(e) { ghostMsg(id, 'Network error.', true); }
+}
+
+async function mergePerson(id) {
+  const targetId = document.getElementById(`mergeTarget-${id}`).value;
+  if (!targetId) { ghostMsg(id, 'Choose a target person.', true); return; }
+  const targetName = document.getElementById(`mergeTarget-${id}`)
+    .selectedOptions[0]?.text || targetId;
+  if (!confirm(`Merge this ghost into "${targetName}"?\nAll story links will be moved and the ghost deleted.`)) return;
+  try {
+    const r = await fetch(`/api/admin/people/${id}/merge`, {
+      method: 'POST', credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({target_id: parseInt(targetId)}),
+    });
+    if (r.ok) {
+      document.getElementById(`ghost-${id}`)?.remove();
+      updateGhostCount(-1);
+    } else {
+      const d = await r.json().catch(() => ({}));
+      ghostMsg(id, d.detail || `Error ${r.status}`, true);
+    }
+  } catch(e) { ghostMsg(id, 'Network error.', true); }
+}
+
+async function deletePerson(id, label) {
+  if (!confirm(`Delete "${label}" permanently?\nThis cannot be undone.`)) return;
+  try {
+    const r = await fetch(`/api/admin/people/${id}`, {
+      method: 'DELETE', credentials: 'include',
+    });
+    if (r.ok) {
+      document.getElementById(`ghost-${id}`)?.remove();
+      updateGhostCount(-1);
+    } else {
+      alert('Error deleting person.');
+    }
+  } catch(e) { alert('Network error.'); }
+}
+
+function updateGhostCount(delta) {
+  const el = document.getElementById('statGhosts');
+  if (el) el.textContent = Math.max(0, parseInt(el.textContent || '0') + delta);
+}
+</script>
+{% endblock %}

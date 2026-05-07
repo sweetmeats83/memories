@@ -750,15 +750,23 @@ async def media_share_stream(token: str, path: str, db: AsyncSession = Depends(g
 
 @router.get('/media/auth/{path:path}')
 async def media_auth_stream(path: str, user=Depends(require_authenticated_user)):
-    rid = _response_id_from_uploads_path(path)
-    if rid is None:
-        raise HTTPException(status_code=400, detail='invalid path')
-    if not getattr(user, 'is_superuser', False):
-        async with async_session_maker() as s:
-            r = await s.get(Response, rid)
-            if not r or r.user_id != user.id:
-                raise HTTPException(status_code=404, detail='Not found')
-    abspath = (STATIC_DIR / path.lstrip('/').replace('\\', '/')).resolve()
+    normalized = path.lstrip('/').replace('\\', '/')
+
+    # Person profile photos live at uploads/users/{bucket}/people/{id}/photo.*
+    # They don't have a response_id — any authenticated user may view them.
+    is_person_photo = '/people/' in normalized
+
+    if not is_person_photo:
+        rid = _response_id_from_uploads_path(path)
+        if rid is None:
+            raise HTTPException(status_code=400, detail='invalid path')
+        if not getattr(user, 'is_superuser', False):
+            async with async_session_maker() as s:
+                r = await s.get(Response, rid)
+                if not r or r.user_id != user.id:
+                    raise HTTPException(status_code=404, detail='Not found')
+
+    abspath = (STATIC_DIR / normalized).resolve()
     uploads_root = (STATIC_DIR / 'uploads').resolve()
     if uploads_root not in abspath.parents and abspath != uploads_root:
         raise HTTPException(status_code=400, detail='invalid path')

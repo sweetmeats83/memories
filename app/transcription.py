@@ -23,6 +23,7 @@ from app.models import (
     UserProfile,
     Prompt,
 )
+from app.services.people_acl import visible_group_ids, person_visibility_filter
 from app.services.auto_tag import suggest_tags_rule_based
 from app.services.assignment_core import morph_profile
 from app.settings.config import settings
@@ -30,7 +31,7 @@ from app.background import run_sync
 
 # Optional people helpers (we degrade gracefully if missing)
 try:
-    from app.services.people import extract_name_spans, role_hint_near, resolve_person, link_mention, llm_extract_people
+    from app.services.people import extract_name_spans, role_hint_near, resolve_person, link_mention, llm_extract_people, build_narrator_graph
     _PEOPLE_ENABLED = True
 except Exception:
     _PEOPLE_ENABLED = False
@@ -112,8 +113,9 @@ async def _collect_user_vocabulary(db: Optional[AsyncSession], user_id: Optional
 
     # Aliases for user's people
     try:
+        _vc_group_ids = await visible_group_ids(db, user_id)
         people = (await db.execute(
-            select(Person).where(Person.owner_user_id == user_id)
+            select(Person).where(person_visibility_filter(user_id, _vc_group_ids))
         )).scalars().all()
         pids = [p.id for p in (people or [])] or [-1]
         aliases = (await db.execute(
@@ -460,20 +462,27 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
             people_text = ((getattr(response, "response_text", "") or "").strip()
                         or (getattr(response, "transcription", "") or "").strip())
             if people_text:
-                # Gather known display names to help the LLM match to existing tree
+                # Gather known display names and narrator's relationship graph
                 known_names: list[str] = []
+                narrator_graph: list[dict] = []
                 try:
+                    _tp_group_ids = await visible_group_ids(db, response.user_id)
                     tree_people = (await db.execute(
-                        select(Person).where(Person.owner_user_id == response.user_id)
+                        select(Person).where(person_visibility_filter(response.user_id, _tp_group_ids))
                     )).scalars().all()
                     for p in (tree_people or []):
                         if p.display_name:
                             known_names.append(p.display_name)
+                    narrator_graph = await build_narrator_graph(db, response.user_id)
                 except Exception:
                     tree_people = []
 
                 # Try LLM extraction first; fall back to spaCy/regex if it returns nothing
-                extractions = await llm_extract_people(people_text, known_names=known_names)
+                extractions = await llm_extract_people(
+                    people_text,
+                    known_names=known_names,
+                    narrator_graph=narrator_graph,
+                )
 
                 if not extractions:
                     # Fallback: use spaCy/regex spans + role_hint_near
@@ -499,7 +508,7 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
                     role = item.get("role") or None
                     if not surface:
                         continue
-                    person = await resolve_person(db, response.user_id, surface, role_hint=role, context_text=people_text)
+                    person = await resolve_person(db, response.user_id, surface, role_hint=role, context_text=people_text, narrator_graph=narrator_graph)
                     if person is None:
                         # Ambiguous match (e.g., multiple people named Josh) — skip to avoid wrong link
                         logger.debug("resolve_person: ambiguous match for %r (role=%r); skipping link", surface, role)
@@ -597,8 +606,9 @@ async def transcribe_and_update(response_id: int, media_relpath: str, user_id: O
             # collect aliases for user
             aliases = []
             try:
+                _al_group_ids = await visible_group_ids(db, resp.user_id)
                 people = (await db.execute(
-                    select(Person).where(Person.owner_user_id == resp.user_id)
+                    select(Person).where(person_visibility_filter(resp.user_id, _al_group_ids))
                 )).scalars().all()
                 alias_rows = []
                 if people:
