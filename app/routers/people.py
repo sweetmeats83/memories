@@ -193,6 +193,7 @@ async def _get_self_person_id(
 class PersonPatchReq(BaseModel):
     display_name: Optional[str] = None
     role_hint: Optional[str] = None
+    gender: Optional[str] = None
     birth_year: Optional[int] = None
     death_year: Optional[int] = None
     birth_date: Optional[str] = None
@@ -368,13 +369,26 @@ async def api_people_graph(user=Depends(require_authenticated_user), db: AsyncSe
     inferred_map: dict[int, bool] = {}
     rolehint_map: dict[int, str | None] = {}
     connect_map: dict[int, bool] = {}
+    gender_map: dict[int, str | None] = {}
     if node_ids:
-        rows = (await db.execute(select(Person.id, Person.death_year, Person.meta).where(Person.id.in_(node_ids)))).all()
-        for pid, dy, meta in rows:
+        rows = (await db.execute(select(Person.id, Person.death_year, Person.gender, Person.meta).where(Person.id.in_(node_ids)))).all()
+        for pid, dy, gender_col, meta in rows:
             dflag = bool(dy is not None)
             if isinstance(meta, dict) and bool(meta.get('deceased')):
                 dflag = True
             dead_map[pid] = dflag
+            # Resolve gender: column takes priority, then meta fallback
+            g = (gender_col or "").strip().lower()
+            if not g and isinstance(meta, dict):
+                g = (meta.get("gender") or meta.get("sex") or "").strip().lower()
+            if g in {"male", "m", "man", "boy"}:
+                gender_map[pid] = "male"
+            elif g in {"female", "f", "woman", "girl"}:
+                gender_map[pid] = "female"
+            elif g in {"nonbinary", "nb", "enby"}:
+                gender_map[pid] = "nonbinary"
+            else:
+                gender_map[pid] = None
             try:
                 if isinstance(meta, dict):
                     color_map[pid] = meta.get('dot_color')
@@ -395,7 +409,7 @@ async def api_people_graph(user=Depends(require_authenticated_user), db: AsyncSe
             continue
         if rid in own_ids and inferred_map.get(rid) and (mention_map.get(rid, 0) == 0) and (not (rolehint_map.get(rid) or connect_map.get(rid))):
             continue
-        nodes.append({'id': rid, 'name': name, 'kind': 'person', 'dead': bool(dead_map.get(rid)), 'color': color_map.get(rid), 'mentions': mention_map.get(rid, 0), 'role_hint': rolehint_map.get(rid), 'connect_to_owner': connect_map.get(rid, False)})
+        nodes.append({'id': rid, 'name': name, 'kind': 'person', 'dead': bool(dead_map.get(rid)), 'color': color_map.get(rid), 'mentions': mention_map.get(rid, 0), 'role_hint': rolehint_map.get(rid), 'connect_to_owner': connect_map.get(rid, False), 'gender': gender_map.get(rid)})
     # Edges: group-scoped family edges + user's private social edges
     from sqlalchemy import or_
     if _graph_group_id is not None:
@@ -826,7 +840,7 @@ async def api_people_detail(person_id: int, user=Depends(require_authenticated_u
             continue
         seen_keys.add(key)
         deduped.append(c)
-    return {'id': p.id, 'display_name': p.display_name, 'photo_url': photo_abs, 'role_hint': role_hint, 'dot_color': dot_color, 'birth_year': getattr(p, 'birth_year', None), 'death_year': getattr(p, 'death_year', None), 'deceased': deceased or getattr(p, 'death_year', None) is not None, 'birth_date': (meta_val or {}).get('birth_date') if isinstance(meta_val, dict) else None, 'connect_to_owner': connect_to_owner, 'hidden': hidden, 'inferred': inferred, 'bio': getattr(p, 'notes', None), 'aliases': sorted({a for a in aliases or [] if a}), 'editable': bool(is_owner), 'connections': deduped}
+    return {'id': p.id, 'display_name': p.display_name, 'photo_url': photo_abs, 'role_hint': role_hint, 'gender': getattr(p, 'gender', None), 'dot_color': dot_color, 'birth_year': getattr(p, 'birth_year', None), 'death_year': getattr(p, 'death_year', None), 'deceased': deceased or getattr(p, 'death_year', None) is not None, 'birth_date': (meta_val or {}).get('birth_date') if isinstance(meta_val, dict) else None, 'connect_to_owner': connect_to_owner, 'hidden': hidden, 'inferred': inferred, 'bio': getattr(p, 'notes', None), 'aliases': sorted({a for a in aliases or [] if a}), 'editable': bool(is_owner), 'connections': deduped}
 
 
 @router.get('/api/people/{person_id}/infer/preview')
@@ -1127,6 +1141,17 @@ async def api_people_patch(person_id: int, payload: PersonPatchReq, user=Depends
             flag_modified(p, 'meta')
         except Exception:
             pass
+        changed = True
+    if payload.gender is not None:
+        g = (payload.gender or "").strip().lower()
+        if g in {"male", "m", "man", "boy"}:
+            p.gender = "male"
+        elif g in {"female", "f", "woman", "girl"}:
+            p.gender = "female"
+        elif g in {"nonbinary", "nb", "enby"}:
+            p.gender = "nonbinary"
+        else:
+            p.gender = None
         changed = True
     if payload.birth_year is not None:
         try:

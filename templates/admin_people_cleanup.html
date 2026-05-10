@@ -6,26 +6,34 @@
     ← Admin Dashboard
   </a>
 
-  <header class="mb-8">
-    <h1 class="font-baskerville text-[clamp(1.6rem,4vw,2.4rem)] leading-tight">People Cleanup</h1>
+  <header class="mb-6">
+    <h1 class="font-baskerville text-[clamp(1.6rem,4vw,2.4rem)] leading-tight">Entity Cleanup</h1>
     <p class="text-sm opacity-60 mt-1">
-      Audit and repair person tagging created by the old extraction pipeline.
+      Audit and repair persons, places, and events extracted from stories.
     </p>
   </header>
 
   <!-- Stat cards -->
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8" id="statGrid">
+  <div class="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6" id="statGrid">
     <div class="ud-glass-card p-4 text-center">
       <div class="text-3xl font-bold" id="statGhosts">{{ audit.ghost_persons }}</div>
       <div class="text-xs opacity-60 mt-1">Ghost persons</div>
     </div>
     <div class="ud-glass-card p-4 text-center">
       <div class="text-3xl font-bold" id="statBadLinks">{{ audit.ghost_response_person_rows }}</div>
-      <div class="text-xs opacity-60 mt-1">Bad story links</div>
+      <div class="text-xs opacity-60 mt-1">Bad links</div>
     </div>
     <div class="ud-glass-card p-4 text-center">
-      <div class="text-3xl font-bold" id="statAffected">{{ audit.affected_responses }}</div>
-      <div class="text-xs opacity-60 mt-1">Affected stories</div>
+      <div class="text-3xl font-bold">{{ audit.total_persons }}</div>
+      <div class="text-xs opacity-60 mt-1">Total persons</div>
+    </div>
+    <div class="ud-glass-card p-4 text-center">
+      <div class="text-3xl font-bold">{{ places.total_places }}</div>
+      <div class="text-xs opacity-60 mt-1">Places</div>
+    </div>
+    <div class="ud-glass-card p-4 text-center">
+      <div class="text-3xl font-bold">{{ events.total_events }}</div>
+      <div class="text-xs opacity-60 mt-1">Events</div>
     </div>
     <div class="ud-glass-card p-4 text-center">
       <div class="text-3xl font-bold" id="statTotal">{{ audit.total_responses }}</div>
@@ -33,142 +41,428 @@
     </div>
   </div>
 
-  <!-- Action panel -->
-  <div class="ud-glass-card p-6 mb-8">
-    <h2 class="font-semibold text-lg mb-1">Run Cleanup</h2>
-    <p class="text-sm opacity-60 mb-4">
-      The cleanup job re-runs person extraction using the narrator-aware pipeline.
-      Ghost persons that can now be correctly matched will be replaced;
-      orphaned ghosts with no remaining links will be deleted.
-    </p>
-
-    <div class="flex flex-wrap gap-3 items-center">
-      <button id="btnGhosts" onclick="startJob('ghosts')"
-              class="pill px-4 py-2 font-medium">
-        Fix ghost-linked stories
-      </button>
-      <button id="btnAll" onclick="startJob('all')"
-              class="pill px-4 py-2 font-medium opacity-70">
-        Reprocess all stories
-      </button>
-      <span class="text-xs opacity-50">
-        "All stories" is thorough but may take several minutes.
-      </span>
+  <!-- Full re-extraction -->
+  <div class="ud-glass-card p-5 mb-6 border border-amber-200 bg-amber-50/40">
+    <div class="flex flex-wrap items-center gap-4">
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-sm">Re-extract All Entities</div>
+        <div class="text-xs opacity-60 mt-0.5">
+          Re-runs people + places + events extraction on every story using the current pipeline.
+          Clears existing links first. This can take several minutes.
+        </div>
+      </div>
+      <button id="btnReextract" onclick="startReextract()"
+              class="pill px-4 py-2 font-medium text-sm whitespace-nowrap">Run Full Re-extraction</button>
     </div>
-
-    <!-- Progress / result -->
-    <div id="jobStatus" class="mt-5 hidden">
-      <div id="jobRunning" class="hidden flex items-center gap-3 text-sm">
+    <div id="reextractStatus" class="mt-4 hidden">
+      <div id="reextractRunning" class="hidden flex items-center gap-3 text-sm">
         <div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-        <span>Running — this may take a few minutes…</span>
+        <span>Running… check back in a few minutes</span>
       </div>
-      <div id="jobResult" class="hidden">
-        <div class="text-sm font-medium mb-2 text-green-700">Cleanup complete</div>
-        <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1 text-sm" id="resultTable"></dl>
+      <div id="reextractResult" class="hidden">
+        <div class="text-sm font-medium mb-2 text-green-700">Re-extraction complete</div>
+        <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1 text-sm" id="reextractResultTable"></dl>
       </div>
-      <div id="jobError" class="hidden text-sm text-red-600"></div>
+      <div id="reextractError" class="hidden text-sm text-red-600"></div>
     </div>
   </div>
 
-  <!-- Ghost person list -->
-  {% if audit.ghost_persons > 0 %}
-  <div class="ud-glass-card p-6">
-    <h2 class="font-semibold text-lg mb-1">
-      Ghost Persons
-      <span class="text-sm font-normal opacity-50">({{ audit.ghost_persons }} auto-created, unverified)</span>
-    </h2>
-    <p class="text-xs opacity-50 mb-5">
-      Rename a ghost to confirm it as a real person, merge it into an existing person, or delete it outright.
-    </p>
+  <!-- Tabs -->
+  <div class="flex gap-1 mb-5 border-b border-black/10">
+    <button onclick="showTab('persons')" id="tab-persons"
+            class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-black">Persons</button>
+    <button onclick="showTab('places')" id="tab-places"
+            class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-transparent opacity-60">Places</button>
+    <button onclick="showTab('events')" id="tab-events"
+            class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-transparent opacity-60">Events</button>
+  </div>
 
-    <div class="space-y-3" id="ghostList">
-      {% for g in audit.ghost_person_list %}
-      <div class="border border-black/10 rounded-2xl p-4 bg-white/40" id="ghost-{{ g.id }}">
-        <!-- Summary row -->
-        <div class="flex items-start gap-3 flex-wrap">
-          <div class="flex-1 min-w-0">
-            <div class="font-medium" id="gname-{{ g.id }}">{{ g.display_name }}</div>
-            <div class="text-xs opacity-50 mt-0.5">
-              ID {{ g.id }} · {{ g.response_count }} stor{{ 'y' if g.response_count == 1 else 'ies' }} · user {{ g.owner_user_id }}
-            </div>
-          </div>
-          <div class="flex gap-2 text-xs shrink-0">
-            <button onclick="toggleEdit({{ g.id }})"
-                    class="pill px-2 py-1">Edit</button>
-            <button onclick="deletePerson({{ g.id }}, '{{ g.display_name | e }}')"
-                    class="pill px-2 py-1 text-red-700 border-red-300">Delete</button>
-          </div>
+  <!-- ================================================================ PERSONS TAB -->
+  <div id="tab-panel-persons">
+
+    <!-- Run cleanup -->
+    <div class="ud-glass-card p-6 mb-6">
+      <h2 class="font-semibold text-lg mb-1">Run Person Cleanup</h2>
+      <p class="text-sm opacity-60 mb-4">
+        Re-runs narrator-aware extraction. Ghost persons correctly matched will be replaced;
+        orphaned ghosts with no remaining links will be deleted.
+      </p>
+      <div class="flex flex-wrap gap-3 items-center">
+        <button id="btnGhosts" onclick="startJob('ghosts')" class="pill px-4 py-2 font-medium">Fix ghost-linked stories</button>
+        <button id="btnAll" onclick="startJob('all')" class="pill px-4 py-2 font-medium opacity-70">Reprocess all stories</button>
+        <span class="text-xs opacity-50">"All stories" may take several minutes.</span>
+      </div>
+      <div id="jobStatus" class="mt-5 hidden">
+        <div id="jobRunning" class="hidden flex items-center gap-3 text-sm">
+          <div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+          <span>Running…</span>
         </div>
+        <div id="jobResult" class="hidden">
+          <div class="text-sm font-medium mb-2 text-green-700">Cleanup complete</div>
+          <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1 text-sm" id="resultTable"></dl>
+        </div>
+        <div id="jobError" class="hidden text-sm text-red-600"></div>
+      </div>
+    </div>
 
-        <!-- Edit panel (hidden by default) -->
-        <div id="editPanel-{{ g.id }}" class="hidden mt-4 space-y-3 border-t border-black/5 pt-4">
-
-          <!-- Rename -->
-          <div>
-            <label class="text-xs font-semibold opacity-60 mb-1 block">Rename (also clears ghost flag)</label>
-            <div class="flex gap-2">
-              <input id="editName-{{ g.id }}" type="text" value="{{ g.display_name | e }}"
-                     class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
-              <button onclick="renamePerson({{ g.id }})"
-                      class="pill text-sm px-3 py-1.5">Save</button>
+    <!-- Ghost list -->
+    {% if audit.ghost_persons > 0 %}
+    <div class="ud-glass-card p-6">
+      <h2 class="font-semibold text-lg mb-1">
+        Ghost Persons
+        <span class="text-sm font-normal opacity-50">({{ audit.ghost_persons }} unverified)</span>
+      </h2>
+      <p class="text-xs opacity-50 mb-5">
+        Rename to confirm as a real person, merge into an existing person, reclassify as a place or event, or delete.
+      </p>
+      <div class="space-y-3" id="ghostList">
+        {% for g in audit.ghost_person_list %}
+        <div class="border border-black/10 rounded-2xl p-4 bg-white/40" id="ghost-{{ g.id }}">
+          <div class="flex items-start gap-3 flex-wrap">
+            <div class="flex-1 min-w-0">
+              <div class="font-medium" id="gname-{{ g.id }}">{{ g.display_name }}</div>
+              <div class="text-xs opacity-50 mt-0.5">
+                ID {{ g.id }} · {{ g.response_count }} stor{{ 'y' if g.response_count == 1 else 'ies' }}
+              </div>
+            </div>
+            <div class="flex gap-2 text-xs shrink-0">
+              <button onclick="toggleEdit({{ g.id }})" class="pill px-2 py-1">Edit</button>
+              <button onclick="deletePerson({{ g.id }}, '{{ g.display_name | e }}')"
+                      class="pill px-2 py-1 text-red-700 border-red-300">Delete</button>
             </div>
           </div>
 
-          <!-- Merge -->
-          <div>
-            <label class="text-xs font-semibold opacity-60 mb-1 block">
-              Merge into existing person
-              <span class="font-normal">(moves story links, adds alias, deletes ghost)</span>
-            </label>
-            <div class="flex gap-2">
-              <select id="mergeTarget-{{ g.id }}"
-                      class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70">
-                <option value="">Choose person…</option>
-                {% for rp in audit.all_person_list %}
-                {% if rp.id != g.id %}
-                <option value="{{ rp.id }}">{{ rp.display_name }}{% if rp.is_ghost %} ·ghost{% endif %}</option>
-                {% endif %}
+          <div id="editPanel-{{ g.id }}" class="hidden mt-4 space-y-4 border-t border-black/5 pt-4">
+
+            <!-- Rename -->
+            <div>
+              <label class="text-xs font-semibold opacity-60 mb-1 block">Rename (clears ghost flag)</label>
+              <div class="flex gap-2">
+                <input id="editName-{{ g.id }}" type="text" value="{{ g.display_name | e }}"
+                       class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+                <button onclick="renamePerson({{ g.id }})" class="pill text-sm px-3 py-1.5">Save</button>
+              </div>
+            </div>
+
+            <!-- Merge -->
+            <div>
+              <label class="text-xs font-semibold opacity-60 mb-1 block">
+                Merge into person
+                <span class="font-normal">(moves story links, adds alias, deletes ghost)</span>
+              </label>
+              <div class="flex gap-2">
+                <select id="mergeTarget-{{ g.id }}"
+                        class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70">
+                  <option value="">Choose person…</option>
+                  {% for rp in audit.all_person_list %}
+                  {% if rp.id != g.id %}
+                  <option value="{{ rp.id }}">{{ rp.display_name }}{% if rp.is_ghost %} ·ghost{% endif %}</option>
+                  {% endif %}
+                  {% endfor %}
+                </select>
+                <button onclick="mergePerson({{ g.id }})" class="pill text-sm px-3 py-1.5">Merge</button>
+              </div>
+            </div>
+
+            <!-- Reclassify -->
+            <div>
+              <label class="text-xs font-semibold opacity-60 mb-1 block">
+                Reclassify as Place or Event
+                <span class="font-normal">(converts this person node, migrates story links)</span>
+              </label>
+              <div class="flex flex-wrap gap-2">
+                <input id="reclassName-{{ g.id }}" type="text" value="{{ g.display_name | e }}"
+                       placeholder="Name"
+                       class="flex-1 min-w-[140px] border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+                <select id="reclassType-{{ g.id }}"
+                        class="border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70"
+                        onchange="toggleReclassYear({{ g.id }})">
+                  <option value="place:home">Place — Home</option>
+                  <option value="place:farm">Place — Farm</option>
+                  <option value="place:city">Place — City</option>
+                  <option value="place:landmark">Place — Landmark</option>
+                  <option value="place:other">Place — Other</option>
+                  <option value="event:holiday">Event — Holiday</option>
+                  <option value="event:birthday">Event — Birthday</option>
+                  <option value="event:vacation">Event — Vacation</option>
+                  <option value="event:reunion">Event — Reunion</option>
+                  <option value="event:wedding">Event — Wedding</option>
+                  <option value="event:other">Event — Other</option>
+                </select>
+                <input id="reclassYear-{{ g.id }}" type="number" placeholder="Year (events)"
+                       class="hidden w-24 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+                <button onclick="reclassifyPerson({{ g.id }})" class="pill text-sm px-3 py-1.5">Convert</button>
+              </div>
+            </div>
+
+            <!-- Linked stories -->
+            {% if g.stories %}
+            <div>
+              <label class="text-xs font-semibold opacity-60 mb-1 block">
+                Linked stories ({{ g.stories | length }}) — open to verify before merging
+              </label>
+              <ul class="space-y-1">
+                {% for s in g.stories %}
+                <li>
+                  <a href="/response/{{ s.id }}" target="_blank"
+                     class="text-sm text-blue-600 hover:underline block truncate">{{ s.title }}</a>
+                </li>
                 {% endfor %}
-              </select>
-              <button onclick="mergePerson({{ g.id }})"
-                      class="pill text-sm px-3 py-1.5">Merge</button>
+              </ul>
+            </div>
+            {% endif %}
+
+            <div id="editMsg-{{ g.id }}" class="text-xs hidden"></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div class="ud-glass-card p-6 text-center text-sm opacity-60">No ghost persons found — the database looks clean.</div>
+    {% endif %}
+  </div>
+
+  <!-- ================================================================ ALL PERSONS (confirmed, non-ghost) TAB SECTION -->
+  <div id="tab-panel-persons-confirmed" class="mt-6">
+    {% set confirmed = audit.all_person_list | selectattr('is_ghost', 'equalto', false) | list %}
+    {% if confirmed %}
+    <div class="ud-glass-card p-6">
+      <h2 class="font-semibold text-lg mb-1">
+        All Persons
+        <span class="text-sm font-normal opacity-50">({{ confirmed | length }} confirmed)</span>
+      </h2>
+      <p class="text-xs opacity-50 mb-4">Rename any confirmed person or create a new one to use as a merge target.</p>
+      <!-- Create new person -->
+      <div class="flex gap-2 mb-5">
+        <input id="newPersonName" type="text" placeholder="New person name…"
+               class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+        <button onclick="createPerson()" class="pill text-sm px-3 py-1.5">Create</button>
+        <span id="newPersonMsg" class="text-xs self-center hidden"></span>
+      </div>
+      <div class="space-y-2" id="confirmedPersonList">
+        {% for p in confirmed %}
+        <div class="flex items-center gap-2 flex-wrap border border-black/5 rounded-xl px-3 py-2 bg-white/30" id="cperson-{{ p.id }}">
+          <span class="flex-1 text-sm font-medium" id="cpname-{{ p.id }}">{{ p.display_name }}</span>
+          <div class="flex gap-2 shrink-0">
+            <input id="cpeditName-{{ p.id }}" type="text" value="{{ p.display_name | e }}"
+                   class="w-44 border border-black/20 rounded-lg px-2 py-1 text-sm bg-white/70 focus:outline-none focus:ring-1 focus:ring-black/20">
+            <button onclick="renameConfirmedPerson({{ p.id }})" class="pill text-xs px-2 py-1">Save</button>
+          </div>
+          <span id="cpmsg-{{ p.id }}" class="text-xs w-full hidden"></span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <!-- No confirmed persons: still show create form -->
+    <div class="ud-glass-card p-6">
+      <div class="font-semibold text-sm mb-2">Create New Person</div>
+      <div class="flex gap-2">
+        <input id="newPersonName" type="text" placeholder="Name…"
+               class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+        <button onclick="createPerson()" class="pill text-sm px-3 py-1.5">Create</button>
+        <span id="newPersonMsg" class="text-xs self-center hidden"></span>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ================================================================ PLACES TAB -->
+  <div id="tab-panel-places" class="hidden">
+    <!-- Create new place -->
+    <div class="ud-glass-card p-5 mb-4">
+      <div class="font-semibold text-sm mb-2">Create New Place</div>
+      <div class="flex gap-2 flex-wrap">
+        <input id="newPlaceName" type="text" placeholder="Place name…"
+               class="flex-1 min-w-[160px] border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+        <select id="newPlaceType" class="border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70">
+          <option value="home">Home</option>
+          <option value="farm">Farm</option>
+          <option value="city">City</option>
+          <option value="landmark">Landmark</option>
+          <option value="other" selected>Other</option>
+        </select>
+        <button onclick="createPlace()" class="pill text-sm px-3 py-1.5">Create</button>
+        <span id="newPlaceMsg" class="text-xs self-center hidden"></span>
+      </div>
+    </div>
+    {% if places.total_places > 0 %}
+    <div class="ud-glass-card p-6">
+      <h2 class="font-semibold text-lg mb-1">
+        Places
+        <span class="text-sm font-normal opacity-50">({{ places.total_places }} total)</span>
+      </h2>
+      <p class="text-xs opacity-50 mb-5">
+        Rename duplicate places, merge them together, or delete ones that shouldn't exist.
+      </p>
+      <div class="space-y-3" id="placeList">
+        {% for p in places.place_list %}
+        <div class="border border-black/10 rounded-2xl p-4 bg-white/40" id="place-{{ p.id }}">
+          <div class="flex items-start gap-3 flex-wrap">
+            <div class="flex-1 min-w-0">
+              <div class="font-medium" id="pname-{{ p.id }}">{{ p.name }}</div>
+              <div class="text-xs opacity-50 mt-0.5">
+                {{ p.place_type or 'unknown type' }}
+                {% if p.city %}· {{ p.city }}{% if p.state %}, {{ p.state }}{% endif %}{% endif %}
+                · {{ p.story_count }} stor{{ 'y' if p.story_count == 1 else 'ies' }}
+                · wiki: {{ p.wiki_status }}
+              </div>
+            </div>
+            <div class="flex gap-2 text-xs shrink-0">
+              <a href="/wiki/places/{{ p.id }}" target="_blank" class="pill px-2 py-1 opacity-60">Wiki</a>
+              <button onclick="togglePlaceEdit({{ p.id }})" class="pill px-2 py-1">Edit</button>
+              <button onclick="deletePlace({{ p.id }}, '{{ p.name | e }}')"
+                      class="pill px-2 py-1 text-red-700 border-red-300">Delete</button>
             </div>
           </div>
 
-          <!-- Linked stories -->
-          {% if g.stories %}
-          <div>
-            <label class="text-xs font-semibold opacity-60 mb-1 block">
-              Linked stories ({{ g.stories | length }}) — open to verify before merging
-            </label>
-            <ul class="space-y-1">
-              {% for s in g.stories %}
-              <li>
-                <a href="/response/{{ s.id }}" target="_blank"
-                   class="text-sm text-blue-600 hover:underline block truncate max-w-full">
-                  {{ s.title }}
-                </a>
-              </li>
-              {% endfor %}
-            </ul>
+          <div id="placeEditPanel-{{ p.id }}" class="hidden mt-4 space-y-3 border-t border-black/5 pt-4">
+            <!-- Rename -->
+            <div>
+              <label class="text-xs font-semibold opacity-60 mb-1 block">Rename</label>
+              <div class="flex gap-2">
+                <input id="placeEditName-{{ p.id }}" type="text" value="{{ p.name | e }}"
+                       class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+                <button onclick="renamePlace({{ p.id }})" class="pill text-sm px-3 py-1.5">Save</button>
+              </div>
+            </div>
+            <!-- Merge -->
+            <div>
+              <label class="text-xs font-semibold opacity-60 mb-1 block">Merge into another place</label>
+              <div class="flex gap-2">
+                <select id="placeMergeTarget-{{ p.id }}"
+                        class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70">
+                  <option value="">Choose place…</option>
+                  {% for op in places.all_place_list %}
+                  {% if op.id != p.id %}
+                  <option value="{{ op.id }}">{{ op.name }}</option>
+                  {% endif %}
+                  {% endfor %}
+                </select>
+                <button onclick="mergePlace({{ p.id }})" class="pill text-sm px-3 py-1.5">Merge</button>
+              </div>
+            </div>
+            <div id="placeMsg-{{ p.id }}" class="text-xs hidden"></div>
           </div>
-          {% endif %}
-
-          <div id="editMsg-{{ g.id }}" class="text-xs hidden"></div>
         </div>
+        {% endfor %}
       </div>
-      {% endfor %}
     </div>
+    {% else %}
+    <div class="ud-glass-card p-6 text-center text-sm opacity-60">No places extracted yet.</div>
+    {% endif %}
   </div>
-  {% else %}
-  <div class="ud-glass-card p-6 text-center text-sm opacity-60">
-    No ghost persons found — the database looks clean.
+
+  <!-- ================================================================ EVENTS TAB -->
+  <div id="tab-panel-events" class="hidden">
+    <!-- Create new event -->
+    <div class="ud-glass-card p-5 mb-4">
+      <div class="font-semibold text-sm mb-2">Create New Event</div>
+      <div class="flex gap-2 flex-wrap">
+        <input id="newEventName" type="text" placeholder="Event name…"
+               class="flex-1 min-w-[160px] border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+        <input id="newEventYear" type="number" placeholder="Year"
+               class="w-24 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+        <select id="newEventType" class="border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70">
+          <option value="holiday">Holiday</option>
+          <option value="birthday">Birthday</option>
+          <option value="vacation">Vacation</option>
+          <option value="reunion">Reunion</option>
+          <option value="wedding">Wedding</option>
+          <option value="other" selected>Other</option>
+        </select>
+        <button onclick="createEvent()" class="pill text-sm px-3 py-1.5">Create</button>
+        <span id="newEventMsg" class="text-xs self-center hidden"></span>
+      </div>
+    </div>
+    {% if events.total_events > 0 %}
+    <div class="ud-glass-card p-6">
+      <h2 class="font-semibold text-lg mb-1">
+        Events
+        <span class="text-sm font-normal opacity-50">({{ events.total_events }} total)</span>
+      </h2>
+      <p class="text-xs opacity-50 mb-5">
+        Rename events, fix years, merge duplicates, or delete ones that shouldn't exist.
+      </p>
+      <div class="space-y-3" id="eventList">
+        {% for e in events.event_list %}
+        <div class="border border-black/10 rounded-2xl p-4 bg-white/40" id="event-{{ e.id }}">
+          <div class="flex items-start gap-3 flex-wrap">
+            <div class="flex-1 min-w-0">
+              <div class="font-medium" id="ename-{{ e.id }}">{{ e.display_name }}</div>
+              <div class="text-xs opacity-50 mt-0.5">
+                {{ e.event_type or 'unknown type' }}
+                · {{ e.story_count }} stor{{ 'y' if e.story_count == 1 else 'ies' }}
+                · wiki: {{ e.wiki_status }}
+              </div>
+            </div>
+            <div class="flex gap-2 text-xs shrink-0">
+              <a href="/wiki/events/{{ e.id }}" target="_blank" class="pill px-2 py-1 opacity-60">Wiki</a>
+              <button onclick="toggleEventEdit({{ e.id }})" class="pill px-2 py-1">Edit</button>
+              <button onclick="deleteEvent({{ e.id }}, '{{ e.display_name | e }}')"
+                      class="pill px-2 py-1 text-red-700 border-red-300">Delete</button>
+            </div>
+          </div>
+
+          <div id="eventEditPanel-{{ e.id }}" class="hidden mt-4 space-y-3 border-t border-black/5 pt-4">
+            <!-- Rename / fix year -->
+            <div>
+              <label class="text-xs font-semibold opacity-60 mb-1 block">Edit name / year</label>
+              <div class="flex gap-2 flex-wrap">
+                <input id="eventEditName-{{ e.id }}" type="text" value="{{ e.name | e }}"
+                       placeholder="Name (e.g. Christmas)"
+                       class="flex-1 min-w-[140px] border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+                <input id="eventEditYear-{{ e.id }}" type="number" value="{{ e.year or '' }}"
+                       placeholder="Year"
+                       class="w-24 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-black/20">
+                <button onclick="renameEvent({{ e.id }})" class="pill text-sm px-3 py-1.5">Save</button>
+              </div>
+            </div>
+            <!-- Merge -->
+            <div>
+              <label class="text-xs font-semibold opacity-60 mb-1 block">Merge into another event</label>
+              <div class="flex gap-2">
+                <select id="eventMergeTarget-{{ e.id }}"
+                        class="flex-1 border border-black/20 rounded-xl px-3 py-1.5 text-sm bg-white/70">
+                  <option value="">Choose event…</option>
+                  {% for oe in events.all_event_list %}
+                  {% if oe.id != e.id %}
+                  <option value="{{ oe.id }}">{{ oe.display_name }}</option>
+                  {% endif %}
+                  {% endfor %}
+                </select>
+                <button onclick="mergeEvent({{ e.id }})" class="pill text-sm px-3 py-1.5">Merge</button>
+              </div>
+            </div>
+            <div id="eventMsg-{{ e.id }}" class="text-xs hidden"></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div class="ud-glass-card p-6 text-center text-sm opacity-60">No events extracted yet.</div>
+    {% endif %}
   </div>
-  {% endif %}
 
 </section>
 
 <script>
+// ---- Tab switching ----
+function showTab(name) {
+  ['persons','places','events'].forEach(t => {
+    document.getElementById(`tab-panel-${t}`).classList.toggle('hidden', t !== name);
+    const confirmed = document.getElementById('tab-panel-persons-confirmed');
+    if (confirmed) confirmed.classList.toggle('hidden', name !== 'persons');
+    const btn = document.getElementById(`tab-${t}`);
+    btn.classList.toggle('border-black', t === name);
+    btn.classList.toggle('border-transparent', t !== name);
+    btn.classList.toggle('opacity-60', t !== name);
+  });
+}
+
+// ---- Cleanup job ----
 let polling = null;
 
 async function startJob(scope) {
@@ -178,57 +472,34 @@ async function startJob(scope) {
   document.getElementById('jobError').classList.add('hidden');
   document.getElementById('btnGhosts').disabled = true;
   document.getElementById('btnAll').disabled = true;
-
   try {
     const r = await fetch('/api/admin/people/reprocess', {
-      method: 'POST',
-      credentials: 'include',
+      method: 'POST', credentials: 'include',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({scope}),
     });
-    if (!r.ok) {
-      const d = await r.json().catch(() => ({}));
-      showError(d.error || `HTTP ${r.status}`);
-      return;
-    }
-  } catch(e) {
-    showError('Network error — ' + e.message);
-    return;
-  }
-
+    if (!r.ok) { showError((await r.json().catch(()=>({}))).error || `HTTP ${r.status}`); return; }
+  } catch(e) { showError('Network error — ' + e.message); return; }
   polling = setInterval(pollStatus, 3000);
 }
 
 async function pollStatus() {
   try {
-    const r = await fetch('/api/admin/people/reprocess/status', {credentials: 'include'});
-    const d = await r.json();
+    const d = await (await fetch('/api/admin/people/reprocess/status', {credentials:'include'})).json();
     if (!d.running) {
-      clearInterval(polling);
-      polling = null;
+      clearInterval(polling); polling = null;
       document.getElementById('btnGhosts').disabled = false;
       document.getElementById('btnAll').disabled = false;
       document.getElementById('jobRunning').classList.add('hidden');
-      if (d.last_result) {
-        showResult(d.last_result);
-        // Refresh audit stats
-        refreshStats();
-      }
+      if (d.last_result) { showResult(d.last_result); refreshStats(); }
     }
   } catch(e) {}
 }
 
 function showResult(res) {
   const tbl = document.getElementById('resultTable');
-  const labels = {
-    responses_processed: 'Stories processed',
-    people_linked: 'People re-linked',
-    ghost_persons_deleted: 'Ghosts deleted',
-    errors: 'Errors',
-  };
-  tbl.innerHTML = Object.entries(labels).map(([k, label]) =>
-    `<div><dt class="opacity-50">${label}</dt><dd class="font-semibold">${res[k] ?? '—'}</dd></div>`
-  ).join('');
+  const labels = {responses_processed:'Stories processed', people_linked:'People re-linked', ghost_persons_deleted:'Ghosts deleted', errors:'Errors'};
+  tbl.innerHTML = Object.entries(labels).map(([k,l]) => `<div><dt class="opacity-50">${l}</dt><dd class="font-semibold">${res[k]??'—'}</dd></div>`).join('');
   document.getElementById('jobResult').classList.remove('hidden');
 }
 
@@ -243,28 +514,23 @@ function showError(msg) {
 
 async function refreshStats() {
   try {
-    const r = await fetch('/api/admin/people/audit', {credentials: 'include'});
-    const d = await r.json();
-    document.getElementById('statGhosts').textContent  = d.ghost_persons;
+    const d = await (await fetch('/api/admin/people/audit', {credentials:'include'})).json();
+    document.getElementById('statGhosts').textContent = d.ghost_persons;
     document.getElementById('statBadLinks').textContent = d.ghost_response_person_rows;
-    document.getElementById('statAffected').textContent = d.affected_responses;
-    document.getElementById('statTotal').textContent   = d.total_responses;
+    document.getElementById('statTotal').textContent = d.total_responses;
   } catch(e) {}
 }
 
-// If a job was already running when the page loaded, start polling
 {% if job.running %}
 document.getElementById('jobStatus').classList.remove('hidden');
 document.getElementById('jobRunning').classList.remove('hidden');
 polling = setInterval(pollStatus, 3000);
 {% endif %}
 
-// ---- Per-ghost edit helpers ----
-
-function toggleEdit(id) {
-  const panel = document.getElementById(`editPanel-${id}`);
-  panel.classList.toggle('hidden');
-}
+// ---- Shared helpers ----
+function toggleEdit(id)       { document.getElementById(`editPanel-${id}`).classList.toggle('hidden'); }
+function togglePlaceEdit(id)  { document.getElementById(`placeEditPanel-${id}`).classList.toggle('hidden'); }
+function toggleEventEdit(id)  { document.getElementById(`eventEditPanel-${id}`).classList.toggle('hidden'); }
 
 function ghostMsg(id, text, isError) {
   const el = document.getElementById(`editMsg-${id}`);
@@ -272,66 +538,353 @@ function ghostMsg(id, text, isError) {
   el.className = `text-xs mt-1 ${isError ? 'text-red-600' : 'text-green-700'}`;
   el.classList.remove('hidden');
 }
+function placeMsg(id, text, isError) {
+  const el = document.getElementById(`placeMsg-${id}`);
+  el.textContent = text;
+  el.className = `text-xs mt-1 ${isError ? 'text-red-600' : 'text-green-700'}`;
+  el.classList.remove('hidden');
+}
+function eventMsg(id, text, isError) {
+  const el = document.getElementById(`eventMsg-${id}`);
+  el.textContent = text;
+  el.className = `text-xs mt-1 ${isError ? 'text-red-600' : 'text-green-700'}`;
+  el.classList.remove('hidden');
+}
 
+// ---- Person actions ----
 async function renamePerson(id) {
   const newName = document.getElementById(`editName-${id}`).value.trim();
   if (!newName) { ghostMsg(id, 'Enter a name.', true); return; }
-  try {
-    const r = await fetch(`/api/admin/people/${id}`, {
-      method: 'PATCH', credentials: 'include',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({display_name: newName}),
-    });
-    if (r.ok) {
-      document.getElementById(`gname-${id}`).textContent = newName;
-      ghostMsg(id, 'Renamed — no longer marked as ghost.', false);
-    } else {
-      const d = await r.json().catch(() => ({}));
-      ghostMsg(id, d.detail || `Error ${r.status}`, true);
-    }
-  } catch(e) { ghostMsg(id, 'Network error.', true); }
+  const r = await fetch(`/api/admin/people/${id}`, {
+    method:'PATCH', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({display_name: newName}),
+  });
+  if (r.ok) {
+    document.getElementById(`gname-${id}`).textContent = newName;
+    ghostMsg(id, 'Renamed — no longer marked as ghost.', false);
+  } else {
+    ghostMsg(id, (await r.json().catch(()=>({}))).detail || `Error ${r.status}`, true);
+  }
 }
 
 async function mergePerson(id) {
   const targetId = document.getElementById(`mergeTarget-${id}`).value;
   if (!targetId) { ghostMsg(id, 'Choose a target person.', true); return; }
-  const targetName = document.getElementById(`mergeTarget-${id}`)
-    .selectedOptions[0]?.text || targetId;
-  if (!confirm(`Merge this ghost into "${targetName}"?\nAll story links will be moved and the ghost deleted.`)) return;
-  try {
-    const r = await fetch(`/api/admin/people/${id}/merge`, {
-      method: 'POST', credentials: 'include',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({target_id: parseInt(targetId)}),
-    });
-    if (r.ok) {
-      document.getElementById(`ghost-${id}`)?.remove();
-      updateGhostCount(-1);
-    } else {
-      const d = await r.json().catch(() => ({}));
-      ghostMsg(id, d.detail || `Error ${r.status}`, true);
-    }
-  } catch(e) { ghostMsg(id, 'Network error.', true); }
+  const targetName = document.getElementById(`mergeTarget-${id}`).selectedOptions[0]?.text || targetId;
+  if (!confirm(`Merge into "${targetName}"?\nAll story links will be moved and the ghost deleted.`)) return;
+  const r = await fetch(`/api/admin/people/${id}/merge`, {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({target_id: parseInt(targetId)}),
+  });
+  if (r.ok) { document.getElementById(`ghost-${id}`)?.remove(); updateCount('statGhosts', -1); }
+  else ghostMsg(id, (await r.json().catch(()=>({}))).detail || `Error ${r.status}`, true);
 }
 
 async function deletePerson(id, label) {
-  if (!confirm(`Delete "${label}" permanently?\nThis cannot be undone.`)) return;
-  try {
-    const r = await fetch(`/api/admin/people/${id}`, {
-      method: 'DELETE', credentials: 'include',
-    });
-    if (r.ok) {
-      document.getElementById(`ghost-${id}`)?.remove();
-      updateGhostCount(-1);
-    } else {
-      alert('Error deleting person.');
-    }
-  } catch(e) { alert('Network error.'); }
+  if (!confirm(`Delete "${label}" permanently?`)) return;
+  const r = await fetch(`/api/admin/people/${id}`, {method:'DELETE', credentials:'include'});
+  if (r.ok) { document.getElementById(`ghost-${id}`)?.remove(); updateCount('statGhosts', -1); }
+  else alert('Error deleting person.');
 }
 
-function updateGhostCount(delta) {
-  const el = document.getElementById('statGhosts');
+function toggleReclassYear(id) {
+  const val = document.getElementById(`reclassType-${id}`).value;
+  const yr = document.getElementById(`reclassYear-${id}`);
+  yr.classList.toggle('hidden', !val.startsWith('event:'));
+}
+
+async function reclassifyPerson(id) {
+  const name = document.getElementById(`reclassName-${id}`).value.trim();
+  const typeVal = document.getElementById(`reclassType-${id}`).value; // e.g. "place:home" or "event:holiday"
+  const [entityType, subType] = typeVal.split(':');
+  const year = document.getElementById(`reclassYear-${id}`).value.trim() || null;
+
+  if (!name) { ghostMsg(id, 'Enter a name.', true); return; }
+  const label = entityType === 'event' ? `event "${name}${year ? ' '+year : ''}"` : `place "${name}"`;
+  if (!confirm(`Convert this person into ${label}?\nStory links will be migrated and the person node deleted.`)) return;
+
+  const body = {entity_type: entityType, name};
+  if (entityType === 'place') body.place_type = subType;
+  if (entityType === 'event') { body.event_type = subType; if (year) body.year = parseInt(year); }
+
+  const r = await fetch(`/api/admin/people/${id}/reclassify`, {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (r.ok) {
+    document.getElementById(`ghost-${id}`)?.remove();
+    updateCount('statGhosts', -1);
+  } else {
+    ghostMsg(id, (await r.json().catch(()=>({}))).detail || `Error ${r.status}`, true);
+  }
+}
+
+// ---- Place actions ----
+async function renamePlace(id) {
+  const name = document.getElementById(`placeEditName-${id}`).value.trim();
+  if (!name) { placeMsg(id, 'Enter a name.', true); return; }
+  const r = await fetch(`/api/admin/places/${id}`, {
+    method:'PATCH', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name}),
+  });
+  if (r.ok) {
+    document.getElementById(`pname-${id}`).textContent = name;
+    placeMsg(id, 'Renamed.', false);
+  } else {
+    placeMsg(id, (await r.json().catch(()=>({}))).detail || `Error ${r.status}`, true);
+  }
+}
+
+async function mergePlace(id) {
+  const targetId = document.getElementById(`placeMergeTarget-${id}`).value;
+  if (!targetId) { placeMsg(id, 'Choose a target place.', true); return; }
+  const targetName = document.getElementById(`placeMergeTarget-${id}`).selectedOptions[0]?.text || targetId;
+  if (!confirm(`Merge into "${targetName}"?\nAll story and event links will be moved and this place deleted.`)) return;
+  const r = await fetch(`/api/admin/places/${id}/merge`, {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({target_id: parseInt(targetId)}),
+  });
+  if (r.ok) { document.getElementById(`place-${id}`)?.remove(); }
+  else placeMsg(id, (await r.json().catch(()=>({}))).detail || `Error ${r.status}`, true);
+}
+
+async function deletePlace(id, label) {
+  if (!confirm(`Delete "${label}" permanently?`)) return;
+  const r = await fetch(`/api/admin/places/${id}`, {method:'DELETE', credentials:'include'});
+  if (r.ok) document.getElementById(`place-${id}`)?.remove();
+  else alert('Error deleting place.');
+}
+
+// ---- Event actions ----
+async function renameEvent(id) {
+  const name = document.getElementById(`eventEditName-${id}`).value.trim();
+  const year = document.getElementById(`eventEditYear-${id}`).value.trim() || null;
+  if (!name) { eventMsg(id, 'Enter a name.', true); return; }
+  const r = await fetch(`/api/admin/events/${id}`, {
+    method:'PATCH', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, year: year ? parseInt(year) : null}),
+  });
+  if (r.ok) {
+    const d = await r.json();
+    document.getElementById(`ename-${id}`).textContent = d.year ? `${d.name} ${d.year}` : d.name;
+    eventMsg(id, 'Saved.', false);
+  } else {
+    eventMsg(id, (await r.json().catch(()=>({}))).detail || `Error ${r.status}`, true);
+  }
+}
+
+async function mergeEvent(id) {
+  const targetId = document.getElementById(`eventMergeTarget-${id}`).value;
+  if (!targetId) { eventMsg(id, 'Choose a target event.', true); return; }
+  const targetName = document.getElementById(`eventMergeTarget-${id}`).selectedOptions[0]?.text || targetId;
+  if (!confirm(`Merge into "${targetName}"?\nAll story, person, and place links will be moved and this event deleted.`)) return;
+  const r = await fetch(`/api/admin/events/${id}/merge`, {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({target_id: parseInt(targetId)}),
+  });
+  if (r.ok) { document.getElementById(`event-${id}`)?.remove(); }
+  else eventMsg(id, (await r.json().catch(()=>({}))).detail || `Error ${r.status}`, true);
+}
+
+async function deleteEvent(id, label) {
+  if (!confirm(`Delete "${label}" permanently?`)) return;
+  const r = await fetch(`/api/admin/events/${id}`, {method:'DELETE', credentials:'include'});
+  if (r.ok) document.getElementById(`event-${id}`)?.remove();
+  else alert('Error deleting event.');
+}
+
+function updateCount(statId, delta) {
+  const el = document.getElementById(statId);
   if (el) el.textContent = Math.max(0, parseInt(el.textContent || '0') + delta);
 }
+
+// ---- Rename confirmed (non-ghost) person ----
+async function renameConfirmedPerson(id) {
+  const newName = document.getElementById(`cpeditName-${id}`).value.trim();
+  if (!newName) return;
+  const msg = document.getElementById(`cpmsg-${id}`);
+  const r = await fetch(`/api/admin/people/${id}`, {
+    method:'PATCH', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({display_name: newName}),
+  });
+  msg.classList.remove('hidden');
+  if (r.ok) {
+    document.getElementById(`cpname-${id}`).textContent = newName;
+    msg.textContent = 'Saved.';
+    msg.className = 'text-xs w-full text-green-700';
+    // Update any merge dropdown options that reference this person
+    document.querySelectorAll(`option[value="${id}"]`).forEach(o => { o.textContent = newName; });
+  } else {
+    msg.textContent = (await r.json().catch(()=>({}))).detail || `Error ${r.status}`;
+    msg.className = 'text-xs w-full text-red-600';
+  }
+}
+
+// ---- Create new place ----
+async function createPlace() {
+  const name = document.getElementById('newPlaceName').value.trim();
+  const type = document.getElementById('newPlaceType').value;
+  const msg  = document.getElementById('newPlaceMsg');
+  if (!name) { showCreateMsg(msg, 'Enter a name.', true); return; }
+  const r = await fetch('/api/admin/places', {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, place_type: type}),
+  });
+  const d = await r.json().catch(()=>({}));
+  if (r.ok) {
+    showCreateMsg(msg, `Created "${d.name}".`, false);
+    document.getElementById('newPlaceName').value = '';
+    // Add to all place merge dropdowns
+    document.querySelectorAll('[id^="placeMergeTarget-"]').forEach(sel => {
+      const opt = document.createElement('option');
+      opt.value = d.id; opt.textContent = d.name;
+      sel.appendChild(opt);
+    });
+  } else {
+    showCreateMsg(msg, d.detail || `Error ${r.status}`, true);
+  }
+}
+
+// ---- Create new event ----
+async function createEvent() {
+  const name = document.getElementById('newEventName').value.trim();
+  const year = document.getElementById('newEventYear').value.trim() || null;
+  const type = document.getElementById('newEventType').value;
+  const msg  = document.getElementById('newEventMsg');
+  if (!name) { showCreateMsg(msg, 'Enter a name.', true); return; }
+  const r = await fetch('/api/admin/events', {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, year: year ? parseInt(year) : null, event_type: type}),
+  });
+  const d = await r.json().catch(()=>({}));
+  if (r.ok) {
+    showCreateMsg(msg, `Created "${d.display_name}".`, false);
+    document.getElementById('newEventName').value = '';
+    document.getElementById('newEventYear').value = '';
+    document.querySelectorAll('[id^="eventMergeTarget-"]').forEach(sel => {
+      const opt = document.createElement('option');
+      opt.value = d.id; opt.textContent = d.display_name;
+      sel.appendChild(opt);
+    });
+  } else {
+    showCreateMsg(msg, d.detail || `Error ${r.status}`, true);
+  }
+}
+
+// ---- Create new person ----
+async function createPerson() {
+  const name = document.getElementById('newPersonName').value.trim();
+  const msg  = document.getElementById('newPersonMsg');
+  if (!name) { showCreateMsg(msg, 'Enter a name.', true); return; }
+  const r = await fetch('/api/admin/people', {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({display_name: name}),
+  });
+  const d = await r.json().catch(()=>({}));
+  if (r.ok) {
+    showCreateMsg(msg, `Created "${d.display_name}".`, false);
+    document.getElementById('newPersonName').value = '';
+    // Add to all person merge dropdowns (ghost merge + confirmed merge)
+    document.querySelectorAll('[id^="mergeTarget-"]').forEach(sel => {
+      const opt = document.createElement('option');
+      opt.value = d.id; opt.textContent = d.display_name;
+      sel.appendChild(opt);
+    });
+    // Add a row to the confirmed list so it's immediately renameable
+    const list = document.getElementById('confirmedPersonList');
+    if (list) {
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-2 flex-wrap border border-black/5 rounded-xl px-3 py-2 bg-white/30';
+      row.id = `cperson-${d.id}`;
+      row.innerHTML = `
+        <span class="flex-1 text-sm font-medium" id="cpname-${d.id}">${d.display_name}</span>
+        <div class="flex gap-2 shrink-0">
+          <input id="cpeditName-${d.id}" type="text" value="${d.display_name}"
+                 class="w-44 border border-black/20 rounded-lg px-2 py-1 text-sm bg-white/70 focus:outline-none focus:ring-1 focus:ring-black/20">
+          <button onclick="renameConfirmedPerson(${d.id})" class="pill text-xs px-2 py-1">Save</button>
+        </div>
+        <span id="cpmsg-${d.id}" class="text-xs w-full hidden"></span>`;
+      list.prepend(row);
+    }
+  } else {
+    showCreateMsg(msg, d.detail || `Error ${r.status}`, true);
+  }
+}
+
+function showCreateMsg(el, text, isError) {
+  el.textContent = text;
+  el.className = `text-xs self-center ${isError ? 'text-red-600' : 'text-green-700'}`;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 4000);
+}
+
+// ---- Full re-extraction job ----
+let reextractPolling = null;
+
+async function startReextract() {
+  if (!confirm('Re-extract all entities for all stories?\nThis clears existing person/place/event links and re-runs the pipeline. It may take several minutes.')) return;
+  document.getElementById('reextractStatus').classList.remove('hidden');
+  document.getElementById('reextractRunning').classList.remove('hidden');
+  document.getElementById('reextractResult').classList.add('hidden');
+  document.getElementById('reextractError').classList.add('hidden');
+  document.getElementById('btnReextract').disabled = true;
+  try {
+    const r = await fetch('/api/admin/reextract/all', {method:'POST', credentials:'include'});
+    if (!r.ok) {
+      const err = (await r.json().catch(()=>({}))).error || `HTTP ${r.status}`;
+      showReextractError(err); return;
+    }
+  } catch(e) { showReextractError('Network error — ' + e.message); return; }
+  reextractPolling = setInterval(pollReextract, 5000);
+}
+
+async function pollReextract() {
+  try {
+    const d = await (await fetch('/api/admin/reextract/status', {credentials:'include'})).json();
+    if (!d.running) {
+      clearInterval(reextractPolling); reextractPolling = null;
+      document.getElementById('btnReextract').disabled = false;
+      document.getElementById('reextractRunning').classList.add('hidden');
+      if (d.last_result) { showReextractResult(d.last_result); refreshStats(); }
+    }
+  } catch(e) {}
+}
+
+function showReextractResult(res) {
+  const tbl = document.getElementById('reextractResultTable');
+  const labels = {
+    responses_processed: 'Stories', people_linked: 'People',
+    places_linked: 'Places', events_linked: 'Events', errors: 'Errors',
+  };
+  tbl.innerHTML = Object.entries(labels).map(([k,l]) =>
+    `<div><dt class="opacity-50 text-xs">${l}</dt><dd class="font-semibold">${res[k]??'—'}</dd></div>`
+  ).join('');
+  document.getElementById('reextractResult').classList.remove('hidden');
+}
+
+function showReextractError(msg) {
+  clearInterval(reextractPolling);
+  document.getElementById('reextractRunning').classList.add('hidden');
+  document.getElementById('reextractError').textContent = 'Error: ' + msg;
+  document.getElementById('reextractError').classList.remove('hidden');
+  document.getElementById('btnReextract').disabled = false;
+}
+
+{% if job.running %}
+document.getElementById('reextractStatus').classList.remove('hidden');
+document.getElementById('reextractRunning').classList.remove('hidden');
+reextractPolling = setInterval(pollReextract, 5000);
+{% endif %}
 </script>
 {% endblock %}

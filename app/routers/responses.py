@@ -441,6 +441,11 @@ async def response_view(
     user=Depends(require_authenticated_html_user),
     db: AsyncSession = Depends(get_db),
 ):
+    ownership = (
+        Response.id == response_id
+        if getattr(user, "is_superuser", False)
+        else (Response.id == response_id) & (Response.user_id == user.id)
+    )
     q = (
         select(Response)
         .options(
@@ -449,7 +454,7 @@ async def response_view(
             selectinload(Response.supporting_media),
             selectinload(Response.segments),
         )
-        .where(Response.id == response_id, Response.user_id == user.id)
+        .where(ownership)
     )
     resp = (await db.execute(q)).scalars().first()
     if not resp:

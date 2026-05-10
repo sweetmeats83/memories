@@ -10,32 +10,49 @@ Pages:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from sqlalchemy import or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.background import spawn
 from app.database import get_db
 from app.models import (
+    Event,
+    EventAlias,
+    EventPerson,
+    EventPlace,
     KinMembership,
     Person,
     PersonAlias,
+    Place,
+    PlaceAlias,
     RelationshipEdge,
     Response,
+    ResponseEvent,
     ResponsePerson,
+    ResponsePlace,
+    UserProfile,
     WikiArticle,
+    WikiRevision,
 )
 from app.routes_shared import templates
 from app.services.people_acl import person_visibility_filter, visible_group_ids
-from app.services.wiki_generator import generate_person_wiki, _invert_rel
+from app.services.wiki_generator import build_link_map, dedupe_edges, generate_event_wiki, generate_person_wiki, generate_place_wiki, resolve_wikilinks, _invert_rel
 from app.utils import require_authenticated_user, require_authenticated_html_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _active_content(article) -> str:
+    """Return the raw markdown to display for a wiki article (user-edited preferred)."""
+    if article is None:
+        return ""
+    return article.user_edited_md or article.content_md or ""
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +72,12 @@ async def _get_visible_person(
     if not p:
         raise HTTPException(404, "Person not found")
     return p
+
+
+async def _group_id_for_user(db: AsyncSession, user_id: int) -> int | None:
+    """Return the user's primary KinGroup id, or None."""
+    gids = await visible_group_ids(db, user_id)
+    return gids[0] if gids else None
 
 
 async def _load_wiki_context(db: AsyncSession, person: Person, user_id: int) -> dict:
@@ -83,7 +106,7 @@ async def _load_wiki_context(db: AsyncSession, person: Person, user_id: int) -> 
 
     src_rows = (
         await db.execute(
-            select(RelationshipEdge.rel_type, RelationshipEdge.id, DstPerson.id, DstPerson.display_name)
+            select(RelationshipEdge.rel_type, DstPerson.id, DstPerson.display_name)
             .join(DstPerson, DstPerson.id == RelationshipEdge.dst_id)
             .where(RelationshipEdge.src_id == person_id)
             .where(edge_scope)
@@ -92,41 +115,78 @@ async def _load_wiki_context(db: AsyncSession, person: Person, user_id: int) -> 
 
     dst_rows = (
         await db.execute(
-            select(RelationshipEdge.rel_type, RelationshipEdge.id, SrcPerson.id, SrcPerson.display_name)
+            select(RelationshipEdge.rel_type, SrcPerson.id, SrcPerson.display_name)
             .join(SrcPerson, SrcPerson.id == RelationshipEdge.src_id)
             .where(RelationshipEdge.dst_id == person_id)
             .where(edge_scope)
         )
     ).all()
 
-    edges: list[dict] = []
-    for rel_type, edge_id, other_id, other_name in src_rows:
-        edges.append({"label": rel_type.replace("-", " "), "person_id": other_id, "name": other_name})
-    for rel_type, edge_id, other_id, other_name in dst_rows:
-        edges.append({"label": _invert_rel(rel_type).replace("-", " "), "person_id": other_id, "name": other_name})
+    edges = dedupe_edges(
+        [(r[0], r[1], r[2]) for r in src_rows],
+        [(r[0], r[1], r[2]) for r in dst_rows],
+        getattr(person, "gender", None),
+    )
 
-    # Story mentions (for the sidebar)
-    mention_rows = (
-        await db.execute(
-            select(Response.id, Response.title, Response.created_at)
-            .join(ResponsePerson, ResponsePerson.response_id == Response.id)
-            .where(ResponsePerson.person_id == person_id)
-            .where(Response.user_id == user_id)
-            .order_by(Response.created_at.desc())
-            .limit(20)
-        )
-    ).all()
+    # Find all family members whose stories are visible to this user
+    family_user_ids: list[int] = [user_id]
+    if group_ids:
+        member_ids = (
+            await db.execute(
+                select(KinMembership.user_id).where(KinMembership.group_id.in_(group_ids))
+            )
+        ).scalars().all()
+        family_user_ids = list({user_id} | set(member_ids))
+
+    # Find if this person is a registered user themselves (via self_person_id)
+    subject_user_id: int | None = None
+    all_profiles = (await db.execute(select(UserProfile))).scalars().all()
+    subject_user_id = next(
+        (p.user_id for p in all_profiles
+         if (p.privacy_prefs or {}).get("self_person_id") == person_id),
+        None,
+    )
+
+    # Stories authored by the subject themselves (first-person accounts)
+    own_rows: list = []
+    if subject_user_id:
+        own_rows = (
+            await db.execute(
+                select(Response.id, Response.title, Response.created_at)
+                .where(Response.user_id == subject_user_id)
+                .order_by(Response.created_at.desc())
+            )
+        ).all()
+
+    # Stories by family members that mention this person
+    own_ids = {r[0] for r in own_rows}
+    mention_stmt = (
+        select(Response.id, Response.title, Response.created_at)
+        .join(ResponsePerson, ResponsePerson.response_id == Response.id)
+        .where(ResponsePerson.person_id == person_id)
+        .where(Response.user_id.in_(family_user_ids))
+        .order_by(Response.created_at.desc())
+    )
+    if own_ids:
+        mention_stmt = mention_stmt.where(Response.id.notin_(list(own_ids)))
+    mention_rows = (await db.execute(mention_stmt)).all()
+
+    # Merge: subject's own stories first, then mentions by others
+    combined = list(own_rows) + list(mention_rows)
+    combined.sort(key=lambda r: r[2] or datetime.min, reverse=True)
+
     mentions = [
         {"response_id": rid, "title": title or "Untitled", "created_at": created_at}
-        for rid, title, created_at in mention_rows
+        for rid, title, created_at in combined[:30]
     ]
 
-    # Existing wiki article
+    # Existing wiki article (group-scoped)
+    group_id = await _group_id_for_user(db, user_id)
     article = await db.scalar(
         select(WikiArticle).where(
             WikiArticle.entity_type == "person",
             WikiArticle.entity_id == person_id,
-            WikiArticle.user_id == user_id,
+            WikiArticle.group_id == group_id,
         )
     )
 
@@ -150,6 +210,7 @@ async def _load_wiki_context(db: AsyncSession, person: Person, user_id: int) -> 
         "edges": edges,
         "mentions": mentions,
         "article": article,
+        "group_id": group_id,
     }
 
 
@@ -163,13 +224,19 @@ async def wiki_index(
     user=Depends(require_authenticated_html_user),
     db: AsyncSession = Depends(get_db),
 ):
-    people = await api_wiki_people_index.__wrapped__(user=user, db=db) \
-        if hasattr(api_wiki_people_index, "__wrapped__") \
-        else await _wiki_people_list(db, user.id)
+    people = await _wiki_people_list(db, user.id)
+    places = await _wiki_places_list(db, user.id)
+    events = await _wiki_events_list(db, user.id)
     return templates.TemplateResponse(
         request,
         "wiki_index.html",
-        {"user": user, "title": "Family Wiki", "people": people},
+        {
+            "user": user,
+            "title": "Family Wiki",
+            "people": people,
+            "places": places,
+            "events": events,
+        },
     )
 
 
@@ -180,14 +247,16 @@ async def _wiki_people_list(db: AsyncSession, user_id: int) -> list:
             select(Person).where(person_visibility_filter(user_id, group_ids))
         )
     ).scalars().all()
+    gids = await visible_group_ids(db, user_id)
+    group_id = gids[0] if gids else None
     articles = (
         await db.execute(
             select(WikiArticle).where(
                 WikiArticle.entity_type == "person",
-                WikiArticle.user_id == user_id,
+                WikiArticle.group_id == group_id,
             )
         )
-    ).scalars().all()
+    ).scalars().all() if group_id else []
     article_map = {a.entity_id: a for a in articles}
     out = []
     for p in sorted(persons, key=lambda x: (x.display_name or "").lower()):
@@ -215,12 +284,16 @@ async def wiki_person_page(
 ):
     person = await _get_visible_person(db, person_id, user.id)
     ctx = await _load_wiki_context(db, person, user.id)
+    group_id = ctx.get("group_id")
+    link_map = await build_link_map(db, group_id) if group_id else {}
+    resolved_content = resolve_wikilinks(_active_content(ctx.get("article")), link_map)
     return templates.TemplateResponse(
         request,
         "wiki_person.html",
         {
             "user": user,
             "title": f"{ctx['display_name']} – Wiki",
+            "resolved_content": resolved_content,
             **ctx,
         },
     )
@@ -235,21 +308,23 @@ async def api_wiki_generate_person(
     # Visibility check
     await _get_visible_person(db, person_id, user.id)
 
-    # Check if already generating
+    group_id = await _group_id_for_user(db, user.id)
+    if not group_id:
+        raise HTTPException(400, "You must be in a family group to generate wiki articles")
+
     existing = await db.scalar(
         select(WikiArticle).where(
             WikiArticle.entity_type == "person",
             WikiArticle.entity_id == person_id,
-            WikiArticle.user_id == user.id,
+            WikiArticle.group_id == group_id,
         )
     )
     if existing and existing.status == "generating":
         return JSONResponse({"status": "generating", "message": "Already in progress"}, status_code=200)
 
-    # Spawn background generation
     spawn(
-        generate_person_wiki(person_id, user.id),
-        name=f"wiki-person-{person_id}-user-{user.id}",
+        generate_person_wiki(person_id, group_id),
+        name=f"wiki-person-{person_id}-group-{group_id}",
     )
     return JSONResponse({"status": "generating", "message": "Generation started"}, status_code=202)
 
@@ -260,13 +335,14 @@ async def api_wiki_status_person(
     user=Depends(require_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
+    group_id = await _group_id_for_user(db, user.id)
     article = await db.scalar(
         select(WikiArticle).where(
             WikiArticle.entity_type == "person",
             WikiArticle.entity_id == person_id,
-            WikiArticle.user_id == user.id,
+            WikiArticle.group_id == group_id,
         )
-    )
+    ) if group_id else None
     if not article:
         return {"status": "none", "generated_at": None, "source_count": None}
     return {
@@ -285,3 +361,596 @@ async def api_wiki_people_index(
 ):
     """Return all visible persons with their wiki article status."""
     return await _wiki_people_list(db, user.id)
+
+
+# ---------------------------------------------------------------------------
+# Places
+# ---------------------------------------------------------------------------
+
+async def _wiki_places_list(db: AsyncSession, user_id: int) -> list:
+    group_id = await _group_id_for_user(db, user_id)
+    if not group_id:
+        return []
+    places = (await db.execute(
+        select(Place).where(Place.group_id == group_id)
+    )).scalars().all()
+    articles = {a.entity_id: a for a in (await db.execute(
+        select(WikiArticle).where(WikiArticle.entity_type == "place", WikiArticle.group_id == group_id)
+    )).scalars().all()}
+    return [
+        {
+            "place_id": p.id,
+            "display_name": p.name,
+            "place_type": p.place_type,
+            "city": p.city,
+            "state": p.state,
+            "wiki_status": articles[p.id].status if p.id in articles else "none",
+            "wiki_generated_at": articles[p.id].generated_at.isoformat() if p.id in articles and articles[p.id].generated_at else None,
+        }
+        for p in sorted(places, key=lambda x: (x.name or "").lower())
+    ]
+
+
+async def _wiki_events_list(db: AsyncSession, user_id: int) -> list:
+    group_id = await _group_id_for_user(db, user_id)
+    if not group_id:
+        return []
+    events = (await db.execute(
+        select(Event).where(Event.group_id == group_id)
+    )).scalars().all()
+    articles = {a.entity_id: a for a in (await db.execute(
+        select(WikiArticle).where(WikiArticle.entity_type == "event", WikiArticle.group_id == group_id)
+    )).scalars().all()}
+    return [
+        {
+            "event_id": e.id,
+            "display_name": f"{e.name} {e.year}" if e.year else e.name,
+            "name": e.name,
+            "year": e.year,
+            "event_type": e.event_type,
+            "wiki_status": articles[e.id].status if e.id in articles else "none",
+            "wiki_generated_at": articles[e.id].generated_at.isoformat() if e.id in articles and articles[e.id].generated_at else None,
+        }
+        for e in sorted(events, key=lambda x: (x.year or 9999, x.name or ""))
+    ]
+
+
+@router.get("/wiki/places/{place_id}", response_class=HTMLResponse)
+async def wiki_place_page(
+    request: Request,
+    place_id: int,
+    user=Depends(require_authenticated_html_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group_id = await _group_id_for_user(db, user.id)
+    place = await db.get(Place, place_id)
+    if not place or place.group_id != group_id:
+        raise HTTPException(404, "Place not found")
+
+    aliases = (await db.execute(
+        select(PlaceAlias.alias).where(PlaceAlias.place_id == place_id)
+    )).scalars().all()
+
+    # Stories mentioning this place
+    story_rows = (await db.execute(
+        select(Response.id, Response.title, Response.created_at)
+        .join(ResponsePlace, ResponsePlace.response_id == Response.id)
+        .where(ResponsePlace.place_id == place_id)
+        .order_by(Response.created_at.desc())
+        .limit(30)
+    )).all()
+    mentions = [{"response_id": rid, "title": title or "Untitled", "created_at": ca} for rid, title, ca in story_rows]
+
+    # Events at this place
+    EvJoin = aliased(Event)
+    event_rows = (await db.execute(
+        select(EvJoin.id, EvJoin.name, EvJoin.year)
+        .join(EventPlace, EventPlace.event_id == EvJoin.id)
+        .where(EventPlace.place_id == place_id)
+        .order_by(EvJoin.year.desc())
+    )).all()
+    events = [{"event_id": eid, "name": name, "year": yr} for eid, name, yr in event_rows]
+
+    article = await db.scalar(
+        select(WikiArticle).where(
+            WikiArticle.entity_type == "place",
+            WikiArticle.entity_id == place_id,
+            WikiArticle.group_id == group_id,
+        )
+    ) if group_id else None
+
+    link_map = await build_link_map(db, group_id) if group_id else {}
+    resolved_content = resolve_wikilinks(_active_content(article), link_map)
+    return templates.TemplateResponse(request, "wiki_place.html", {
+        "user": user,
+        "title": f"{place.name} – Wiki",
+        "place": place,
+        "place_id": place_id,
+        "display_name": place.name,
+        "aliases": list(aliases),
+        "mentions": mentions,
+        "events": events,
+        "article": article,
+        "resolved_content": resolved_content,
+    })
+
+
+@router.post("/api/wiki/generate/place/{place_id}")
+async def api_wiki_generate_place(
+    place_id: int,
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group_id = await _group_id_for_user(db, user.id)
+    if not group_id:
+        raise HTTPException(400, "You must be in a family group to generate wiki articles")
+    place = await db.get(Place, place_id)
+    if not place or place.group_id != group_id:
+        raise HTTPException(404, "Place not found")
+
+    existing = await db.scalar(
+        select(WikiArticle).where(
+            WikiArticle.entity_type == "place",
+            WikiArticle.entity_id == place_id,
+            WikiArticle.group_id == group_id,
+        )
+    )
+    if existing and existing.status == "generating":
+        return JSONResponse({"status": "generating", "message": "Already in progress"}, status_code=200)
+
+    spawn(generate_place_wiki(place_id, group_id), name=f"wiki-place-{place_id}-group-{group_id}")
+    return JSONResponse({"status": "generating", "message": "Generation started"}, status_code=202)
+
+
+@router.get("/api/wiki/status/place/{place_id}")
+async def api_wiki_status_place(
+    place_id: int,
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group_id = await _group_id_for_user(db, user.id)
+    article = await db.scalar(
+        select(WikiArticle).where(
+            WikiArticle.entity_type == "place",
+            WikiArticle.entity_id == place_id,
+            WikiArticle.group_id == group_id,
+        )
+    ) if group_id else None
+    if not article:
+        return {"status": "none", "generated_at": None}
+    return {"status": article.status, "generated_at": article.generated_at.isoformat() if article.generated_at else None, "source_count": article.source_count, "error_msg": article.error_msg}
+
+
+@router.get("/api/wiki/places")
+async def api_wiki_places_index(
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _wiki_places_list(db, user.id)
+
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+
+@router.get("/wiki/events/{event_id}", response_class=HTMLResponse)
+async def wiki_event_page(
+    request: Request,
+    event_id: int,
+    user=Depends(require_authenticated_html_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group_id = await _group_id_for_user(db, user.id)
+    event = await db.get(Event, event_id)
+    if not event or event.group_id != group_id:
+        raise HTTPException(404, "Event not found")
+
+    aliases = (await db.execute(
+        select(EventAlias.alias).where(EventAlias.event_id == event_id)
+    )).scalars().all()
+
+    # Linked places
+    PlaceJoin = aliased(Place)
+    place_rows = (await db.execute(
+        select(PlaceJoin.id, PlaceJoin.name)
+        .join(EventPlace, EventPlace.place_id == PlaceJoin.id)
+        .where(EventPlace.event_id == event_id)
+    )).all()
+    places = [{"place_id": pid, "name": pname} for pid, pname in place_rows]
+
+    # Linked attendees
+    AttPerson = aliased(Person)
+    att_rows = (await db.execute(
+        select(AttPerson.id, AttPerson.display_name, EventPerson.role_hint)
+        .join(AttPerson, AttPerson.id == EventPerson.person_id)
+        .where(EventPerson.event_id == event_id)
+    )).all()
+    attendees = [{"person_id": pid, "name": pname, "role": role} for pid, pname, role in att_rows]
+
+    # Stories about this event
+    story_rows = (await db.execute(
+        select(Response.id, Response.title, Response.created_at)
+        .join(ResponseEvent, ResponseEvent.response_id == Response.id)
+        .where(ResponseEvent.event_id == event_id)
+        .order_by(Response.created_at.desc())
+        .limit(30)
+    )).all()
+    mentions = [{"response_id": rid, "title": title or "Untitled", "created_at": ca} for rid, title, ca in story_rows]
+
+    article = await db.scalar(
+        select(WikiArticle).where(
+            WikiArticle.entity_type == "event",
+            WikiArticle.entity_id == event_id,
+            WikiArticle.group_id == group_id,
+        )
+    ) if group_id else None
+
+    label = f"{event.name} {event.year}" if event.year else event.name
+    link_map = await build_link_map(db, group_id) if group_id else {}
+    resolved_content = resolve_wikilinks(_active_content(article), link_map)
+    return templates.TemplateResponse(request, "wiki_event.html", {
+        "user": user,
+        "title": f"{label} – Wiki",
+        "event": event,
+        "event_id": event_id,
+        "display_name": label,
+        "aliases": list(aliases),
+        "places": places,
+        "attendees": attendees,
+        "mentions": mentions,
+        "article": article,
+        "resolved_content": resolved_content,
+    })
+
+
+@router.post("/api/wiki/generate/event/{event_id}")
+async def api_wiki_generate_event(
+    event_id: int,
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group_id = await _group_id_for_user(db, user.id)
+    if not group_id:
+        raise HTTPException(400, "You must be in a family group to generate wiki articles")
+    event = await db.get(Event, event_id)
+    if not event or event.group_id != group_id:
+        raise HTTPException(404, "Event not found")
+
+    existing = await db.scalar(
+        select(WikiArticle).where(
+            WikiArticle.entity_type == "event",
+            WikiArticle.entity_id == event_id,
+            WikiArticle.group_id == group_id,
+        )
+    )
+    if existing and existing.status == "generating":
+        return JSONResponse({"status": "generating", "message": "Already in progress"}, status_code=200)
+
+    spawn(generate_event_wiki(event_id, group_id), name=f"wiki-event-{event_id}-group-{group_id}")
+    return JSONResponse({"status": "generating", "message": "Generation started"}, status_code=202)
+
+
+@router.get("/api/wiki/status/event/{event_id}")
+async def api_wiki_status_event(
+    event_id: int,
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    group_id = await _group_id_for_user(db, user.id)
+    article = await db.scalar(
+        select(WikiArticle).where(
+            WikiArticle.entity_type == "event",
+            WikiArticle.entity_id == event_id,
+            WikiArticle.group_id == group_id,
+        )
+    ) if group_id else None
+    if not article:
+        return {"status": "none", "generated_at": None}
+    return {"status": article.status, "generated_at": article.generated_at.isoformat() if article.generated_at else None, "source_count": article.source_count, "error_msg": article.error_msg}
+
+
+@router.get("/api/wiki/events")
+async def api_wiki_events_index(
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _wiki_events_list(db, user.id)
+
+
+# ---------------------------------------------------------------------------
+# User-editable wiki content
+# ---------------------------------------------------------------------------
+# All group members can edit. Two separate fields:
+#   user_notes_md  — supplementary notes appended below the AI article; preserved on regenerate
+#   user_edited_md — full replacement of the article body; cleared on explicit AI regenerate
+
+async def _get_or_create_article(
+    db: AsyncSession, entity_type: str, entity_id: int, group_id: int
+) -> WikiArticle:
+    article = await db.scalar(
+        select(WikiArticle).where(
+            WikiArticle.entity_type == entity_type,
+            WikiArticle.entity_id == entity_id,
+            WikiArticle.group_id == group_id,
+        )
+    )
+    if not article:
+        article = WikiArticle(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            group_id=group_id,
+            status="pending",
+        )
+        db.add(article)
+        await db.flush()
+    return article
+
+
+@router.patch("/api/wiki/{entity_type}/{entity_id}/notes")
+async def api_wiki_save_notes(
+    entity_type: str,
+    entity_id: int,
+    body: dict = Body(...),
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save user notes (supplementary, preserved across AI regenerations)."""
+    if entity_type not in ("person", "place", "event"):
+        raise HTTPException(400, "Invalid entity type")
+    group_id = await _group_id_for_user(db, user.id)
+    if not group_id:
+        raise HTTPException(403, "Must be in a family group")
+
+    notes = (body.get("notes") or "").strip()
+    article = await _get_or_create_article(db, entity_type, entity_id, group_id)
+    article.user_notes_md = notes or None
+    article.notes_updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"ok": True, "notes": article.user_notes_md}
+
+
+@router.patch("/api/wiki/{entity_type}/{entity_id}/edit")
+async def api_wiki_save_edit(
+    entity_type: str,
+    entity_id: int,
+    body: dict = Body(...),
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Save a full user-written article body. This replaces the AI article in the display
+    until the user explicitly regenerates (regeneration clears user_edited_md).
+    Pass content=null or content="" to revert to the AI article.
+    """
+    if entity_type not in ("person", "place", "event"):
+        raise HTTPException(400, "Invalid entity type")
+    group_id = await _group_id_for_user(db, user.id)
+    if not group_id:
+        raise HTTPException(403, "Must be in a family group")
+
+    content = (body.get("content") or "").strip() or None
+    article = await _get_or_create_article(db, entity_type, entity_id, group_id)
+
+    # Save a revision of whatever is currently shown before overwriting
+    old_content = article.user_edited_md or article.content_md
+    if old_content and old_content != content:
+        db.add(WikiRevision(
+            wiki_article_id=article.id,
+            content_md=old_content,
+            source="user" if article.user_edited_md else "ai",
+        ))
+
+    article.user_edited_md = content
+    article.edited_at = datetime.now(timezone.utc) if content else None
+    if content and article.status == "pending":
+        article.status = "ready"
+    await db.commit()
+    return {"ok": True, "has_edit": bool(content)}
+
+
+# ---------------------------------------------------------------------------
+# Revision history
+# ---------------------------------------------------------------------------
+
+@router.get("/api/wiki/{entity_type}/{entity_id}/revisions")
+async def api_wiki_revisions(
+    entity_type: str,
+    entity_id: int,
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List saved revisions for a wiki article, newest first."""
+    if entity_type not in ("person", "place", "event"):
+        raise HTTPException(400, "Invalid entity type")
+    group_id = await _group_id_for_user(db, user.id)
+    article = await db.scalar(
+        select(WikiArticle).where(
+            WikiArticle.entity_type == entity_type,
+            WikiArticle.entity_id == entity_id,
+            WikiArticle.group_id == group_id,
+        )
+    ) if group_id else None
+    if not article:
+        return []
+    rows = (await db.execute(
+        select(WikiRevision)
+        .where(WikiRevision.wiki_article_id == article.id)
+        .order_by(WikiRevision.saved_at.desc())
+        .limit(20)
+    )).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "source": r.source,
+            "saved_at": r.saved_at.isoformat() if r.saved_at else None,
+            "preview": (r.content_md or "")[:120] + ("…" if len(r.content_md or "") > 120 else ""),
+        }
+        for r in rows
+    ]
+
+
+@router.patch("/api/wiki/{entity_type}/{entity_id}/aliases")
+async def api_wiki_save_aliases(
+    entity_type: str,
+    entity_id: int,
+    body: dict = Body(...),
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace the alias list for a person, place, or event."""
+    if entity_type not in ("person", "place", "event"):
+        raise HTTPException(400, "Invalid entity type")
+    group_id = await _group_id_for_user(db, user.id)
+    if not group_id:
+        raise HTTPException(403, "Must be in a family group")
+
+    raw = body.get("aliases") or []
+    aliases = [a.strip() for a in raw if isinstance(a, str) and a.strip()]
+
+    if entity_type == "person":
+        await db.execute(delete(PersonAlias).where(PersonAlias.person_id == entity_id))
+        for a in aliases:
+            db.add(PersonAlias(person_id=entity_id, alias=a))
+    elif entity_type == "place":
+        await db.execute(delete(PlaceAlias).where(PlaceAlias.place_id == entity_id))
+        for a in aliases:
+            db.add(PlaceAlias(place_id=entity_id, alias=a))
+    elif entity_type == "event":
+        await db.execute(delete(EventAlias).where(EventAlias.event_id == entity_id))
+        for a in aliases:
+            db.add(EventAlias(event_id=entity_id, alias=a))
+
+    await db.commit()
+    return {"ok": True, "aliases": aliases}
+
+
+@router.post("/api/wiki/{entity_type}/{entity_id}/revisions/{revision_id}/restore")
+async def api_wiki_restore_revision(
+    entity_type: str,
+    entity_id: int,
+    revision_id: int,
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a revision as the current user_edited_md."""
+    if entity_type not in ("person", "place", "event"):
+        raise HTTPException(400, "Invalid entity type")
+    group_id = await _group_id_for_user(db, user.id)
+    article = await _get_or_create_article(db, entity_type, entity_id, group_id)
+    revision = await db.get(WikiRevision, revision_id)
+    if not revision or revision.wiki_article_id != article.id:
+        raise HTTPException(404, "Revision not found")
+
+    # Save current state before restoring
+    old_content = article.user_edited_md or article.content_md
+    if old_content:
+        db.add(WikiRevision(
+            wiki_article_id=article.id,
+            content_md=old_content,
+            source="user" if article.user_edited_md else "ai",
+        ))
+
+    article.user_edited_md = revision.content_md
+    article.edited_at = datetime.now(timezone.utc)
+    if article.status == "pending":
+        article.status = "ready"
+    await db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Lint
+# ---------------------------------------------------------------------------
+
+@router.get("/api/wiki/lint")
+async def api_wiki_lint(
+    user=Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Audit the wiki for health issues:
+      - Entities with no article at all
+      - Articles whose source count is out of date (new stories added since last generation)
+      - Articles stuck in 'generating' or 'error' state
+    """
+    group_id = await _group_id_for_user(db, user.id)
+    if not group_id:
+        return {"issues": [], "ok": True}
+
+    issues: list[dict] = []
+
+    # Load all articles indexed by (type, entity_id)
+    all_articles = (await db.execute(
+        select(WikiArticle).where(WikiArticle.group_id == group_id)
+    )).scalars().all()
+    art_index: dict[tuple, WikiArticle] = {(a.entity_type, a.entity_id): a for a in all_articles}
+
+    # Check people
+    group_ids = await visible_group_ids(db, user.id)
+    people = (await db.execute(
+        select(Person).where(person_visibility_filter(user.id, group_ids))
+    )).scalars().all()
+
+    for p in people:
+        key = ("person", p.id)
+        art = art_index.get(key)
+        if not art or art.status in ("none", "pending"):
+            issues.append({"type": "missing", "entity_type": "person", "entity_id": p.id, "name": p.display_name})
+        elif art.status == "error":
+            issues.append({"type": "error", "entity_type": "person", "entity_id": p.id, "name": p.display_name, "msg": art.error_msg})
+        elif art.status == "generating":
+            issues.append({"type": "stuck", "entity_type": "person", "entity_id": p.id, "name": p.display_name})
+        elif art.status == "ready" and art.generated_at:
+            # Count current stories
+            current_count = await db.scalar(
+                select(func.count(ResponsePerson.response_id)).where(ResponsePerson.person_id == p.id)
+            ) or 0
+            if current_count > (art.source_count or 0):
+                issues.append({
+                    "type": "stale", "entity_type": "person", "entity_id": p.id, "name": p.display_name,
+                    "article_sources": art.source_count, "current_sources": current_count,
+                })
+
+    # Check places
+    places = (await db.execute(select(Place).where(Place.group_id == group_id))).scalars().all()
+    for pl in places:
+        key = ("place", pl.id)
+        art = art_index.get(key)
+        if not art or art.status in ("none", "pending"):
+            issues.append({"type": "missing", "entity_type": "place", "entity_id": pl.id, "name": pl.name})
+        elif art.status == "error":
+            issues.append({"type": "error", "entity_type": "place", "entity_id": pl.id, "name": pl.name, "msg": art.error_msg})
+        elif art.status == "ready" and art.generated_at:
+            current_count = await db.scalar(
+                select(func.count(ResponsePlace.response_id)).where(ResponsePlace.place_id == pl.id)
+            ) or 0
+            if current_count > (art.source_count or 0):
+                issues.append({
+                    "type": "stale", "entity_type": "place", "entity_id": pl.id, "name": pl.name,
+                    "article_sources": art.source_count, "current_sources": current_count,
+                })
+
+    # Check events
+    events = (await db.execute(select(Event).where(Event.group_id == group_id))).scalars().all()
+    for ev in events:
+        key = ("event", ev.id)
+        art = art_index.get(key)
+        if not art or art.status in ("none", "pending"):
+            issues.append({"type": "missing", "entity_type": "event", "entity_id": ev.id, "name": ev.name})
+        elif art.status == "error":
+            issues.append({"type": "error", "entity_type": "event", "entity_id": ev.id, "name": ev.name, "msg": art.error_msg})
+        elif art.status == "ready" and art.generated_at:
+            current_count = await db.scalar(
+                select(func.count(ResponseEvent.response_id)).where(ResponseEvent.event_id == ev.id)
+            ) or 0
+            if current_count > (art.source_count or 0):
+                issues.append({
+                    "type": "stale", "entity_type": "event", "entity_id": ev.id, "name": ev.name,
+                    "article_sources": art.source_count, "current_sources": current_count,
+                })
+
+    counts = {"missing": 0, "stale": 0, "error": 0, "stuck": 0}
+    for issue in issues:
+        counts[issue["type"]] = counts.get(issue["type"], 0) + 1
+
+    return {"issues": issues, "counts": counts, "ok": len(issues) == 0}

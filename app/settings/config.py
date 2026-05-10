@@ -7,6 +7,10 @@ from email.mime.multipart import MIMEMultipart
 
 class Settings(BaseSettings):
     # ---------- App feature switches ----------
+    # When true, superusers are excluded as narrators in wiki generation.
+    # Useful in dev where admin accounts hold test/garbage responses.
+    WIKI_EXCLUDE_SUPERUSERS: bool = Field(default=False, env=["WIKI_EXCLUDE_SUPERUSERS"])
+
     # "off" = no sharing, "group" = allow sharing via KinGroups/PersonShare
     SHARE_PEOPLE_SCOPE: Literal["off", "group"] = Field(
         default="group",

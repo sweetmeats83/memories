@@ -464,6 +464,7 @@ class Person(Base):
     family_name = Column(String(64))
     birth_year = Column(Integer)
     death_year = Column(Integer)
+    gender = Column(String(16), nullable=True)  # "male" | "female" | "nonbinary" | None
     notes = Column(Text)
     photo_url = Column(String(256))
     meta = Column(JSON)  # consider JSONB on Postgres
@@ -556,29 +557,136 @@ class PushSubscription(Base):
 
 
 class WikiArticle(Base):
-    """LLM-generated biographical wiki article for a person (or future: place/theme)."""
+    """LLM-generated biographical wiki article for a person.
+
+    Scoped to a KinGroup — one shared article per (person, family group) so all
+    members read and contribute to the same article. user_id records who last
+    triggered generation but does not scope the article.
+    """
     __tablename__ = "wiki_article"
 
     id = Column(Integer, primary_key=True)
     entity_type = Column(String(16), nullable=False)          # "person" (extensible)
     entity_id   = Column(Integer, nullable=False, index=True) # Person.id
-    user_id     = Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    group_id    = Column(Integer, ForeignKey("kin_group.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id     = Column(Integer, ForeignKey("user.id", ondelete="SET NULL"), nullable=True, index=True)
 
-    content_md  = Column(Text, nullable=True)                 # generated markdown
-    status      = Column(String(16), nullable=False, default="pending")  # pending|generating|ready|error
-    error_msg   = Column(Text, nullable=True)
+    content_md      = Column(Text, nullable=True)   # AI-generated article
+    user_notes_md   = Column(Text, nullable=True)   # user additions (preserved on regenerate)
+    user_edited_md  = Column(Text, nullable=True)   # full user override of the article body
+    status          = Column(String(16), nullable=False, default="pending")  # pending|generating|ready|error
+    error_msg       = Column(Text, nullable=True)
 
     model_name   = Column(String(64), nullable=True)
-    source_count = Column(Integer, nullable=True)             # number of story excerpts used
+    source_count = Column(Integer, nullable=True)
     generated_at = Column(DateTime(timezone=True), nullable=True)
+    notes_updated_at = Column(DateTime(timezone=True), nullable=True)
+    edited_at        = Column(DateTime(timezone=True), nullable=True)
     created_at   = Column(DateTime(timezone=True), server_default=func.now())
     updated_at   = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("entity_type", "entity_id", "user_id", name="uq_wiki_entity_user"),
+        UniqueConstraint("entity_type", "entity_id", "group_id", name="uq_wiki_entity_group"),
         Index("ix_wiki_entity", "entity_type", "entity_id"),
     )
 
+
+class WikiRevision(Base):
+    """Snapshot saved before each AI regeneration or user edit overwrite."""
+    __tablename__ = "wiki_revision"
+
+    id              = Column(Integer, primary_key=True)
+    wiki_article_id = Column(Integer, ForeignKey("wiki_article.id", ondelete="CASCADE"), nullable=False, index=True)
+    content_md      = Column(Text, nullable=True)
+    source          = Column(String(8), nullable=False)   # "ai" | "user"
+    saved_at        = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Places
+# ---------------------------------------------------------------------------
+
+class Place(Base):
+    __tablename__ = "place"
+    id = Column(Integer, primary_key=True)
+    group_id = Column(ForeignKey("kin_group.id", ondelete="CASCADE"), index=True, nullable=False)
+    name = Column(String(200), nullable=False)
+    place_type = Column(String(32), nullable=True)   # home/farm/city/landmark/region/other
+    address = Column(String(256), nullable=True)
+    city = Column(String(128), nullable=True)
+    state = Column(String(64), nullable=True)
+    country = Column(String(64), nullable=True)
+    notes = Column(Text, nullable=True)
+    __table_args__ = (UniqueConstraint("group_id", "name", name="uq_place_group_name"),)
+
+
+class PlaceAlias(Base):
+    __tablename__ = "place_alias"
+    id = Column(Integer, primary_key=True)
+    place_id = Column(ForeignKey("place.id", ondelete="CASCADE"), index=True, nullable=False)
+    alias = Column(String(200), nullable=False)
+
+
+class ResponsePlace(Base):
+    __tablename__ = "response_place"
+    id = Column(Integer, primary_key=True)
+    response_id = Column(ForeignKey("response.id", ondelete="CASCADE"), index=True, nullable=False)
+    place_id = Column(ForeignKey("place.id", ondelete="CASCADE"), index=True, nullable=False)
+    role_hint = Column(String(64), nullable=True)
+    __table_args__ = (UniqueConstraint("response_id", "place_id", name="uq_response_place"),)
+
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+
+class Event(Base):
+    __tablename__ = "event"
+    id = Column(Integer, primary_key=True)
+    group_id = Column(ForeignKey("kin_group.id", ondelete="CASCADE"), index=True, nullable=False)
+    name = Column(String(200), nullable=False)        # "Christmas"
+    year = Column(Integer, nullable=True)             # 1985; NULL = no specific year
+    event_type = Column(String(32), nullable=True)    # holiday/birthday/vacation/reunion/wedding/other
+    notes = Column(Text, nullable=True)
+    __table_args__ = (UniqueConstraint("group_id", "name", "year", name="uq_event_group_name_year"),)
+
+
+class EventAlias(Base):
+    __tablename__ = "event_alias"
+    id = Column(Integer, primary_key=True)
+    event_id = Column(ForeignKey("event.id", ondelete="CASCADE"), index=True, nullable=False)
+    alias = Column(String(200), nullable=False)
+
+
+class ResponseEvent(Base):
+    __tablename__ = "response_event"
+    id = Column(Integer, primary_key=True)
+    response_id = Column(ForeignKey("response.id", ondelete="CASCADE"), index=True, nullable=False)
+    event_id = Column(ForeignKey("event.id", ondelete="CASCADE"), index=True, nullable=False)
+    role_hint = Column(String(64), nullable=True)
+    __table_args__ = (UniqueConstraint("response_id", "event_id", name="uq_response_event"),)
+
+
+class EventPlace(Base):
+    """Which places were part of a given event (e.g. Christmas 1985 at Grandma's AND the farm)."""
+    __tablename__ = "event_place"
+    id = Column(Integer, primary_key=True)
+    event_id = Column(ForeignKey("event.id", ondelete="CASCADE"), index=True, nullable=False)
+    place_id = Column(ForeignKey("place.id", ondelete="CASCADE"), index=True, nullable=False)
+    __table_args__ = (UniqueConstraint("event_id", "place_id", name="uq_event_place"),)
+
+
+class EventPerson(Base):
+    """Who attended / was associated with a given event."""
+    __tablename__ = "event_person"
+    id = Column(Integer, primary_key=True)
+    event_id = Column(ForeignKey("event.id", ondelete="CASCADE"), index=True, nullable=False)
+    person_id = Column(ForeignKey("person.id", ondelete="CASCADE"), index=True, nullable=False)
+    role_hint = Column(String(64), nullable=True)     # host/attendee/guest-of-honor
+    __table_args__ = (UniqueConstraint("event_id", "person_id", name="uq_event_person"),)
+
+
+# ---------------------------------------------------------------------------
 
 class ChapterCompilation(Base):
     __tablename__ = "chapter_compilation"

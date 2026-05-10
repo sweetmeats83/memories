@@ -140,6 +140,14 @@ async def _ancestor_map(
 
 
 def _gender_from_meta(person: Optional[Person]) -> Optional[str]:
+    # Prefer the dedicated column; fall back to meta dict for legacy data
+    col = (getattr(person, "gender", None) or "").strip().lower()
+    if col in {"male", "m", "man", "boy"}:
+        return "male"
+    if col in {"female", "f", "woman", "girl"}:
+        return "female"
+    if col in {"nonbinary", "nb", "enby"}:
+        return "nonbinary"
     meta = getattr(person, "meta", None) or {}
     g = (meta.get("gender") or meta.get("sex") or "").strip().lower()
     if g in {"male", "m", "man", "boy"}:

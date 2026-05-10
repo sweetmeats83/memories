@@ -8,113 +8,325 @@
     ← Back to Memories
   </a>
 
-  <header class="mt-6 mb-8">
+  <header class="mt-6 mb-2">
     <h1 class="font-baskerville leading-tight text-[clamp(1.9rem,5.5vw,3.2rem)]">Family Wiki</h1>
-    <p class="text-sm opacity-60 mt-1">Biographical articles for the people in your stories, generated from your memories.</p>
+    <p class="text-sm opacity-60 mt-1">Your family's living encyclopedia — articles on people, places, and events, built from your stories.</p>
   </header>
 
-  {% if not people %}
-    <div class="paper-card mx-auto py-12 text-center">
-      <div class="book-body">
-        <p class="opacity-60">No people in your family graph yet.</p>
-        <a href="/people/graph" class="pill mt-4 inline-flex">Open People Graph</a>
+  <!-- Stats row -->
+  {% set total_ready = (people | selectattr('wiki_status', 'eq', 'ready') | list | length) +
+                       (places | selectattr('wiki_status', 'eq', 'ready') | list | length) +
+                       (events | selectattr('wiki_status', 'eq', 'ready') | list | length) %}
+  <div class="flex gap-4 mb-6 mt-4 flex-wrap text-sm opacity-50">
+    <span>{{ people | length }} people</span>
+    <span>·</span>
+    <span>{{ places | length }} places</span>
+    <span>·</span>
+    <span>{{ events | length }} events</span>
+    {% if total_ready %}
+    <span>·</span>
+    <span>{{ total_ready }} articles written</span>
+    {% endif %}
+  </div>
+
+  <!-- Bulk generate + lint toolbar -->
+  <div class="mb-6 p-4 rounded-2xl border border-black/10 bg-white/30 flex flex-wrap items-center gap-3">
+    <div class="flex-1 min-w-0">
+      <div class="font-medium text-sm">Wiki tools</div>
+      <div class="text-xs opacity-50 mt-0.5">Manage article generation and audit your wiki's health.</div>
+    </div>
+    <div class="flex gap-2 flex-wrap">
+      <button onclick="generateAllMissing()" id="genAllBtn" class="pill text-sm shrink-0">
+        Write missing
+      </button>
+      <button onclick="runLint()" id="lintBtn" class="pill text-sm shrink-0">
+        Audit wiki
+      </button>
+    </div>
+    <div id="genAllStatus" class="text-xs opacity-60 w-full hidden"></div>
+    <div id="lintResults" class="w-full hidden"></div>
+  </div>
+
+  <!-- Tab + Search row -->
+  <div class="flex flex-col sm:flex-row gap-3 mb-4 items-start sm:items-center">
+    <div class="flex gap-2 flex-wrap">
+      <button onclick="switchTab('people')" id="tab-people" class="wiki-tab pill is-selected text-sm">
+        People ({{ people | length }})
+      </button>
+      <button onclick="switchTab('places')" id="tab-places" class="wiki-tab pill text-sm">
+        Places ({{ places | length }})
+      </button>
+      <button onclick="switchTab('events')" id="tab-events" class="wiki-tab pill text-sm">
+        Events ({{ events | length }})
+      </button>
+    </div>
+    <input id="wikiSearch" type="search" placeholder="Search…"
+           oninput="filterSearch(this.value)"
+           class="ml-auto text-sm px-3 py-1.5 rounded-full border border-black/15 bg-white/60 w-full sm:w-48 focus:outline-none focus:border-black/30">
+  </div>
+
+  <!-- Status filter pills -->
+  <div class="flex gap-2 mb-5 flex-wrap">
+    <button onclick="filterStatus('all')" id="sf-all" class="status-filter pill text-xs is-selected">All</button>
+    <button onclick="filterStatus('ready')" id="sf-ready" class="status-filter pill text-xs">Generated</button>
+    <button onclick="filterStatus('none')" id="sf-none" class="status-filter pill text-xs">Not yet</button>
+  </div>
+
+  <!-- ─── PEOPLE ─── -->
+  <div id="panel-people">
+    {% if not people %}
+      <div class="paper-card mx-auto py-12 text-center">
+        <div class="book-body">
+          <p class="opacity-60">No people in your family graph yet.</p>
+          <a href="/people/graph" class="pill mt-4 inline-flex">Open People Graph</a>
+        </div>
       </div>
-    </div>
-  {% else %}
-
-    <!-- Status filter tabs -->
-    <div class="flex gap-2 mb-5 flex-wrap">
-      <button onclick="filterWiki('all')" id="tab-all"
-              class="wiki-tab pill is-selected text-sm">All ({{ people | length }})</button>
-      <button onclick="filterWiki('ready')" id="tab-ready"
-              class="wiki-tab pill text-sm">Generated ({{ people | selectattr('wiki_status', 'eq', 'ready') | list | length }})</button>
-      <button onclick="filterWiki('none')" id="tab-none"
-              class="wiki-tab pill text-sm">Not yet ({{ people | selectattr('wiki_status', 'in', ['none', 'pending']) | list | length }})</button>
-    </div>
-
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" id="wikiGrid">
-      {% for p in people %}
-        {% set status = p.wiki_status or 'none' %}
-        <a href="/wiki/people/{{ p.person_id }}"
-           class="wiki-card group block border border-black/15 rounded-2xl bg-white/40 hover:bg-white/70 backdrop-blur-sm transition p-4 shadow-sm hover:shadow-md"
-           data-status="{{ status }}">
-
-          <div class="flex items-center gap-3">
+    {% else %}
+      <div class="wiki-list" id="peopleGrid">
+        {% for p in people %}
+          {% set status = p.wiki_status or 'none' %}
+          <a href="/wiki/people/{{ p.person_id }}"
+             class="wiki-card group"
+             data-status="{{ status }}"
+             data-name="{{ p.display_name | lower }}">
             {% if p.photo_url %}
               {% set rel = p.photo_url.lstrip('/').replace('\\', '/') %}
               {% set rel = ('uploads/' ~ rel) if not rel.startswith('uploads/') else rel %}
               <img src="/media/auth/{{ rel }}" alt="{{ p.display_name }}"
-                   class="w-12 h-12 rounded-full object-cover border border-black/10 flex-shrink-0">
+                   class="wiki-avatar object-cover">
             {% else %}
-              <div class="w-12 h-12 rounded-full bg-black/10 flex items-center justify-center flex-shrink-0 font-bold text-black/30 text-lg">
-                {{ p.display_name[0] | upper }}
+              <div class="wiki-avatar wiki-avatar-init">
+                {{ p.display_name[0] | upper if p.display_name else '?' }}
               </div>
             {% endif %}
-
             <div class="flex-1 min-w-0">
-              <div class="font-semibold text-base leading-snug truncate">{{ p.display_name }}</div>
+              <span class="font-medium leading-snug">{{ p.display_name }}</span>
               {% if p.birth_year or p.death_year %}
-                <div class="text-xs opacity-50">
-                  {{ p.birth_year or '?' }}{% if p.death_year %} – {{ p.death_year }}{% endif %}
-                </div>
+                <span class="text-xs opacity-40 ml-2">{{ p.birth_year or '?' }}{% if p.death_year %}–{{ p.death_year }}{% endif %}</span>
               {% endif %}
             </div>
-
-            <!-- Status badge -->
             {% if status == 'ready' %}
-              <span class="shrink-0 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800 border border-green-200">
-                Ready
-              </span>
+              <span class="wiki-badge wiki-badge-ready">Ready</span>
             {% elif status == 'generating' %}
-              <span class="shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 animate-pulse">
-                Writing…
-              </span>
+              <span class="wiki-badge wiki-badge-gen animate-pulse">Writing…</span>
             {% elif status == 'error' %}
-              <span class="shrink-0 text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800 border border-red-200">
-                Error
-              </span>
+              <span class="wiki-badge wiki-badge-err">Error</span>
             {% else %}
-              <span class="shrink-0 text-xs px-2 py-0.5 rounded-full bg-black/5 text-black/40 border border-black/10">
-                Not yet
-              </span>
+              <span class="wiki-badge wiki-badge-none">Not yet</span>
             {% endif %}
-          </div>
+            <span class="wiki-arrow material-symbols-outlined">chevron_right</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
 
-          {% if p.wiki_generated_at %}
-            <div class="mt-2 text-xs opacity-40">
-              Updated {{ p.wiki_generated_at[:10] }}
+  <!-- ─── PLACES ─── -->
+  <div id="panel-places" class="hidden">
+    {% if not places %}
+      <div class="paper-card mx-auto py-12 text-center">
+        <div class="book-body"><p class="opacity-60">No places extracted from your stories yet.</p></div>
+      </div>
+    {% else %}
+      <div class="wiki-list" id="placesGrid">
+        {% for p in places %}
+          {% set status = p.wiki_status or 'none' %}
+          <a href="/wiki/places/{{ p.place_id }}"
+             class="wiki-card group"
+             data-status="{{ status }}"
+             data-name="{{ p.display_name | lower }}">
+            <div class="wiki-avatar wiki-avatar-place">
+              <span class="material-symbols-outlined text-[18px]">location_on</span>
             </div>
-          {% endif %}
+            <div class="flex-1 min-w-0">
+              <span class="font-medium leading-snug">{{ p.display_name }}</span>
+              {% if p.city or p.place_type %}
+                <span class="text-xs opacity-40 ml-2">{% if p.city %}{{ p.city }}{% if p.state %}, {{ p.state }}{% endif %}{% elif p.place_type %}{{ p.place_type }}{% endif %}</span>
+              {% endif %}
+            </div>
+            {% if status == 'ready' %}
+              <span class="wiki-badge wiki-badge-ready">Ready</span>
+            {% elif status == 'generating' %}
+              <span class="wiki-badge wiki-badge-gen animate-pulse">Writing…</span>
+            {% elif status == 'error' %}
+              <span class="wiki-badge wiki-badge-err">Error</span>
+            {% else %}
+              <span class="wiki-badge wiki-badge-none">Not yet</span>
+            {% endif %}
+            <span class="wiki-arrow material-symbols-outlined">chevron_right</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
 
-          <div class="mt-2 text-xs opacity-0 group-hover:opacity-60 transition flex items-center gap-1">
-            <span class="material-symbols-outlined text-[14px]">arrow_forward</span>
-            View article
-          </div>
-        </a>
-      {% endfor %}
-    </div>
-
-  {% endif %}
+  <!-- ─── EVENTS ─── -->
+  <div id="panel-events" class="hidden">
+    {% if not events %}
+      <div class="paper-card mx-auto py-12 text-center">
+        <div class="book-body"><p class="opacity-60">No events extracted from your stories yet.</p></div>
+      </div>
+    {% else %}
+      <div class="wiki-list" id="eventsGrid">
+        {% for e in events %}
+          {% set status = e.wiki_status or 'none' %}
+          <a href="/wiki/events/{{ e.event_id }}"
+             class="wiki-card group"
+             data-status="{{ status }}"
+             data-name="{{ e.display_name | lower }}">
+            <div class="wiki-avatar wiki-avatar-event">
+              <span class="material-symbols-outlined text-[18px]">event</span>
+            </div>
+            <div class="flex-1 min-w-0">
+              <span class="font-medium leading-snug">{{ e.name }}</span>
+              {% if e.year %}<span class="text-xs opacity-40 ml-2">{{ e.year }}</span>{% endif %}
+            </div>
+            {% if status == 'ready' %}
+              <span class="wiki-badge wiki-badge-ready">Ready</span>
+            {% elif status == 'generating' %}
+              <span class="wiki-badge wiki-badge-gen animate-pulse">Writing…</span>
+            {% elif status == 'error' %}
+              <span class="wiki-badge wiki-badge-err">Error</span>
+            {% else %}
+              <span class="wiki-badge wiki-badge-none">Not yet</span>
+            {% endif %}
+            <span class="wiki-arrow material-symbols-outlined">chevron_right</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
 
 </section>
 
 <script>
-function filterWiki(status) {
-  // Update tabs
-  document.querySelectorAll('.wiki-tab').forEach(t => t.classList.remove('is-selected'));
-  document.getElementById('tab-' + status)?.classList.add('is-selected');
+let currentTab = 'people';
+let currentStatus = 'all';
+let currentSearch = '';
 
-  // Filter cards
-  document.querySelectorAll('.wiki-card').forEach(card => {
-    const s = card.dataset.status || 'none';
-    if (status === 'all') {
-      card.parentElement.style.display = '';
-    } else if (status === 'ready') {
-      card.parentElement.style.display = (s === 'ready') ? '' : 'none';
-    } else if (status === 'none') {
-      card.parentElement.style.display = (s === 'none' || s === 'pending') ? '' : 'none';
-    }
+function switchTab(tab) {
+  currentTab = tab;
+  ['people', 'places', 'events'].forEach(t => {
+    document.getElementById('panel-' + t).classList.toggle('hidden', t !== tab);
+    document.getElementById('tab-' + t).classList.toggle('is-selected', t === tab);
   });
+  applyFilters();
+}
+
+function filterStatus(s) {
+  currentStatus = s;
+  document.querySelectorAll('.status-filter').forEach(b => b.classList.remove('is-selected'));
+  document.getElementById('sf-' + s)?.classList.add('is-selected');
+  applyFilters();
+}
+
+function filterSearch(q) {
+  currentSearch = q.toLowerCase().trim();
+  applyFilters();
+}
+
+function applyFilters() {
+  const grid = document.getElementById(currentTab + 'Grid');
+  if (!grid) return;
+  grid.querySelectorAll('.wiki-card').forEach(card => {
+    const s = card.dataset.status || 'none';
+    const name = card.dataset.name || '';
+    const statusOk = currentStatus === 'all'
+      || (currentStatus === 'ready' && s === 'ready')
+      || (currentStatus === 'none' && (s === 'none' || s === 'pending'));
+    const searchOk = !currentSearch || name.includes(currentSearch);
+    card.style.display = (statusOk && searchOk) ? '' : 'none';
+  });
+}
+
+async function runLint() {
+  const btn = document.getElementById('lintBtn');
+  const el = document.getElementById('lintResults');
+  btn.disabled = true;
+  btn.textContent = 'Auditing…';
+  el.classList.remove('hidden');
+  el.innerHTML = '<div class="text-xs opacity-50">Checking wiki health…</div>';
+  try {
+    const r = await fetch('/api/wiki/lint');
+    const data = await r.json();
+    if (data.ok) {
+      el.innerHTML = '<div class="text-xs text-green-700 font-medium">✓ Wiki looks healthy — no issues found.</div>';
+    } else {
+      const {counts, issues} = data;
+      let html = `<div class="text-xs font-medium mb-2">Found ${issues.length} issue${issues.length !== 1 ? 's' : ''}:`;
+      if (counts.missing) html += ` ${counts.missing} missing,`;
+      if (counts.stale)   html += ` ${counts.stale} stale,`;
+      if (counts.error)   html += ` ${counts.error} errors,`;
+      if (counts.stuck)   html += ` ${counts.stuck} stuck,`;
+      html = html.replace(/,$/, '') + '</div>';
+      html += '<ul class="text-xs space-y-1 mt-1 max-h-40 overflow-y-auto">';
+      for (const issue of issues) {
+        const href = `/wiki/${issue.entity_type}s/${issue.entity_id}`;
+        const label = issue.type === 'missing' ? 'No article'
+          : issue.type === 'stale' ? `Stale (${issue.article_sources}→${issue.current_sources} stories)`
+          : issue.type === 'error' ? `Error: ${issue.msg || '?'}`
+          : 'Stuck generating';
+        const color = issue.type === 'error' ? 'text-red-600'
+          : issue.type === 'stale' ? 'text-amber-700'
+          : issue.type === 'stuck' ? 'text-amber-600'
+          : 'text-black/50';
+        html += `<li class="flex items-center gap-2"><a href="${href}" class="underline opacity-80">${issue.name}</a><span class="${color}">${label}</span></li>`;
+      }
+      html += '</ul>';
+      el.innerHTML = html;
+    }
+  } catch(e) {
+    el.innerHTML = '<div class="text-xs text-red-600">Audit failed — check console.</div>';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Audit wiki';
+}
+
+async function generateAllMissing() {
+  const btn = document.getElementById('genAllBtn');
+  const statusEl = document.getElementById('genAllStatus');
+  btn.disabled = true;
+  btn.textContent = 'Queuing…';
+  statusEl.classList.remove('hidden');
+  statusEl.textContent = 'Collecting entities without articles…';
+
+  // Collect all missing entities from all three tabs
+  const todo = [];
+  document.querySelectorAll('#peopleGrid .wiki-card[data-status="none"], #peopleGrid .wiki-card[data-status="pending"]').forEach(c => {
+    const href = c.getAttribute('href') || '';
+    const m = href.match(/\/wiki\/people\/(\d+)/);
+    if (m) todo.push({type: 'person', id: m[1]});
+  });
+  document.querySelectorAll('#placesGrid .wiki-card[data-status="none"], #placesGrid .wiki-card[data-status="pending"]').forEach(c => {
+    const href = c.getAttribute('href') || '';
+    const m = href.match(/\/wiki\/places\/(\d+)/);
+    if (m) todo.push({type: 'place', id: m[1]});
+  });
+  document.querySelectorAll('#eventsGrid .wiki-card[data-status="none"], #eventsGrid .wiki-card[data-status="pending"]').forEach(c => {
+    const href = c.getAttribute('href') || '';
+    const m = href.match(/\/wiki\/events\/(\d+)/);
+    if (m) todo.push({type: 'event', id: m[1]});
+  });
+
+  if (!todo.length) {
+    statusEl.textContent = 'All articles already generated!';
+    btn.disabled = false;
+    btn.textContent = 'Write missing articles';
+    return;
+  }
+
+  let queued = 0;
+  for (const {type, id} of todo) {
+    try {
+      await fetch(`/api/wiki/generate/${type}/${id}`, {method: 'POST'});
+      queued++;
+      statusEl.textContent = `Queued ${queued}/${todo.length}…`;
+    } catch(e) { /* skip */ }
+  }
+
+  statusEl.textContent = `Queued ${queued} articles. They'll generate in the background — refresh in a few minutes.`;
+  btn.disabled = false;
+  btn.textContent = 'Write missing articles';
 }
 </script>
 
@@ -122,10 +334,65 @@ function filterWiki(status) {
   .paper-card {
     position: relative; border-radius: 1rem;
     background: linear-gradient(180deg, #FCFAF3 0%, #F7F2E7 100%);
-    box-shadow: 0 18px 50px rgba(0,0,0,.10);
-    max-width: 1000px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.10); max-width: 1000px;
   }
   .book-body { position: relative; z-index: 1; padding: 26px 20px; }
+
+  .wiki-list {
+    border: 1px solid rgba(0,0,0,.1);
+    border-radius: .875rem;
+    overflow: hidden;
+    background: rgba(255,255,255,.35);
+  }
+
+  .wiki-card {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    padding: .625rem .875rem;
+    border-bottom: 1px solid rgba(0,0,0,.07);
+    text-decoration: none; color: inherit;
+    transition: background .12s;
+  }
+  .wiki-card:last-child { border-bottom: none; }
+  .wiki-card:hover { background: rgba(255,255,255,.6); }
+
+  .wiki-avatar {
+    width: 2rem; height: 2rem;
+    border-radius: 9999px;
+    flex-shrink: 0;
+    border: 1px solid rgba(0,0,0,.08);
+  }
+  .wiki-avatar-init {
+    background: rgba(0,0,0,.08);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; color: rgba(0,0,0,.3); font-size: .8rem;
+  }
+  .wiki-avatar-place {
+    background: rgba(219,234,254,.6);
+    display: flex; align-items: center; justify-content: center;
+    color: #60a5fa;
+  }
+  .wiki-avatar-event {
+    background: rgba(254,243,199,.6);
+    display: flex; align-items: center; justify-content: center;
+    color: #f59e0b;
+  }
+
+  .wiki-badge {
+    flex-shrink: 0; font-size: .68rem;
+    padding: .1rem .45rem; border-radius: 9999px;
+  }
+  .wiki-badge-ready { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+  .wiki-badge-gen   { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+  .wiki-badge-err   { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+  .wiki-badge-none  { background: rgba(0,0,0,.04); color: rgba(0,0,0,.35); border: 1px solid rgba(0,0,0,.09); }
+
+  .wiki-arrow {
+    font-size: 1.1rem; color: rgba(0,0,0,.2);
+    flex-shrink: 0; transition: color .12s;
+  }
+  .group:hover .wiki-arrow { color: rgba(0,0,0,.5); }
 </style>
 
 {% endblock %}

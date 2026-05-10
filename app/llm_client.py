@@ -8,6 +8,12 @@ from app.models import Response, Prompt, Tag
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # adjust to your model tag
 
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+def _strip_thinking(text: str) -> str:
+    """Remove <think>…</think> blocks emitted by reasoning models (Qwen3 etc.)."""
+    return _THINK_TAG_RE.sub("", text or "").strip()
+
 class OllamaError(RuntimeError):
     pass
 
@@ -92,7 +98,7 @@ async def polish_text(text: str, style: str = "clean") -> str:
     except Exception as e:
         raise OllamaError(f"Ollama request failed: {e}") from e
 
-    out = (data or {}).get("response", "")
+    out = _strip_thinking((data or {}).get("response", ""))
     if not out:
         raise OllamaError("Empty response from Ollama.")
     return _sanitize_llm_text(out)
@@ -135,7 +141,7 @@ async def curate_prompts_for_user(profile_summary: str,
         raise OllamaError(f"Ollama curator failed: {e}") from e
 
     import json
-    raw = (data or {}).get("response", "").strip()
+    raw = _strip_thinking((data or {}).get("response", ""))
     try:
         out = json.loads(raw)
     except Exception as e:
@@ -162,13 +168,16 @@ async def your_chat_completion(system: str, user: str, response_format: str = "j
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": temperature}
+        "options": {"temperature": temperature, "num_ctx": 8192},
+        "think": False,
     }
-    async with httpx.AsyncClient(timeout=60) as c:
+    if response_format == "json":
+        payload["format"] = "json"
+    async with httpx.AsyncClient(timeout=120) as c:
         r = await c.post(f"{OLLAMA_BASE_URL}/api/generate", json=payload)
         r.raise_for_status()
         data = r.json()
-    return (data or {}).get("response", "").strip()
+    return _strip_thinking((data or {}).get("response", ""))
 #-----------tag refineing-------------
 
 
@@ -278,7 +287,7 @@ async def guess_for_gates(text: str, allowed: list[str]) -> list[str]:
         async with httpx.AsyncClient(timeout=60) as c:
             r = await c.post(f"{OLLAMA_BASE_URL}/api/generate", json=payload)
             r.raise_for_status()
-            raw = (r.json() or {}).get("response", "") or ""
+            raw = _strip_thinking((r.json() or {}).get("response", "") or "")
     except Exception:
         raw = ""
 
@@ -331,8 +340,8 @@ async def ask_llm(prompt: str, *, max_tokens: int = 120, temperature: float = 0.
     except Exception as e:
         raise OllamaError(f"Ollama request failed: {e}") from e
 
-    out = (data or {}).get("response", "") or ""
-    return out.strip()
+    out = _strip_thinking((data or {}).get("response", "") or "")
+    return out
 
 
 FOLLOWUP_TEMPLATE = (
@@ -414,7 +423,7 @@ async def disambiguate_person_mention(
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.post(f"{OLLAMA_BASE_URL}/api/generate", json=payload)
             r.raise_for_status()
-            raw = (r.json() or {}).get("response", "").strip()
+            raw = _strip_thinking((r.json() or {}).get("response", ""))
     except Exception:
         return None
 

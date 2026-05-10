@@ -31,7 +31,7 @@ from app.background import run_sync
 
 # Optional people helpers (we degrade gracefully if missing)
 try:
-    from app.services.people import extract_name_spans, role_hint_near, resolve_person, link_mention, llm_extract_people, build_narrator_graph
+    from app.services.people import extract_name_spans, role_hint_near, resolve_person, link_mention, llm_extract_entities, llm_extract_places_events, build_narrator_graph
     _PEOPLE_ENABLED = True
 except Exception:
     _PEOPLE_ENABLED = False
@@ -457,10 +457,15 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
             }
             profile.tag_weights = morph_profile(current, used)
 
-        # 3) people extraction (optional; no dependency on response.user object)
+        # 3) entity extraction — people, places, events in one LLM call
+        # Use ai_polished as the authoritative final text, then fall back to
+        # response_text (user-typed), then transcription (auto-generated).
         if _PEOPLE_ENABLED:
-            people_text = ((getattr(response, "response_text", "") or "").strip()
-                        or (getattr(response, "transcription", "") or "").strip())
+            people_text = (
+                (getattr(response, "ai_polished", "") or "").strip()
+                or (getattr(response, "response_text", "") or "").strip()
+                or (getattr(response, "transcription", "") or "").strip()
+            )
             if people_text:
                 # Gather known display names and narrator's relationship graph
                 known_names: list[str] = []
@@ -477,15 +482,19 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
                 except Exception:
                     tree_people = []
 
-                # Try LLM extraction first; fall back to spaCy/regex if it returns nothing
-                extractions = await llm_extract_people(
+                # Two separate LLM calls: people (narrator-aware) and places+events (simple, focused)
+                people_result = await llm_extract_entities(
                     people_text,
                     known_names=known_names,
                     narrator_graph=narrator_graph,
                 )
+                places_events_result = await llm_extract_places_events(people_text)
+                person_extractions = people_result.get("people") or []
+                place_extractions = places_events_result.get("places") or []
+                event_extractions = places_events_result.get("events") or []
 
-                if not extractions:
-                    # Fallback: use spaCy/regex spans + role_hint_near
+                # Fallback for people if LLM returned nothing
+                if not person_extractions:
                     aliases = known_names[:]
                     try:
                         if tree_people:
@@ -497,20 +506,21 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
                     except Exception:
                         pass
                     name_spans = extract_name_spans(people_text, aliases=aliases)
-                    extractions = [
+                    person_extractions = [
                         {"name": surface, "role": role_hint_near(people_text, s, e)}
                         for surface, s, e in name_spans
                     ]
 
+                # --- Link people ---
                 seen_person_ids: set[int] = set()
-                for item in extractions:
+                person_name_to_id: dict[str, int] = {}
+                for item in person_extractions:
                     surface = (item.get("name") or "").strip()
                     role = item.get("role") or None
                     if not surface:
                         continue
                     person = await resolve_person(db, response.user_id, surface, role_hint=role, context_text=people_text, narrator_graph=narrator_graph)
                     if person is None:
-                        # Ambiguous match (e.g., multiple people named Josh) — skip to avoid wrong link
                         logger.debug("resolve_person: ambiguous match for %r (role=%r); skipping link", surface, role)
                         continue
                     if person.id not in seen_person_ids:
@@ -520,8 +530,76 @@ async def enrich_after_transcription(db: AsyncSession, response: ResponseModel) 
                             alias_used=surface, start_char=None, end_char=None,
                             confidence=0.85, role_hint=role
                         )
+                    person_name_to_id[surface.lower()] = person.id
                 logger.info("People extraction: %d people linked on response %s", len(seen_person_ids), response.id)
+
+                # --- Link places and events (requires group membership) ---
+                if place_extractions or event_extractions:
+                    try:
+                        from app.services.people_acl import visible_group_ids as _vgids
+                        from app.services.places_events import (
+                            upsert_place_for_group,
+                            upsert_event_for_group,
+                            link_place_to_response,
+                            link_event_to_response,
+                            link_event_to_place,
+                            link_event_to_person,
+                        )
+                        gids = await _vgids(db, response.user_id)
+                        group_id = gids[0] if gids else None
+                        if group_id:
+                            # Upsert places
+                            place_name_to_id: dict[str, int] = {}
+                            for pl in place_extractions:
+                                pname = (pl.get("name") or "").strip()
+                                if not pname:
+                                    continue
+                                place = await upsert_place_for_group(
+                                    db, group_id, pname,
+                                    place_type=pl.get("type"),
+                                    city=pl.get("city"),
+                                    state=pl.get("state"),
+                                    address=pl.get("address"),
+                                    country=pl.get("country"),
+                                )
+                                await link_place_to_response(db, response.id, place.id)
+                                place_name_to_id[pname.lower()] = place.id
+                            logger.info("Places extraction: %d places linked on response %s", len(place_name_to_id), response.id)
+
+                            # Upsert events and link places + attendees
+                            for ev in event_extractions:
+                                ename = (ev.get("name") or "").strip()
+                                if not ename:
+                                    continue
+                                event = await upsert_event_for_group(
+                                    db, group_id, ename,
+                                    year=ev.get("year"),
+                                    event_type=ev.get("type"),
+                                )
+                                await link_event_to_response(db, response.id, event.id)
+
+                                for pname in (ev.get("places") or []):
+                                    pid = place_name_to_id.get((pname or "").lower().strip())
+                                    if pid:
+                                        await link_event_to_place(db, event.id, pid)
+
+                                for aname in (ev.get("attendees") or []):
+                                    apid = person_name_to_id.get((aname or "").lower().strip())
+                                    if apid:
+                                        await link_event_to_person(db, event.id, apid)
+
+                            logger.info("Events extraction: %d events linked on response %s", len(event_extractions), response.id)
+                    except Exception:
+                        logger.exception("places/events extraction failed on response %s", response.id)
         await db.commit()
+
+        # Schedule wiki refresh for all persons linked to this response
+        try:
+            from app.services.wiki_auto import schedule_wiki_refresh_for_response
+            await schedule_wiki_refresh_for_response(response.id, response.user_id)
+        except Exception:
+            logger.exception("wiki_auto: failed to schedule refresh for response %s", response.id)
+
     except Exception:
         logger.exception("❌ enrich_after_transcription failed")
 

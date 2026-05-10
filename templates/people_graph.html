@@ -321,6 +321,12 @@
     <div class="text-xs text-stone-600 mb-1">Who is this person to you?</div>
     <div class="flex items-center gap-2 mb-2">
       <select id="p_role" class="graph-input flex-1" title="Select a role"></select>
+      <select id="p_gender" class="graph-input" title="Gender">
+        <option value="">Gender…</option>
+        <option value="male">Male</option>
+        <option value="female">Female</option>
+        <option value="nonbinary">Nonbinary</option>
+      </select>
     </div>
     <div class="text-xs text-stone-600">Photo</div>
     <div class="relative flex items-center gap-2 my-2 flex-wrap">
@@ -367,7 +373,7 @@
   </div>
 
 
-<script type="module" src="{{ url_for('static', path='js/people_graph.js') }}?v=20260506a"></script>
+<script type="module" src="{{ url_for('static', path='js/people_graph.js') }}?v=20260508a"></script>
 
 </section>
 

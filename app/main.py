@@ -133,10 +133,9 @@ async def _auth_redirect_handler(request: Request, exc: FastAPIHTTPException):
 # Auto-create admin user
 # ----------------------
 async def ensure_family_group():
-    """Create the one implicit family group and add all active users to it.
-    New users spin up into the default family automatically.
-    To isolate specific users (e.g. test accounts), use /admin/kin-groups to
-    remove them from this group and place them in their own separate group."""
+    """Create the one implicit family group and add ungrouped active users to it.
+    Only users with NO group membership at all are auto-added. Users deliberately
+    moved to a separate group (e.g. test accounts) are left untouched."""
     from .models import KinGroup, KinMembership
     async with async_session_maker() as session:
         group = (await session.execute(
@@ -149,11 +148,12 @@ async def ensure_family_group():
         all_user_ids = (await session.execute(
             select(User.id).where(User.is_active.is_(True))
         )).scalars().all()
-        existing = set((await session.execute(
-            select(KinMembership.user_id).where(KinMembership.group_id == group.id)
+        # Only consider users who have no group membership at all
+        users_with_any_group = set((await session.execute(
+            select(KinMembership.user_id)
         )).scalars().all())
         for uid in all_user_ids:
-            if uid not in existing:
+            if uid not in users_with_any_group:
                 session.add(KinMembership(group_id=group.id, user_id=uid, role='member'))
         await session.commit()
 

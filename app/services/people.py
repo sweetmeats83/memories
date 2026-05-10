@@ -147,8 +147,12 @@ def _build_narrator_role_synonyms() -> dict[str, frozenset[str]]:
         return frozenset(out)
 
     return {
+        # gender-specific roles (from _DST_EDGE_TO_ROLE "father-of"/"mother-of")
+        "father":       _words("father"),
+        "mother":       _words("mother"),
+        # generic fallback (when edge type is just "parent-of")
         "parent":       _words("mother", "father", "parent"),
-        "step-parent":  _words("stepmother", "stepfather", "step-parent"),
+        "step-parent":  _words("stepmother", "stepfather"),
         "child":        _words("son", "daughter") | frozenset(["child", "kid"]),
         "spouse":       _words("wife", "husband", "spouse"),
         "partner":      _words("partner"),
@@ -156,10 +160,16 @@ def _build_narrator_role_synonyms() -> dict[str, frozenset[str]]:
         "sibling":      _words("brother", "sister", "sibling", "half-sibling"),
         "half-sibling": _words("half-sibling"),
         "step-sibling": _words("step-sibling"),
+        "grandmother":  _words("grandmother"),
+        "grandfather":  _words("grandfather"),
         "grandparent":  _words("grandmother", "grandfather", "grandparent"),
         "grandchild":   frozenset(["grandson", "granddaughter", "grandchild", "grandkid"]),
         "aunt or uncle":    _words("aunt", "uncle"),
+        "aunt":         _words("aunt"),
+        "uncle":        _words("uncle"),
         "niece or nephew":  _words("niece", "nephew"),
+        "niece":        _words("niece"),
+        "nephew":       _words("nephew"),
         "cousin":       _words("cousin"),
         "mentor":       _words("mentor"),
         "friend":       _words("friend"),
@@ -211,8 +221,11 @@ _SRC_EDGE_TO_ROLE: dict[str, str] = {
     "student-of": "mentor", "friend-of": "friend",
 }
 _DST_EDGE_TO_ROLE: dict[str, str] = {
-    "parent-of": "parent", "mother-of": "parent", "father-of": "parent",
-    "adoptive-parent-of": "parent", "step-parent-of": "step-parent",
+    "parent-of": "parent",
+    "mother-of": "mother",          # gender-specific → resolves "mom/mother/my mom"
+    "father-of": "father",          # gender-specific → resolves "dad/father/my dad"
+    "adoptive-parent-of": "parent",
+    "step-parent-of": "step-parent",
     "child-of": "child", "son-of": "child", "daughter-of": "child",
     "spouse-of": "spouse", "partner-of": "partner",
     "sibling-of": "sibling",
@@ -220,15 +233,238 @@ _DST_EDGE_TO_ROLE: dict[str, str] = {
     "aunt-of": "niece or nephew", "uncle-of": "niece or nephew",
 }
 
+# Synonyms the narrator might use in text for each role — used for rule-based fallback
+_ROLE_TEXT_SYNONYMS: dict[str, list[str]] = {
+    "father":      ["dad", "father", "my dad", "my father", "pop", "papa", "pa", "old man"],
+    "mother":      ["mom", "mother", "my mom", "my mother", "mama", "ma", "momma"],
+    "parent":      ["parents", "my parents", "mom and dad", "dad and mom", "my folks", "folks"],
+    "spouse":      ["wife", "my wife", "husband", "my husband"],
+    "sibling":     ["brother", "my brother", "sister", "my sister", "bro", "sis"],
+    "grandmother": ["grandma", "grandmother", "nana", "gran", "grannie", "granny", "my grandma"],
+    "grandfather": ["grandpa", "grandfather", "gramps", "pop-pop", "pawpaw", "my grandpa"],
+    "grandparent": ["grandparents", "my grandparents", "grandma and grandpa"],
+}
+
+# Roles where a bare role word is too ambiguous — a family can have many people in this
+# category. Only a concrete title+name ("Aunt Michelle", "Uncle Bob") triggers a match.
+# Roles NOT in this set (father, mother, spouse, grandma/grandpa) are unique enough
+# that a bare role word is sufficient evidence.
+_TITLE_REQUIRED_ROLES: frozenset[str] = frozenset({
+    # Extended family — many possible
+    "aunt", "uncle", "cousin", "niece", "nephew",
+    "great-aunt", "great-uncle", "aunt-in-law", "uncle-in-law",
+    # Siblings — a person can have several brothers/sisters
+    "sibling", "brother", "sister", "half-sibling", "step-sibling",
+    "brother-in-law", "sister-in-law",
+    # Children — a person can have several
+    "child", "son", "daughter", "stepchild", "step-son", "step-daughter",
+    # Grandparents — paternal + maternal = up to 4
+    "grandparent", "grandmother", "grandfather",
+    "great-grandparent", "great-grandmother", "great-grandfather",
+    # Social roles — inherently many-to-many
+    "friend", "colleague", "coworker", "roommate", "neighbor",
+    "mentor", "mentee", "acquaintance",
+})
+
+# Title words that appear directly before a first name ("Aunt Michelle", "Uncle Bob").
+# Used for the concrete title+name extraction pass for _TITLE_REQUIRED_ROLES.
+_TITLE_TO_ROLE: dict[str, str] = {
+    "aunt": "aunt", "auntie": "aunt", "aunty": "aunt",
+    "uncle": "uncle",
+    "cousin": "cousin",
+    "niece": "niece",
+    "nephew": "nephew",
+    "brother": "sibling",
+    "sister": "sibling",
+    "son": "child",
+    "daughter": "child",
+    "grandma": "grandmother", "grandmom": "grandmother", "nana": "grandmother",
+    "grandpa": "grandfather", "gramps": "grandfather",
+}
+
+# Social-role words where the name appears alongside the role in text.
+# These are used for the named-social-role extraction pass in _apply_role_fallback.
+_SOCIAL_ROLE_WORDS: dict[str, str] = {
+    "friend": "friend", "buddy": "friend", "pal": "friend", "bestie": "friend",
+    "neighbor": "neighbor", "neighbour": "neighbor",
+    "colleague": "colleague", "coworker": "colleague", "co-worker": "colleague",
+    "classmate": "classmate", "roommate": "roommate", "teammate": "teammate",
+    "mentor": "mentor",
+}
+
+_DAD_WORDS  = r"(?:dad|father|pop|papa|pa)"
+_MOM_WORDS  = r"(?:mom|mother|mama|ma)"
+_GRANDMA_W  = r"(?:grandma|grandmother|nana|gran|grannie|granny)"
+_GRANDPA_W  = r"(?:grandpa|grandfather|gramps|pop-pop|pawpaw)"
+_APOS       = r"['’]?"  # straight or curly apostrophe
+
+# Two-hop possessive patterns → (regex, narrator_graph_role_to_match)
+# build_narrator_graph labels grandparents as "paternal/maternal grandmother/grandfather"
+# so once the narrator_graph is enriched these patterns resolve cleanly.
+_TWO_HOP_PATTERNS: list[tuple[str, str]] = [
+    # "my dad's mom" / "my father's mother"
+    (rf"my\s+{_DAD_WORDS}{_APOS}s\s+{_MOM_WORDS}",         "paternal grandmother"),
+    (rf"my\s+{_DAD_WORDS}{_APOS}s\s+{_DAD_WORDS}",         "paternal grandfather"),
+    (rf"my\s+{_MOM_WORDS}{_APOS}s\s+{_MOM_WORDS}",         "maternal grandmother"),
+    (rf"my\s+{_MOM_WORDS}{_APOS}s\s+{_DAD_WORDS}",         "maternal grandfather"),
+    # "grandma on my dad's side"
+    (rf"{_GRANDMA_W}\s+on\s+my\s+{_DAD_WORDS}{_APOS}s\s+side", "paternal grandmother"),
+    (rf"{_GRANDPA_W}\s+on\s+my\s+{_DAD_WORDS}{_APOS}s\s+side", "paternal grandfather"),
+    (rf"{_GRANDMA_W}\s+on\s+my\s+{_MOM_WORDS}{_APOS}s\s+side", "maternal grandmother"),
+    (rf"{_GRANDPA_W}\s+on\s+my\s+{_MOM_WORDS}{_APOS}s\s+side", "maternal grandfather"),
+    # "my grandma that is my dad's mom" / "my grandma who is my dad's mom"
+    (rf"{_GRANDMA_W}\s+(?:that\s+is|who\s+is)\s+my\s+{_DAD_WORDS}{_APOS}s\s+{_MOM_WORDS}", "paternal grandmother"),
+    (rf"{_GRANDPA_W}\s+(?:that\s+is|who\s+is)\s+my\s+{_DAD_WORDS}{_APOS}s\s+{_DAD_WORDS}", "paternal grandfather"),
+    (rf"{_GRANDMA_W}\s+(?:that\s+is|who\s+is)\s+my\s+{_MOM_WORDS}{_APOS}s\s+{_MOM_WORDS}", "maternal grandmother"),
+    (rf"{_GRANDPA_W}\s+(?:that\s+is|who\s+is)\s+my\s+{_MOM_WORDS}{_APOS}s\s+{_DAD_WORDS}", "maternal grandfather"),
+]
+
+
+def _apply_role_fallback(
+    text: str,
+    llm_people: list[dict],
+    narrator_graph: list[dict],
+) -> list[dict]:
+    """
+    Post-LLM pass: scan story text for role synonyms (dad, mom, grandma…) that
+    the LLM missed. For each matched synonym, if narrator_graph has exactly one
+    person with that role and they're not already in the result, add them.
+
+    For roles in _TITLE_REQUIRED_ROLES (aunt, uncle, cousin…) a bare role word is
+    too ambiguous. Only a concrete "Aunt [Name]" / "Uncle [Name]" pattern is used.
+    """
+    if not narrator_graph or not text:
+        return llm_people
+
+    already_named = {item["name"].lower() for item in llm_people}
+    text_lc = text.lower()
+    to_add: list[dict] = []
+
+    # --- Generic role-word scan (dad, mom, grandma, etc.) ---
+    for role, synonyms in _ROLE_TEXT_SYNONYMS.items():
+        if role in _TITLE_REQUIRED_ROLES:
+            continue  # handled separately below
+
+        found_in_text = any(
+            re.search(rf"(?<![a-z]){re.escape(s)}(?![a-z])", text_lc)
+            for s in synonyms
+        )
+        if not found_in_text:
+            continue
+
+        synonyms_set = _NARRATOR_ROLE_SYNONYMS.get(role, frozenset())
+        candidates = [
+            e for e in narrator_graph
+            if e["role"] == role
+            or e["role"] in synonyms_set
+            or role in _NARRATOR_ROLE_SYNONYMS.get(e["role"], frozenset())
+        ]
+
+        if not candidates and role in ("father", "mother"):
+            parent_candidates = [e for e in narrator_graph if e["role"] == "parent"]
+            if len(parent_candidates) > 1:
+                target_gender = "male" if role == "father" else "female"
+                parent_candidates = [
+                    e for e in parent_candidates
+                    if (e.get("gender") or "").lower() in (target_gender, target_gender[0])
+                ]
+            candidates = parent_candidates
+
+        if len(candidates) == 1:
+            name = candidates[0]["display_name"]
+            if name and name.lower() not in already_named:
+                to_add.append({"name": name, "role": role})
+                already_named.add(name.lower())
+
+    # --- Title+name scan for ambiguous roles (Aunt Michelle, Uncle Bob, etc.) ---
+    # Build a lookup: first-name (lowered) → narrator_graph entry for title-required roles
+    title_graph: dict[str, dict] = {}
+    for entry in narrator_graph:
+        if entry.get("role") not in _TITLE_REQUIRED_ROLES:
+            continue
+        dn = (entry.get("display_name") or "").strip()
+        if not dn:
+            continue
+        first = dn.split()[0].lower()
+        title_graph[first] = entry
+
+    if title_graph:
+        title_pattern = "|".join(re.escape(t) for t in _TITLE_TO_ROLE)
+        for m in re.finditer(
+            rf"\b({title_pattern})\s+([A-Z][a-z]{{1,20}})\b", text
+        ):
+            role = _TITLE_TO_ROLE[m.group(1).lower()]
+            first_name = m.group(2).lower()
+            entry = title_graph.get(first_name)
+            if entry and entry["display_name"].lower() not in already_named:
+                to_add.append({"name": entry["display_name"], "role": role})
+                already_named.add(entry["display_name"].lower())
+
+    # --- Named social-role scan ("my friend Neal", "a friend named Neal", etc.) ---
+    # Extracts the proper name directly from text so it can go through resolve_person.
+    # Unlike title+name scan, this doesn't require a narrator_graph hit — it just
+    # produces {"name": ..., "role": ...} entries from surface patterns the LLM may miss.
+    _sw_pat = "|".join(re.escape(w) for w in _SOCIAL_ROLE_WORDS)
+    _nm = r"([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20})?)"  # first or full name (capitalized)
+    _social_patterns: list[tuple[str, str, str]] = [
+        # (regex, role_group, name_group) — group numbers within each sub-pattern
+        (rf"\bmy\s+({_sw_pat})\s+{_nm}",                              "1", "2"),
+        (rf"\ba\s+(?:good\s+)?({_sw_pat})\s+named\s+{_nm}",          "1", "2"),
+        (rf"\bI\s+(?:had|have|knew)\s+a\s+(?:good\s+)?({_sw_pat})\s+named\s+{_nm}", "1", "2"),
+        (rf"\b{_nm},?\s+(?:my|a)\s+({_sw_pat})\b",                   "2", "1"),  # "Neal, my friend"
+    ]
+    for pat, rg, ng in _social_patterns:
+        ri, ni = int(rg) - 1, int(ng) - 1
+        for m in re.finditer(pat, text):
+            g = m.groups()
+            role_raw = g[ri] if ri < len(g) else None
+            extracted_name = g[ni] if ni < len(g) else None
+            if role_raw and extracted_name:
+                canonical_role = _SOCIAL_ROLE_WORDS.get(role_raw.lower(), role_raw.lower())
+                if extracted_name.lower() not in already_named:
+                    to_add.append({"name": extracted_name, "role": canonical_role})
+                    already_named.add(extracted_name.lower())
+
+    # --- Two-hop possessive scan ("my dad's mom", "grandma on my dad's side", etc.) ---
+    # Relies on build_narrator_graph having labeled grandparents as
+    # "paternal/maternal grandmother/grandfather".
+    two_hop_graph: dict[str, dict] = {
+        e["role"]: e for e in narrator_graph
+        if e.get("role", "").endswith(("grandmother", "grandfather", "grandparent"))
+        and e.get("role", "").startswith(("paternal", "maternal"))
+    }
+    if two_hop_graph:
+        for pattern, target_role in _TWO_HOP_PATTERNS:
+            if re.search(pattern, text_lc):
+                entry = two_hop_graph.get(target_role)
+                if entry and entry["display_name"].lower() not in already_named:
+                    to_add.append({"name": entry["display_name"], "role": target_role})
+                    already_named.add(entry["display_name"].lower())
+
+    return llm_people + to_add
+
+
+def _gender_refine_parent(role: str, gender: str | None) -> str:
+    """Upgrade generic 'parent' to 'father'/'mother' when Person.gender is known."""
+    if role != "parent" or not gender:
+        return role
+    g = gender.lower()
+    if g in ("male", "m", "man"):
+        return "father"
+    if g in ("female", "f", "woman"):
+        return "mother"
+    return role
+
 
 async def build_narrator_graph(db: AsyncSession, user_id: int) -> list[dict]:
     """
-    Return a list of {role, display_name, person_id} dicts describing the
-    narrator's direct family/social relationships, derived from their self-person
-    and the relationship graph.
+    Return a list of {role, display_name, person_id, gender} dicts describing the
+    narrator's direct and 2-hop family relationships.
 
-    Used to ground LLM extraction: when Nathan writes "my dad", the LLM can
-    substitute "John Smith" because the narrator graph says Nathan's parent is John Smith.
+    Direct (1-hop): father, mother, spouse, siblings, children, aunts/uncles, etc.
+    Two-hop: grandparents are resolved with side labels — "paternal grandmother",
+    "maternal grandfather" — so the LLM can resolve "my dad's mom" or
+    "my grandma on my mom's side" to the right person.
     """
     from app.models import UserProfile, RelationshipEdge
 
@@ -257,7 +493,8 @@ async def build_narrator_graph(db: AsyncSession, user_id: int) -> list[dict]:
         if role and other_id not in seen_pids:
             p = await db.get(Person, other_id)
             if p and p.display_name:
-                entries.append({"role": role, "display_name": p.display_name, "person_id": other_id})
+                refined = _gender_refine_parent(role, getattr(p, "gender", None))
+                entries.append({"role": refined, "display_name": p.display_name, "person_id": other_id, "gender": getattr(p, "gender", None)})
                 seen_pids.add(other_id)
 
     for rel_type, other_id in dst_rows:
@@ -265,8 +502,62 @@ async def build_narrator_graph(db: AsyncSession, user_id: int) -> list[dict]:
         if role and other_id not in seen_pids:
             p = await db.get(Person, other_id)
             if p and p.display_name:
-                entries.append({"role": role, "display_name": p.display_name, "person_id": other_id})
+                refined = _gender_refine_parent(role, getattr(p, "gender", None))
+                entries.append({"role": refined, "display_name": p.display_name, "person_id": other_id, "gender": getattr(p, "gender", None)})
                 seen_pids.add(other_id)
+
+    # --- 2-hop: grandparents with paternal/maternal side labels ---
+    _PARENT_ROLES = {"father", "mother", "parent"}
+    for parent_entry in [e for e in entries if e["role"] in _PARENT_ROLES]:
+        parent_pid = parent_entry["person_id"]
+        parent_role = parent_entry["role"]
+        # Determine side from the parent's role/gender
+        parent_gender = (parent_entry.get("gender") or "").lower()
+        if parent_role == "father" or parent_gender in ("male", "m"):
+            side = "paternal"
+        elif parent_role == "mother" or parent_gender in ("female", "f"):
+            side = "maternal"
+        else:
+            continue  # unknown-gender generic parent — can't label side reliably
+
+        gp_src = (await db.execute(
+            select(RelationshipEdge.rel_type, RelationshipEdge.dst_id)
+            .where(RelationshipEdge.src_id == parent_pid)
+        )).all()
+        gp_dst = (await db.execute(
+            select(RelationshipEdge.rel_type, RelationshipEdge.src_id)
+            .where(RelationshipEdge.dst_id == parent_pid)
+        )).all()
+
+        for rel_type, gp_id in gp_src:
+            gp_role = _SRC_EDGE_TO_ROLE.get((rel_type or "").lower())
+            if gp_role in _PARENT_ROLES and gp_id not in seen_pids:
+                gp = await db.get(Person, gp_id)
+                if gp and gp.display_name:
+                    refined = _gender_refine_parent(gp_role, getattr(gp, "gender", None))
+                    if refined == "father":
+                        labeled = f"{side} grandfather"
+                    elif refined == "mother":
+                        labeled = f"{side} grandmother"
+                    else:
+                        labeled = f"{side} grandparent"
+                    entries.append({"role": labeled, "display_name": gp.display_name, "person_id": gp_id, "gender": getattr(gp, "gender", None)})
+                    seen_pids.add(gp_id)
+
+        for rel_type, gp_id in gp_dst:
+            gp_role = _DST_EDGE_TO_ROLE.get((rel_type or "").lower())
+            if gp_role in _PARENT_ROLES and gp_id not in seen_pids:
+                gp = await db.get(Person, gp_id)
+                if gp and gp.display_name:
+                    refined = _gender_refine_parent(gp_role, getattr(gp, "gender", None))
+                    if refined == "father":
+                        labeled = f"{side} grandfather"
+                    elif refined == "mother":
+                        labeled = f"{side} grandmother"
+                    else:
+                        labeled = f"{side} grandparent"
+                    entries.append({"role": labeled, "display_name": gp.display_name, "person_id": gp_id, "gender": getattr(gp, "gender", None)})
+                    seen_pids.add(gp_id)
 
     return entries
 
@@ -315,7 +606,8 @@ async def resolve_person(
         graph_candidates: list[int] = []
         for entry in narrator_graph:
             synonyms = _NARRATOR_ROLE_SYNONYMS.get(entry["role"], frozenset())
-            if name_lower in synonyms or name_lower == entry["role"].lower():
+            text_syns = frozenset(s.lower() for s in _ROLE_TEXT_SYNONYMS.get(entry["role"], []))
+            if name_lower in synonyms or name_lower in text_syns or name_lower == entry["role"].lower():
                 graph_candidates.append(entry["person_id"])
         if len(graph_candidates) == 1:
             p = await db.get(Person, graph_candidates[0])
@@ -422,7 +714,21 @@ async def resolve_person(
             break  # recognised the prefix but no person found — create new below
 
     # 5) Create new person + seed alias (mark as inferred from mention)
-    p = Person(owner_user_id=user_id, display_name=name, meta={"inferred": True})
+    _ROLE_TO_GENDER: dict[str, str] = {
+        "father": "male", "grandfather": "male", "great-grandfather": "male",
+        "uncle": "male", "brother": "male", "son": "male", "husband": "male",
+        "nephew": "male", "godfather": "male", "stepfather": "male",
+        "mother": "female", "grandmother": "female", "great-grandmother": "female",
+        "aunt": "female", "sister": "female", "daughter": "female", "wife": "female",
+        "niece": "female", "godmother": "female", "stepmother": "female",
+    }
+    inferred_gender = _ROLE_TO_GENDER.get((role_hint or "").lower().strip())
+    p = Person(
+        owner_user_id=user_id,
+        display_name=name,
+        gender=inferred_gender,
+        meta={"inferred": True},
+    )
     db.add(p)
     await db.flush()
     db.add(PersonAlias(person_id=p.id, alias=name))
@@ -495,49 +801,188 @@ def role_hint_near(text: str, start: int, end: int, window: int = 80) -> str | N
     return guess_role_hint(around)
 
 
-_LLM_EXTRACT_SYSTEM = """You extract people mentioned in a personal story or memoir response.
-Given the story text, a list of people already in the narrator's family tree, and the narrator's
-known relationships, identify each distinct person mentioned.
+_LLM_EXTRACT_SYSTEM = """You extract people, places, and events mentioned in a personal story or memoir response.
 
-NARRATOR CONTEXT: If the narrator says "my dad" and the narrator's father is listed as "John Smith",
-output "John Smith" as the name — not "my dad". Always prefer the full name from the narrator's
-relationships when a role-based reference matches.
+NARRATOR CONTEXT — CRITICAL:
+The narrator_relationships list tells you the narrator's actual family members.
+You MUST resolve informal role references to the real names listed there.
 
-Return STRICT JSON only:
+Role reference → how to resolve using narrator_relationships:
+  "dad", "father", "my dad", "my father", "pop", "papa", "pa"
+      → find entry with role "father" in narrator_relationships
+      → if no "father" entry, find "parent" with gender "male" (or "m")
+  "mom", "mother", "my mom", "my mother", "mama", "ma"
+      → find entry with role "mother" in narrator_relationships
+      → if no "mother" entry, find "parent" with gender "female" (or "f")
+  "parents", "mom and dad", "my folks"
+      → include BOTH the father AND mother entries
+  "wife", "my wife", "husband", "my husband"
+      → find entry with role "spouse" or "partner"
+  "brother", "my brother", "sister", "my sister"
+      → find entry with role "sibling"
+  "grandma", "grandmother", "nana", "grandpa", "grandfather", "gramps"
+      → find entry with role "grandmother", "grandfather", or "grandparent"
+  "my dad's mom", "my grandma on my dad's side", "my grandma that is my dad's mom"
+      → find entry with role "paternal grandmother"
+  "my dad's dad", "my grandpa on my dad's side"
+      → find entry with role "paternal grandfather"
+  "my mom's mom", "my grandma on my mom's side"
+      → find entry with role "maternal grandmother"
+  "my mom's dad", "my grandpa on my mom's side"
+      → find entry with role "maternal grandfather"
+
+When narrator_relationships has a "gender" field, use it to distinguish father (male) from mother (female) when both appear with role "parent".
+Always output the full name from narrator_relationships, never the role word itself.
+
+Return STRICT JSON only — exactly this shape:
 {
   "people": [
-    {"name": "full name from narrator relationships if known, otherwise the name used in text",
-     "role": "their relationship to the narrator, or null"}
+    {"name": "full name or best known name", "role": "relationship to narrator or null"}
+  ],
+  "places": [
+    {"name": "place name", "type": "home|farm|city|landmark|region|other",
+     "address": null, "city": null, "state": null, "country": null}
+  ],
+  "events": [
+    {"name": "event name without year e.g. Christmas", "year": 1985,
+     "type": "holiday|birthday|vacation|reunion|wedding|other",
+     "places": ["place name as it appears in places array"],
+     "attendees": ["person name as it appears in people array"]}
   ]
 }
 
-Rules:
+Rules — PEOPLE:
 - Resolve role-based references ("my mom", "dad", "Uncle Dave") to full names using narrator_relationships
 - If no match in narrator_relationships, use the most specific name/nickname from the text
 - If the same person is mentioned multiple ways, pick the most specific / full name
 - Do NOT include the narrator themselves
 - Limit to 20 people maximum
-- If no people are mentioned, return {"people": []}"""
+
+Rules — PLACES:
+- Include specific locations: houses, farms, towns, cities, landmarks, schools, churches
+- Use the family's informal name if that's what's used ("Grandma's farm", "the lake house")
+- Do NOT include vague directions like "home", "outside", "somewhere"
+- city/state/country: fill only if explicitly stated in the text
+- Limit to 15 places maximum
+
+Rules — EVENTS:
+- Include named occasions tied to a specific year if mentioned: "Christmas 1985", "our vacation to Florida"
+- Name should be the event type only ("Christmas", "Florida Vacation") — year goes in the year field
+- year: integer if stated or clearly implied, null if unknown
+- type: pick the closest match from the allowed values
+- places/attendees: reference names exactly as they appear in the people/places arrays above
+- Do NOT create events for generic mentions like "last summer" with no specific occasion
+- Limit to 10 events maximum
+
+If a category has nothing to report, return an empty array for it."""
 
 
-async def llm_extract_people(
+_PLACES_EVENTS_SYSTEM = """Extract specific named places and named occasions from a family memoir story.
+
+Return STRICT JSON only — no commentary, no markdown:
+{
+  "places": [
+    {"name": "place name as used in the story", "type": "home|farm|city|landmark|school|church|other",
+     "city": null, "state": null, "country": null}
+  ],
+  "events": [
+    {"name": "event name without year", "year": null,
+     "type": "holiday|birthday|vacation|reunion|wedding|funeral|other"}
+  ]
+}
+
+PLACES — include named or described specific locations:
+- Family properties: "Grandma's farm", "the lake house", "the old homestead", "Uncle Bill's place"
+- Towns, cities, states, countries when named as destinations or origins
+- Buildings by name: schools, churches, hospitals, businesses
+- Geographic features when named: "the creek", "Mohawk Lake", "the back forty"
+
+PLACES — exclude:
+- Vague words: "home", "outside", "somewhere", "there", "the store" (unnamed)
+- Pure directions: "down the road", "next door"
+
+EVENTS — include named family occasions (year optional):
+- Recurring holidays: Christmas, Thanksgiving, Easter, Fourth of July
+- Life events: weddings, funerals, births, graduations, baptisms
+- Named trips or gatherings: "the Florida vacation", "the family reunion", "Sunday dinners"
+- Be liberal — if the story is clearly about a specific occasion, include it
+
+EVENTS — exclude:
+- Pure time references with no occasion: "last summer", "back then", "a few years ago"
+- Generic daily activities: "we had dinner", "went fishing" (unless it's a named tradition)
+
+Limit: 10 places, 8 events. Return empty arrays if nothing qualifies."""
+
+
+async def llm_extract_places_events(text: str) -> dict:
+    """
+    Dedicated LLM call for places and events — simpler prompt, no narrator context.
+    Returns {"places": [...], "events": [...]}.
+    """
+    if not text or not text.strip():
+        return {"places": [], "events": []}
+    try:
+        from app.llm_client import your_chat_completion
+        raw = await your_chat_completion(
+            system=_PLACES_EVENTS_SYSTEM,
+            user=text.strip()[:6000],  # cap to keep context manageable
+            response_format="json",
+            temperature=0.1,
+        )
+        data = json.loads(raw)
+
+        places = []
+        for pl in (data.get("places") or []):
+            n = (pl.get("name") or "").strip()
+            if n and len(n) > 1:
+                places.append({
+                    "name": n,
+                    "type": (pl.get("type") or "other").strip(),
+                    "address": None,
+                    "city": pl.get("city") or None,
+                    "state": pl.get("state") or None,
+                    "country": pl.get("country") or None,
+                })
+
+        events = []
+        for ev in (data.get("events") or []):
+            n = (ev.get("name") or "").strip()
+            if n and len(n) > 1:
+                yr = ev.get("year")
+                events.append({
+                    "name": n,
+                    "year": int(yr) if yr else None,
+                    "type": (ev.get("type") or "other").strip(),
+                    "places": [],
+                    "attendees": [],
+                })
+
+        return {"places": places, "events": events}
+
+    except Exception:
+        logger.warning("llm_extract_places_events failed", exc_info=True)
+        return {"places": [], "events": []}
+
+
+async def llm_extract_entities(
     text: str,
     known_names: list[str] | None = None,
     narrator_graph: list[dict] | None = None,
-) -> list[dict]:
+) -> dict:
     """
-    Use the LLM to extract (name, role) pairs from a response/transcript.
-    Returns a list of dicts: [{"name": str, "role": str | None}, ...]
-    Falls back to empty list on any error so callers can degrade gracefully.
+    LLM call extracting people from a story (with narrator-graph resolution).
+    Places and events are extracted separately via llm_extract_places_events().
+
+    Returns {"people": [...], "places": [], "events": []} — callers should
+    merge with llm_extract_places_events() results for the full picture.
     """
     if not text or not text.strip():
-        return []
+        return {"people": [], "places": [], "events": []}
+    people: list[dict] = []
     try:
         from app.llm_client import your_chat_completion
-        # narrator_relationships: [{role, display_name}] — tells LLM to resolve
-        # "my dad" → "John Smith" rather than outputting the role word as a name.
         narrator_relationships = [
-            {"role": e["role"], "name": e["display_name"]}
+            {"role": e["role"], "name": e["display_name"], **({"gender": e["gender"]} if e.get("gender") else {})}
             for e in (narrator_graph or [])
         ]
         user_payload = {
@@ -552,19 +997,33 @@ async def llm_extract_people(
             temperature=0.1,
         )
         data = json.loads(raw)
-        people = data.get("people") or []
-        result = []
-        for p in people:
+
+        for p in (data.get("people") or []):
             n = (p.get("name") or "").strip()
             r = (p.get("role") or None)
             if r:
                 r = r.strip() or None
             if n:
-                result.append({"name": n, "role": r})
-        return result
+                people.append({"name": n, "role": r})
+
     except Exception:
-        logger.debug("llm_extract_people failed; caller will fall back", exc_info=True)
-        return []
+        logger.warning("llm_extract_entities failed; falling back to role rules only", exc_info=True)
+
+    # Always run role-word fallback — ensures "dad"/"mom"/etc. map to narrator graph
+    # even when the LLM call fails or the model ignores narrator_relationships
+    people = _apply_role_fallback(text, people, narrator_graph or [])
+
+    return {"people": people, "places": [], "events": []}
+
+
+# Keep old name as a shim so existing callers don't break
+async def llm_extract_people(
+    text: str,
+    known_names: list[str] | None = None,
+    narrator_graph: list[dict] | None = None,
+) -> list[dict]:
+    result = await llm_extract_entities(text, known_names=known_names, narrator_graph=narrator_graph)
+    return result["people"]
 
 async def ensure_self_person(db: AsyncSession, user_id: int, display_name: str) -> int:
     """

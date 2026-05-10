@@ -8,51 +8,48 @@
     ← Back to Memories
   </a>
 
-  <!-- Person header -->
-  <header class="mt-6 mb-8 flex flex-col sm:flex-row items-center sm:items-start gap-6">
-    {% if photo_url %}
-      <img src="{{ photo_url }}" alt="{{ display_name }}"
-           class="w-28 h-28 rounded-full object-cover border-2 border-black/10 shadow-md flex-shrink-0">
-    {% else %}
-      <div class="w-28 h-28 rounded-full bg-black/10 flex items-center justify-center flex-shrink-0 text-4xl font-bold text-black/30">
-        {{ display_name[0] | upper }}
-      </div>
-    {% endif %}
-    <div class="text-center sm:text-left">
+  <!-- Place header -->
+  <header class="mt-6 mb-8">
+    <div class="flex items-center gap-3 mb-1">
+      <span class="material-symbols-outlined text-2xl opacity-50">location_on</span>
       <h1 class="font-baskerville leading-tight text-[clamp(1.9rem,5.5vw,3.2rem)]">{{ display_name }}</h1>
-      <div class="mt-1 flex items-baseline gap-2 flex-wrap">
-        <p class="text-sm opacity-60" id="aliasDisplay">
-          {% if aliases %}Also known as: {{ aliases | join(", ") }}{% endif %}
-        </p>
-        <button onclick="openAliasEdit()" class="text-xs opacity-40 hover:opacity-70 underline">
-          {% if aliases %}edit{% else %}add "also known as"{% endif %}
-        </button>
-      </div>
-      <div id="aliasPanel" class="hidden mt-2">
-        <div class="flex items-center gap-2 flex-wrap">
-          <input id="aliasInput" type="text"
-            value="{{ aliases | join(', ') }}"
-            class="border border-black/20 rounded-lg px-3 py-1.5 text-sm bg-white/80 focus:outline-none focus:ring-2 focus:ring-black/20 w-72"
-            placeholder="Comma-separated: Grandma Betty, Nana B">
-          <button onclick="saveAliases()" class="pill px-3 py-1.5 text-sm font-medium">Save</button>
-          <button onclick="closeAliasEdit()" class="pill px-3 py-1.5 text-sm opacity-60">Cancel</button>
-          <span id="aliasSavedMsg" class="text-xs text-green-700 hidden">Saved</span>
-        </div>
-      </div>
-      <p class="text-sm opacity-70 mt-1">
-        {% if birth_year or death_year %}
-          <span>{{ birth_year or "?" }}{% if death_year %} – {{ death_year }}{% endif %}</span>
-        {% endif %}
-        {% if edges %}
-          <span class="ml-2 opacity-60">·</span>
-          <span class="ml-2">{{ edges | length }} relationship{{ 's' if edges | length != 1 else '' }}</span>
-        {% endif %}
-        {% if mentions %}
-          <span class="ml-2 opacity-60">·</span>
-          <span class="ml-2">{{ mentions | length }} stor{{ 'ies' if mentions | length != 1 else 'y' }}</span>
-        {% endif %}
-      </p>
     </div>
+    <div class="mt-1 flex items-baseline gap-2 flex-wrap">
+      <p class="text-sm opacity-60" id="aliasDisplay">
+        {% if aliases %}Also known as: {{ aliases | join(", ") }}{% endif %}
+      </p>
+      <button onclick="openAliasEdit()" class="text-xs opacity-40 hover:opacity-70 underline">
+        {% if aliases %}edit{% else %}add "also known as"{% endif %}
+      </button>
+    </div>
+    <div id="aliasPanel" class="hidden mt-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <input id="aliasInput" type="text"
+          value="{{ aliases | join(', ') }}"
+          class="border border-black/20 rounded-lg px-3 py-1.5 text-sm bg-white/80 focus:outline-none focus:ring-2 focus:ring-black/20 w-72"
+          placeholder="Comma-separated: The Old House, Grandpa's Farm">
+        <button onclick="saveAliases()" class="pill px-3 py-1.5 text-sm font-medium">Save</button>
+        <button onclick="closeAliasEdit()" class="pill px-3 py-1.5 text-sm opacity-60">Cancel</button>
+        <span id="aliasSavedMsg" class="text-xs text-green-700 hidden">Saved</span>
+      </div>
+    </div>
+    <p class="text-sm opacity-70 mt-1 flex flex-wrap gap-x-3 gap-y-1">
+      {% if place.place_type %}
+        <span class="capitalize">{{ place.place_type }}</span>
+      {% endif %}
+      {% if place.city or place.state %}
+        <span class="opacity-60">·</span>
+        <span>{{ [place.city, place.state] | select | join(", ") }}</span>
+      {% endif %}
+      {% if mentions %}
+        <span class="opacity-60">·</span>
+        <span>{{ mentions | length }} stor{{ 'ies' if mentions | length != 1 else 'y' }}</span>
+      {% endif %}
+      {% if events %}
+        <span class="opacity-60">·</span>
+        <span>{{ events | length }} event{{ 's' if events | length != 1 else '' }}</span>
+      {% endif %}
+    </p>
   </header>
 
   <!-- Main layout: article + sidebar -->
@@ -95,19 +92,14 @@
                {% if article and article.status == 'generating' %}style="display:none"{% endif %}>
             <div class="page-column">
               {% if article and article.user_edited_md %}
-                <!-- User-written article -->
                 <div class="wiki-edit-badge">
                   <span class="material-symbols-outlined text-sm align-middle">edit</span>
                   User-written
                   <button class="underline ml-2 text-xs" onclick="revertEdit()">revert to AI</button>
                 </div>
-                <div class="chapter-prose" id="wikiContent">
-                  {{ resolved_content | markdown }}
-                </div>
+                <div class="chapter-prose" id="wikiContent">{{ resolved_content | markdown }}</div>
               {% elif article and article.content_md %}
-                <div class="chapter-prose" id="wikiContent">
-                  {{ (resolved_content or article.content_md) | markdown }}
-                </div>
+                <div class="chapter-prose" id="wikiContent">{{ (resolved_content or article.content_md) | markdown }}</div>
                 {% if article.generated_at %}
                   <p class="mt-8 text-xs opacity-40 text-right">
                     Generated {{ article.generated_at.strftime('%B %d, %Y') }}
@@ -128,7 +120,6 @@
                 </div>
               {% endif %}
 
-              <!-- User Notes section -->
               {% if article and article.user_notes_md %}
               <div class="wiki-notes-display mt-8 pt-6 border-t border-black/10">
                 <h3 class="font-semibold text-sm opacity-60 mb-2 uppercase tracking-wide">Notes</h3>
@@ -141,7 +132,6 @@
             </div>
           </div>
 
-          <!-- Edit toolbar (always visible at bottom of card) -->
           <div class="wiki-edit-bar px-6 py-4 border-t border-black/8 flex flex-wrap gap-3 items-center"
                {% if article and article.status == 'generating' %}style="display:none"{% endif %}>
             <button onclick="openNotes()" class="wiki-edit-btn">
@@ -154,15 +144,12 @@
             </button>
           </div>
 
-          <!-- Notes editor panel (hidden by default) -->
           <div id="notesPanel" class="hidden px-6 pb-6">
             <div class="wiki-editor-panel">
-              <label class="block text-xs font-semibold opacity-60 mb-2 uppercase tracking-wide">
-                Notes — additions &amp; corrections (preserved when AI regenerates)
-              </label>
+              <label class="block text-xs font-semibold opacity-60 mb-2 uppercase tracking-wide">Notes — preserved when AI regenerates</label>
               <textarea id="notesTextarea" rows="6"
                 class="w-full border border-black/20 rounded-xl px-3 py-2 text-sm bg-white/80 focus:outline-none focus:ring-2 focus:ring-black/20 font-mono resize-y"
-                placeholder="Add context, corrections, dates, family lore…">{{ (article.user_notes_md or '') if article else '' }}</textarea>
+                placeholder="Add context, history, address, family lore…">{{ (article.user_notes_md or '') if article else '' }}</textarea>
               <div class="flex gap-2 mt-2 items-center">
                 <button onclick="saveNotes()" class="pill px-3 py-1.5 text-sm font-medium">Save Notes</button>
                 <button onclick="cancelNotes()" class="pill px-3 py-1.5 text-sm opacity-60">Cancel</button>
@@ -171,16 +158,10 @@
             </div>
           </div>
 
-          <!-- Full article editor panel (hidden by default) -->
           <div id="editPanel" class="hidden px-6 pb-6">
             <div class="wiki-editor-panel">
-              <label class="block text-xs font-semibold opacity-60 mb-1 uppercase tracking-wide">
-                Write / Edit Article
-              </label>
-              <p class="text-xs opacity-50 mb-2">
-                Full article — edit, rewrite, or start from scratch. Your edits are preserved when AI regenerates.
-                Markdown supported.
-              </p>
+              <label class="block text-xs font-semibold opacity-60 mb-1 uppercase tracking-wide">Write / Edit Article</label>
+              <p class="text-xs opacity-50 mb-2">Full article — edit, rewrite, or start from scratch. Your edits are preserved when AI regenerates. Markdown supported.</p>
               <textarea id="editTextarea" rows="16"
                 class="w-full border border-black/20 rounded-xl px-3 py-2 text-sm bg-white/80 focus:outline-none focus:ring-2 focus:ring-black/20 font-mono resize-y"
                 placeholder="Write the article in Markdown…">{{ (article.user_edited_md or article.content_md or '') if article else '' }}</textarea>
@@ -195,15 +176,15 @@
         </article>
       </div>
 
-      <!-- Relationships section -->
-      {% if edges %}
+      <!-- Events at this place -->
+      {% if events %}
       <div class="mt-6 mx-auto max-w-[1000px]">
-        <h3 class="font-baskerville text-xl mb-3">Relationships</h3>
+        <h3 class="font-baskerville text-xl mb-3">Events at This Place</h3>
         <div class="flex flex-wrap gap-2">
-          {% for edge in edges %}
-            <a href="/wiki/people/{{ edge.person_id }}"
+          {% for ev in events %}
+            <a href="/wiki/events/{{ ev.event_id }}"
                class="pill select-none text-sm">
-              {{ edge.label }} · {{ edge.name }}
+              {{ ev.name }}{% if ev.year %} {{ ev.year }}{% endif %}
             </a>
           {% endfor %}
         </div>
@@ -229,20 +210,19 @@
               </li>
             {% endfor %}
           </ul>
-          {% if mentions | length == 20 %}
-            <p class="text-xs opacity-50 mt-2 text-center">Showing 20 most recent</p>
+          {% if mentions | length == 30 %}
+            <p class="text-xs opacity-50 mt-2 text-center">Showing 30 most recent</p>
           {% endif %}
         {% else %}
-          <p class="text-sm opacity-60">No stories mention this person yet.</p>
+          <p class="text-sm opacity-60">No stories mention this place yet.</p>
         {% endif %}
-        <!-- Revision history -->
         {% if article and article.content_md %}
         <div class="mt-6">
           <button onclick="toggleRevisions()" class="text-xs opacity-50 hover:opacity-80 flex items-center gap-1">
             <span class="material-symbols-outlined text-sm">history</span>
             Revision history
           </button>
-          <div id="revisionPanel" class="hidden mt-2 space-y-1.5" data-entity-type="person" data-entity-id="{{ person_id }}">
+          <div id="revisionPanel" class="hidden mt-2 space-y-1.5" data-entity-type="place" data-entity-id="{{ place_id }}">
             <div id="revisionList" class="text-xs opacity-60">Loading…</div>
           </div>
         </div>
@@ -255,9 +235,9 @@
 </section>
 
 <script>
-window.PERSON_ID = {{ person_id | tojson }};
-window.WIKI_ENTITY_TYPE = 'person';
-window.WIKI_ENTITY_ID = window.PERSON_ID;
+window.PLACE_ID = {{ place_id | tojson }};
+window.WIKI_ENTITY_TYPE = 'place';
+window.WIKI_ENTITY_ID = window.PLACE_ID;
 window.WIKI_STATUS = {{ (article.status if article else 'none') | tojson }};
 
 async function triggerGenerate() {
@@ -266,14 +246,13 @@ async function triggerGenerate() {
   const btnGen = document.getElementById('btnGenerate');
   const btnRegen = document.getElementById('btnRegenerate');
 
-  // Optimistic UI
   progress.classList.remove('hidden');
   if (body) body.style.display = 'none';
   btnGen.classList.add('hidden');
   btnRegen.classList.add('hidden');
 
   try {
-    const resp = await fetch(`/api/wiki/generate/person/${window.PERSON_ID}`, {
+    const resp = await fetch(`/api/wiki/generate/place/${window.PLACE_ID}`, {
       method: 'POST',
       credentials: 'include',
     });
@@ -283,7 +262,6 @@ async function triggerGenerate() {
       if (body) body.style.display = '';
       return;
     }
-    // Start polling
     pollStatus();
   } catch(e) {
     alert('Network error. Please try again.');
@@ -293,18 +271,17 @@ async function triggerGenerate() {
 }
 
 async function pollStatus() {
-  const POLL_INTERVAL = 5000; // 5s
+  const POLL_INTERVAL = 5000;
   let attempts = 0;
-  const MAX_ATTEMPTS = 120; // 10 minutes
+  const MAX_ATTEMPTS = 120;
 
   async function check() {
     if (attempts++ > MAX_ATTEMPTS) return;
     try {
-      const r = await fetch(`/api/wiki/status/person/${window.PERSON_ID}`, { credentials: 'include' });
+      const r = await fetch(`/api/wiki/status/place/${window.PLACE_ID}`, { credentials: 'include' });
       if (!r.ok) { setTimeout(check, POLL_INTERVAL); return; }
       const data = await r.json();
       if (data.status === 'ready' || data.status === 'error') {
-        // Reload to show new content
         window.location.reload();
         return;
       }
@@ -314,20 +291,16 @@ async function pollStatus() {
   check();
 }
 
-// If already generating on page load, start polling
 if (window.WIKI_STATUS === 'generating') {
   pollStatus();
 }
 
-// ---- Notes editor ----
 function openNotes() {
   document.getElementById('notesPanel').classList.remove('hidden');
   document.getElementById('editPanel').classList.add('hidden');
   document.getElementById('notesTextarea').focus();
 }
-function cancelNotes() {
-  document.getElementById('notesPanel').classList.add('hidden');
-}
+function cancelNotes() { document.getElementById('notesPanel').classList.add('hidden'); }
 async function saveNotes() {
   const notes = document.getElementById('notesTextarea').value;
   const r = await fetch(`/api/wiki/${window.WIKI_ENTITY_TYPE}/${window.WIKI_ENTITY_ID}/notes`, {
@@ -336,23 +309,16 @@ async function saveNotes() {
     body: JSON.stringify({notes}),
   });
   if (r.ok) {
-    const msg = document.getElementById('notesSavedMsg');
-    msg.classList.remove('hidden');
-    setTimeout(() => { msg.classList.add('hidden'); window.location.reload(); }, 1200);
-  } else {
-    alert('Error saving notes — ' + r.status);
-  }
+    document.getElementById('notesSavedMsg').classList.remove('hidden');
+    setTimeout(() => window.location.reload(), 1200);
+  } else { alert('Error saving notes — ' + r.status); }
 }
-
-// ---- Article editor ----
 function openEdit() {
   document.getElementById('editPanel').classList.remove('hidden');
   document.getElementById('notesPanel').classList.add('hidden');
   document.getElementById('editTextarea').focus();
 }
-function cancelEdit() {
-  document.getElementById('editPanel').classList.add('hidden');
-}
+function cancelEdit() { document.getElementById('editPanel').classList.add('hidden'); }
 async function saveEdit() {
   const content = document.getElementById('editTextarea').value.trim();
   const r = await fetch(`/api/wiki/${window.WIKI_ENTITY_TYPE}/${window.WIKI_ENTITY_ID}/edit`, {
@@ -361,12 +327,9 @@ async function saveEdit() {
     body: JSON.stringify({content}),
   });
   if (r.ok) {
-    const msg = document.getElementById('editSavedMsg');
-    msg.classList.remove('hidden');
-    setTimeout(() => { msg.classList.add('hidden'); window.location.reload(); }, 1500);
-  } else {
-    alert('Error saving article — ' + r.status);
-  }
+    document.getElementById('editSavedMsg').classList.remove('hidden');
+    setTimeout(() => window.location.reload(), 1500);
+  } else { alert('Error saving article — ' + r.status); }
 }
 async function revertEdit() {
   if (!confirm('Revert to AI article? Your written version will be saved in revision history.')) return;
@@ -385,40 +348,26 @@ async function toggleRevisions() {
   panel.classList.toggle('hidden');
   if (!panel.classList.contains('hidden') && !_revisionsLoaded) {
     _revisionsLoaded = true;
-    const type = panel.dataset.entityType;
-    const id   = panel.dataset.entityId;
+    const type = panel.dataset.entityType, id = panel.dataset.entityId;
     try {
       const revs = await (await fetch(`/api/wiki/${type}/${id}/revisions`, {credentials:'include'})).json();
       const list = document.getElementById('revisionList');
       if (!revs.length) { list.textContent = 'No saved revisions yet.'; return; }
-      list.innerHTML = revs.map(r => {
-        const label = r.source === 'ai' ? 'AI version' : 'User edit';
-        const date  = r.saved_at ? new Date(r.saved_at).toLocaleString() : '';
-        return `<div class="border border-black/10 rounded-xl p-2 bg-white/40">
-          <div class="flex items-center justify-between gap-2 flex-wrap">
-            <div>
-              <span class="font-medium text-xs">${label}</span>
-              <span class="opacity-50 text-xs ml-1">${date}</span>
-            </div>
-            <button onclick="restoreRevision(${r.id},'${type}',${id})"
-                    class="pill text-xs px-2 py-0.5">Restore</button>
-          </div>
-          <p class="text-xs opacity-50 mt-1 line-clamp-2">${r.preview}</p>
-        </div>`;
-      }).join('');
-    } catch(e) {
-      document.getElementById('revisionList').textContent = 'Could not load revisions.';
-    }
+      list.innerHTML = revs.map(r => `<div class="border border-black/10 rounded-xl p-2 bg-white/40">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <div><span class="font-medium text-xs">${r.source === 'ai' ? 'AI version' : 'User edit'}</span>
+          <span class="opacity-50 text-xs ml-1">${r.saved_at ? new Date(r.saved_at).toLocaleString() : ''}</span></div>
+          <button onclick="restoreRevision(${r.id},'${type}',${id})" class="pill text-xs px-2 py-0.5">Restore</button>
+        </div>
+        <p class="text-xs opacity-50 mt-1 line-clamp-2">${r.preview}</p>
+      </div>`).join('');
+    } catch(e) { document.getElementById('revisionList').textContent = 'Could not load revisions.'; }
   }
 }
-
 async function restoreRevision(revId, type, id) {
-  if (!confirm('Restore this version? The current article will be saved to revision history first.')) return;
-  const r = await fetch(`/api/wiki/${type}/${id}/revisions/${revId}/restore`, {
-    method: 'POST', credentials: 'include',
-  });
-  if (r.ok) window.location.reload();
-  else alert('Could not restore revision.');
+  if (!confirm('Restore this version? Current article saved to history first.')) return;
+  const r = await fetch(`/api/wiki/${type}/${id}/revisions/${revId}/restore`, {method:'POST',credentials:'include'});
+  if (r.ok) window.location.reload(); else alert('Could not restore revision.');
 }
 
 function openAliasEdit() {
@@ -444,7 +393,6 @@ async function saveAliases() {
 </script>
 
 <style>
-  /* ---------- Paper card (same as chapter_view) ---------- */
   .paper-card {
     position: relative; border-radius: 1rem;
     background: linear-gradient(180deg, #FCFAF3 0%, #F7F2E7 100%);
@@ -471,8 +419,6 @@ async function saveAliases() {
   @media (min-width: 680px) { .book-body { padding: 34px 54px; } }
   .page-column { max-width: 64ch; margin: 0 auto; padding: 0 1rem; }
   @media (min-width: 720px) { .page-column { padding: 0; } }
-
-  /* ---------- Chapter prose (same as chapter_view) ---------- */
   .chapter-prose {
     font-family: var(--brand-serif, ui-serif, Georgia, Cambria, "Times New Roman", Times, serif);
     font-size: clamp(1.05rem, 1.2vw, 1.22rem);
@@ -483,17 +429,12 @@ async function saveAliases() {
   .chapter-prose h1, .chapter-prose h2 {
     font-family: var(--brand-serif);
     font-size: clamp(1.4rem, 2.5vw, 1.9rem);
-    font-weight: 700;
-    margin: 2rem 0 .75rem;
-    line-height: 1.3;
-    text-indent: 0;
+    font-weight: 700; margin: 2rem 0 .75rem; line-height: 1.3; text-indent: 0;
   }
   .chapter-prose h3 {
     font-family: var(--brand-serif);
     font-size: clamp(1.1rem, 1.8vw, 1.4rem);
-    font-weight: 700;
-    margin: 1.5rem 0 .5rem;
-    text-indent: 0;
+    font-weight: 700; margin: 1.5rem 0 .5rem; text-indent: 0;
   }
   .chapter-prose p { margin: 0 0 1.1em; text-indent: 1.25em; }
   .chapter-prose p:first-child,
@@ -505,50 +446,29 @@ async function saveAliases() {
   .chapter-prose hr { border: none; border-top: 1px solid rgba(0,0,0,.12); margin: 2rem 0; }
   .chapter-prose ul { margin: 0 0 1em 1.5em; list-style: disc; text-indent: 0; }
   .chapter-prose li { margin-bottom: .35em; text-indent: 0; }
-
-  /* Inline citation links e.g. [Nathan 1] */
   .chapter-prose a[href^="/response/"] {
-    font-size: 0.72em;
-    vertical-align: super;
-    line-height: 0;
-    color: #6b7280;
-    text-decoration: none;
-    border-bottom: 1px dotted #9ca3af;
-    white-space: nowrap;
+    font-size: 0.72em; vertical-align: super; line-height: 0;
+    color: #6b7280; text-decoration: none;
+    border-bottom: 1px dotted #9ca3af; white-space: nowrap;
   }
   .chapter-prose a[href^="/response/"]:hover { color: #111827; border-bottom-color: #374151; }
-
-  /* Sources section at the bottom */
-  .chapter-prose h2:last-of-type ~ ul,
-  .chapter-prose h2:last-of-type { opacity: 0.75; font-size: 0.9em; }
-  .chapter-prose .sources-list { font-size: 0.85em; opacity: 0.8; }
-
-  /* ---------- Toolbar (same as chapter_view) ---------- */
   .article-toolbar {
     position: absolute; top: 17px; right: 17px;
     display: flex; gap: 8px;
     opacity: 0; pointer-events: none;
-    transition: opacity .2s ease;
-    z-index: 2;
+    transition: opacity .2s ease; z-index: 2;
   }
   .paper-card:hover .article-toolbar,
-  .paper-card:focus-within .article-toolbar {
-    opacity: 1; pointer-events: auto;
-  }
+  .paper-card:focus-within .article-toolbar { opacity: 1; pointer-events: auto; }
   .btn-icon {
     height: 36px; width: 36px; display: grid; place-items: center;
     color: #6b7280; border-radius: .5rem;
     border: 1px solid rgba(0,0,0,.15);
     background: #fff7; backdrop-filter: blur(6px);
-    transition: background .15s, color .15s;
-    cursor: pointer;
+    transition: background .15s, color .15s; cursor: pointer;
   }
   .btn-icon:hover { color: #374151; background: #fff; }
-
-  .wiki-edit-bar {
-    background: rgba(0,0,0,0.025);
-    border-radius: 0 0 1rem 1rem;
-  }
+  .wiki-edit-bar { background: rgba(0,0,0,0.025); border-radius: 0 0 1rem 1rem; }
   .wiki-edit-btn {
     display: inline-flex; align-items: center; gap: 5px;
     font-size: 0.78rem; padding: 5px 12px; border-radius: 9999px;
@@ -557,66 +477,36 @@ async function saveAliases() {
   }
   .wiki-edit-btn:hover { background: #fff; }
   .wiki-editor-panel {
-    background: rgba(255,255,255,.65);
-    border: 1px solid rgba(0,0,0,.1);
-    border-radius: .75rem; padding: 1rem;
-    backdrop-filter: blur(6px);
+    background: rgba(255,255,255,.65); border: 1px solid rgba(0,0,0,.1);
+    border-radius: .75rem; padding: 1rem; backdrop-filter: blur(6px);
   }
   .wiki-edit-badge {
     display: inline-flex; align-items: center; gap: 4px;
-    font-size: 0.72rem; color: #6b7280;
-    background: rgba(0,0,0,.05); border-radius: 6px;
-    padding: 2px 8px; margin-bottom: .75rem;
+    font-size: 0.72rem; color: #6b7280; background: rgba(0,0,0,.05);
+    border-radius: 6px; padding: 2px 8px; margin-bottom: .75rem;
   }
   .wiki-notes-display { color: #374151; }
-
-  /* ── Inline citation superscripts ── */
   .wiki-cite a {
-    font-size: .7em;
-    color: #2563eb;
-    text-decoration: none;
-    vertical-align: super;
-    line-height: 0;
-    font-style: normal;
+    font-size: .7em; color: #2563eb; text-decoration: none;
+    vertical-align: super; line-height: 0; font-style: normal;
   }
   .wiki-cite a:hover { text-decoration: underline; }
-
-  /* ── Sources section ── */
   .wiki-sources {
-    margin-top: 2.5rem;
-    padding-top: 1.25rem;
+    margin-top: 2.5rem; padding-top: 1.25rem;
     border-top: 1px solid rgba(0,0,0,.12);
   }
   .wiki-sources-heading {
-    font-size: .75rem;
-    font-weight: 700;
-    letter-spacing: .06em;
-    text-transform: uppercase;
-    opacity: .45;
-    margin-bottom: .75rem;
+    font-size: .75rem; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; opacity: .45; margin-bottom: .75rem;
   }
   .wiki-ref {
-    display: flex;
-    gap: .5rem;
-    align-items: baseline;
-    margin-bottom: .45rem;
-    font-size: .82rem;
-    line-height: 1.45;
+    display: flex; gap: .5rem; align-items: baseline;
+    margin-bottom: .45rem; font-size: .82rem; line-height: 1.45;
   }
-  .wiki-ref-n {
-    flex-shrink: 0;
-    color: #2563eb;
-    font-weight: 600;
-    min-width: 1.6rem;
-  }
-  .wiki-ref-link {
-    color: #2563eb;
-    text-decoration: none;
-    font-weight: 500;
-  }
+  .wiki-ref-n { flex-shrink: 0; color: #2563eb; font-weight: 600; min-width: 1.6rem; }
+  .wiki-ref-link { color: #2563eb; text-decoration: none; font-weight: 500; }
   .wiki-ref-link:hover { text-decoration: underline; }
   .wiki-ref-meta { opacity: .55; }
-
   @media print {
     body { background: #fff !important; }
     .article-toolbar, .wiki-edit-bar, button, aside { display: none !important; }

@@ -165,10 +165,55 @@
     {% endif %}
 
     {% if step == "preview" %}
-    <h2 class="text-xl mb-2">Ready to go?</h2>
-    <p class="mb-4 text-grey-600">We’ll assign prompts based on your roles, people, places, and interests — with extra sparkle where you mentioned specific people.</p>
+    <h2 class="text-xl mb-2">Here’s what we’ve got</h2>
+    <p class="mb-5 text-sm text-gray-600">Review your setup, then hit Finish — we’ll build your prompt queue, family graph, and wiki stubs.</p>
+
+    {% if preview_data.in_group and preview_data.group_name %}
+    <div class="mb-4 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200 text-sm text-indigo-800">
+      You’re part of <strong>{{ preview_data.group_name }}</strong>. People already shared in your family group are marked below.
+    </div>
+    {% endif %}
+
+    {% if preview_data.people %}
+    <div class="mb-5">
+      <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">Your people</p>
+      <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg overflow-hidden">
+        {% for p in preview_data.people %}
+        <li class="flex items-center gap-2 px-3 py-2 bg-white">
+          <span class="flex-1 text-sm font-medium">{{ p.name }}</span>
+          {% if p.role %}
+          <span class="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{{ p.role }}</span>
+          {% endif %}
+          {% if p.in_group %}
+          <span class="text-xs text-indigo-600 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">shared in group</span>
+          {% else %}
+          <span class="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">added</span>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if preview_data.roles %}
+    <div class="mb-5">
+      <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">Your roles</p>
+      <div class="flex flex-wrap gap-2">
+        {% for r in preview_data.roles %}
+        <span class="text-xs bg-stone-100 border border-stone-200 px-2 py-1 rounded">{{ r }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="mb-6 p-3 rounded-lg bg-stone-50 border border-stone-200 text-sm text-gray-600 space-y-1">
+      <p>✦ Prompts will be personalized to your people, roles, and interests.</p>
+      <p>✦ Your family graph will show connections as you write.</p>
+      <p>✦ Each person gets a wiki article built from your stories over time.</p>
+    </div>
+
     <form method="post" action="/onboarding/commit">
-      <button class="pill">Finish</button>
+      <button class="pill">Finish setup</button>
     </form>
     {% endif %}
 <script>localStorage.removeItem("youGenderHint");</script>

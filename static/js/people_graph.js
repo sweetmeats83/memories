@@ -60,6 +60,7 @@ console.info("people_graph.js — click path & hover path build loaded");
     try {
       if (pDisplayName) pDisplayName.value = '';
       if (pRole && pRole.options && pRole.options.length) pRole.selectedIndex = 0;
+      const _pgReset = document.getElementById('p_gender'); if (_pgReset) _pgReset.value = '';
       if (pBirth) pBirth.value = '';
       const pBirthFull = document.getElementById('p_birth_full');
       if (pBirthFull) pBirthFull.value = '';
@@ -479,6 +480,7 @@ console.info("people_graph.js — click path & hover path build loaded");
         kind: String(n.kind || 'person').toLowerCase(),
         dead: !!(n.dead || n.deceased),
         color: n.color || n.dot_color || null,
+        gender: (n.gender || '').toLowerCase() || null,
         role: (n.role_hint || n.role || '').toString().toLowerCase(),
         x, y, vx: (Math.random()-0.5)*20, vy: (Math.random()-0.5)*20, fixed: false,
         jphi, jw, dw, rbase,
@@ -1054,6 +1056,10 @@ console.info("people_graph.js — click path & hover path build loaded");
 
       // Dot
       ctx.beginPath();
+      const isDark = document.documentElement.classList.contains('dark');
+      const GENDER_MALE   = isDark ? '#60a5fa' : '#3b82f6';  // blue-400 / blue-500
+      const GENDER_FEMALE = isDark ? '#f472b6' : '#ec4899';  // pink-400 / pink-500
+      const GENDER_NB     = isDark ? '#a78bfa' : '#8b5cf6';  // violet-400 / violet-500
       let fill = CFG.nodeColor;
       if (state.meId && SID(n.id) === SID(state.meId)) fill = CFG.userColor;
       if (n.kind === 'person' && n.dead) fill = CFG.deadColor;
@@ -1061,6 +1067,9 @@ console.info("people_graph.js — click path & hover path build loaded");
       if (n.kind === 'person' && !n.dead) {
         if (n.color) fill = n.color;
         else if (state.petNodes && state.petNodes.has(SID(n.id))) fill = PET_COLOR;
+        else if (n.gender === 'male') fill = GENDER_MALE;
+        else if (n.gender === 'female') fill = GENDER_FEMALE;
+        else if (n.gender === 'nonbinary') fill = GENDER_NB;
       }
       ctx.fillStyle = fill;
       ctx.save();
@@ -1456,9 +1465,11 @@ console.info("people_graph.js — click path & hover path build loaded");
   async function savePanel(){
     if (!state.selectedId) return;
     const pBirthFull = document.getElementById('p_birth_full');
+    const pGender = document.getElementById('p_gender');
     const body = {
       display_name: (pDisplayName && pDisplayName.value ? pDisplayName.value.trim() : undefined),
       role_hint: (pRole && pRole.value) ? String(pRole.value).toLowerCase() : undefined,
+      gender: (pGender && pGender.value) ? pGender.value : null,
       birth_year: Number(pBirth?.value) || null,
       death_year: Number(pDeath?.value) || null,
       birth_date: (pBirthFull?.value || '').trim() || null,
@@ -1905,6 +1916,8 @@ console.info("people_graph.js — click path & hover path build loaded");
         }
       } catch {}
 
+      const pGenderSel = document.getElementById('p_gender');
+      if (pGenderSel) pGenderSel.value = (d.gender || '').toLowerCase() || '';
       if (pBirth) pBirth.value = d.birth_year || '';
       const pBirthFull = document.getElementById('p_birth_full');
       if (pBirthFull) pBirthFull.value = d.birth_date || '';
