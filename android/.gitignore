@@ -1,0 +1,16 @@
+.gradle/
+build/
+/local.properties
+/.idea/
+*.iml
+.DS_Store
+/captures/
+# Signing secrets — never commit
+keystore.properties
+*.jks
+*.keystore
+
+# Build output APKs — distribute via GitHub Releases, not the git tree
+/dist/
+*.apk
+*.aab

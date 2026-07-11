@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Private family app: the server URL is supplied by the user and may be an
+  https public host (Cloudflare) OR a plain-http LAN address / emulator loopback.
+  We permit cleartext so LAN/dev setups work; production installs should point
+  at an https URL. Adjust to https-only if you never use http.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

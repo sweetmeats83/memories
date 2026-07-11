@@ -1,0 +1,34 @@
+<resources>
+    <string name="app_name">Memories</string>
+
+    <!-- Setup screen -->
+    <string name="setup_title">Connect to your Memories server</string>
+    <string name="setup_hint">https://memories.example.com</string>
+    <string name="setup_help">Enter the full address of your family Memories site. You only do this once.</string>
+    <string name="setup_save">Continue</string>
+    <string name="setup_invalid">Please enter a valid http(s) URL.</string>
+
+    <!-- Recorder -->
+    <string name="rec_audio">Audio</string>
+    <string name="rec_video">Video</string>
+    <string name="rec_record">Record</string>
+    <string name="rec_pause">Pause</string>
+    <string name="rec_resume">Resume</string>
+    <string name="rec_finish">Finish</string>
+    <string name="rec_close">Close</string>
+    <string name="rec_flip">Flip camera</string>
+    <string name="rec_uploading">Uploading…</string>
+    <string name="rec_saving">Saving…</string>
+    <string name="rec_failed">Upload failed. Tap to retry.</string>
+    <string name="rec_perm_needed">Microphone and camera permission are required to record.</string>
+
+    <!-- Menu -->
+    <string name="menu_reload">Reload</string>
+    <string name="menu_server">Change server</string>
+
+    <!-- Reminders -->
+    <string name="reminder_channel_name">Memory reminders</string>
+    <string name="reminder_channel_desc">Gentle nudges when your weekly memory prompt is ready and waiting</string>
+    <string name="reminder_title_new_prompt">Your weekly prompt is ready</string>
+    <string name="reminder_title_gentle">Memories</string>
+</resources>

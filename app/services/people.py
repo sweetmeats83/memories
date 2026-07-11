@@ -207,6 +207,30 @@ def _role_matches(stored: str | None, hint: str | None) -> bool:
     return s == h or s in h or h in s
 
 
+def _role_generation(role: str | None) -> int | None:
+    """Approximate generational offset of a role relative to the narrator:
+    negative = older (ancestors), 0 = same generation, positive = younger
+    (descendants). None when the role carries no clear generational signal.
+
+    Used to keep a mention like "my brother Tommy" (same generation) from being
+    linked to a same-named descendant (a son named Tommy)."""
+    if not role:
+        return None
+    r = role.lower()
+    if "great-grand" in r or "great grand" in r:
+        return 3 if any(x in r for x in ("child", "son", "daughter")) else -3
+    if "grand" in r:  # grandchild/grandson vs grandparent/grandma/grandpa
+        return 2 if any(x in r for x in ("child", "son", "daughter")) else -2
+    if any(x in r for x in ("father", "dad", "mother", "mom", "parent", "aunt", "uncle")):
+        return -1
+    if any(x in r for x in ("son", "daughter", "child", "niece", "nephew")):
+        return 1
+    if any(x in r for x in ("brother", "sister", "sibling", "cousin",
+                            "spouse", "wife", "husband", "partner", "friend")):
+        return 0
+    return None
+
+
 # Maps a relationship edge label (from the narrator's perspective) to a
 # plain role word the LLM and users will recognise.
 _SRC_EDGE_TO_ROLE: dict[str, str] = {
@@ -597,6 +621,26 @@ async def resolve_person(
     _group_ids = await visible_group_ids(db, user_id)
     _vis = person_visibility_filter(user_id, _group_ids)
 
+    # Narrator-graph role lookup, for generation-aware matching below. A candidate
+    # is "incompatible" only when BOTH the mentioned role and the candidate's known
+    # role have a clear, differing generation — a narrow, high-confidence guard.
+    graph_role_by_pid: dict[int, str] = {}
+    if narrator_graph:
+        for _e in narrator_graph:
+            if _e.get("person_id") is not None:
+                graph_role_by_pid[_e["person_id"]] = _e.get("role")
+
+    def _incompatible_gen(p: "Person") -> bool:
+        hg = _role_generation(role_hint)
+        if hg is None:
+            return False
+        pg = _role_generation(graph_role_by_pid.get(p.id))
+        if pg is None:
+            pg = _role_generation((p.meta or {}).get("role_hint"))
+        if pg is None:
+            return False
+        return hg != pg
+
     # 0) Narrator-graph fast-path: if the extracted name is a role word that maps
     #    unambiguously to ONE person in the narrator's graph, return that person.
     #    Uses _NARRATOR_ROLE_SYNONYMS so "dad"/"mom" match the generic "parent" role,
@@ -618,26 +662,35 @@ async def resolve_person(
         # fall through to name-based matching where the LLM already substituted
         # a full name, or to fuzzy matching as last resort.
 
-    # 1) Alias exact (case-insensitive)
-    alias_row = await db.scalar(
-        select(PersonAlias)
-        .join(Person, Person.id == PersonAlias.person_id)
+    # 1) + 2) Exact match on alias or display_name (case-insensitive), but
+    #     GENERATION-AWARE. A same-named person of the wrong generation (e.g. a son
+    #     named after the narrator's brother) is skipped, so "my brother Tommy" in a
+    #     childhood story is not linked to a child named Tommy. Only a lone,
+    #     generationally compatible exact match short-circuits here; everything else
+    #     defers to the generation-filtered fuzzy / disambiguation path below.
+    exact_matches: list = []
+    _seen_exact: set[int] = set()
+    _alias_hits = (await db.execute(
+        select(Person)
+        .join(PersonAlias, PersonAlias.person_id == Person.id)
         .where(func.lower(PersonAlias.alias) == name_lower)
         .where(_vis)
-        .limit(1)
-    )
-    if alias_row:
-        return await db.get(Person, alias_row.person_id)
-
-    # 2) Person display_name exact (case-insensitive)
-    person = await db.scalar(
+    )).scalars().all()
+    _name_hits = (await db.execute(
         select(Person)
         .where(func.lower(Person.display_name) == name_lower)
         .where(_vis)
-        .limit(1)
-    )
-    if person:
-        return person
+    )).scalars().all()
+    for _p in list(_alias_hits) + list(_name_hits):
+        if _p.id not in _seen_exact:
+            _seen_exact.add(_p.id)
+            exact_matches.append(_p)
+    if exact_matches:
+        _compatible = [p for p in exact_matches if not _incompatible_gen(p)]
+        if len(_compatible) == 1:
+            return _compatible[0]
+        # 0 compatible (all wrong generation) → fall through and create a new,
+        # correctly-generationed person; >1 → let the fuzzy path disambiguate.
 
     # Load all persons and aliases once; reused across all fuzzy passes below.
     all_persons = (await db.execute(
@@ -684,6 +737,7 @@ async def resolve_person(
 
     # 3) Fuzzy on the full name as given ("Rosa", "Josh", "Grandma Rosa")
     candidates = _collect_fuzzy(name_lower)
+    candidates = [p for p in candidates if not _incompatible_gen(p)]
     if candidates:
         winner = await _disambiguate(candidates, name, role_hint)
         if winner:
@@ -704,6 +758,7 @@ async def resolve_person(
                 continue
             bare_name = name[len(prefix) + 1:]
             candidates = _collect_fuzzy(bare_lc)
+            candidates = [p for p in candidates if not _incompatible_gen(p)]
             if candidates:
                 effective_role = role_hint or prefix
                 winner = await _disambiguate(candidates, bare_name, effective_role)

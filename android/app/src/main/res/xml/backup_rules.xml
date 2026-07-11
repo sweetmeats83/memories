@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Persist only the server URL / small prefs; cache is never backed up. -->
+    <include domain="sharedpref" path="memories_prefs.xml" />
+</full-backup-content>

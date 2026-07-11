@@ -24,6 +24,7 @@ from app.llm_client import OLLAMA_BASE_URL, OLLAMA_MODEL
 from app.settings.config import settings
 from app.models import (
     Event,
+    EventAlias,
     EventPerson,
     EventPlace,
     KinMembership,
@@ -641,6 +642,314 @@ def _stub_article(person: Person, aliases: list[str], relationships: list[str]) 
     return "\n".join(lines)
 
 
+# Informal / affectionate terms families actually use, keyed by canonical role.
+_ROLE_INFORMAL_TERMS: dict[str, list[str]] = {
+    "father": ["dad", "daddy", "papa", "pa", "pop", "pops", "old man"],
+    "mother": ["mom", "mum", "mommy", "mama", "ma"],
+    "grandfather": ["grandpa", "granddad", "grandad", "gramps", "papaw", "pawpaw", "pop-pop", "poppy"],
+    "grandmother": ["grandma", "granny", "nana", "nanny", "mamaw", "gramma", "gran", "meemaw"],
+    "brother": ["bro"],
+    "sister": ["sis"],
+    "aunt": ["auntie", "aunty"],
+    "uncle": ["unc"],
+    "husband": ["hubby"],
+    "wife": [],
+    "son": [],
+    "daughter": [],
+    "parent": ["mom", "dad"],
+    "grandparent": ["grandma", "grandpa"],
+}
+
+# Reverse map so a role_hint like "dad" or "granny" normalises to its canonical role.
+_ROLE_SYNONYM_TO_CANON: dict[str, str] = {
+    syn: canon for canon, syns in _ROLE_INFORMAL_TERMS.items() for syn in syns
+}
+
+
+def _canonical_role(role: str) -> str:
+    role = (role or "").strip().lower().replace("-of", "").replace(" of", "").strip()
+    return _ROLE_SYNONYM_TO_CANON.get(role, role)
+
+
+def _subject_address(story: dict, subject_gender: str | None) -> str:
+    """How the narrator refers to the subject in this story — e.g.
+    'their father, written informally as "my father", "dad", "papa", etc'.
+    Empty when the relationship is unknown.
+
+    Prefers the mention's role_hint (the role the subject was tagged as, e.g.
+    "father"); falls back to inverting the narrator's own relationship to the
+    subject. This is what lets "my dad" / "papa" resolve to the right person.
+    """
+    role = _canonical_role(story.get("role_hint") or "")
+    if role in ("", "subject", "self"):
+        nr = (story.get("narrator_rel") or "").strip().lower()
+        if nr in ("", "self"):
+            return ""
+        inv = _gender_resolve_rel(_invert_rel(nr.replace(" ", "-")), subject_gender)
+        role = _canonical_role(inv.replace("-", " "))
+    if not role:
+        return ""
+    syn = _ROLE_INFORMAL_TERMS.get(role, [])
+    if syn:
+        quoted = ", ".join(f'"{t}"' for t in syn[:6])
+        return f'their {role}, written informally as "my {role}", {quoted}, etc'
+    return f'their {role} (often written "my {role}")'
+
+
+def _narrator_is_ancestor(narrator_rel: str | None) -> bool:
+    """True when the narrator is an older-generation ancestor of the subject
+    (parent, grandparent, …). Used to guard against a narrator's own childhood
+    being misattributed to a younger-generation subject (e.g. their child)."""
+    r = (narrator_rel or "").lower()
+    return any(t in r for t in (
+        "father of", "mother of", "parent of",
+        "grandfather of", "grandmother of", "grandparent of",
+        "great-grand",
+    ))
+
+
+async def _extract_subject_claims(
+    story: dict,
+    subject: str,
+    alias_str: str,
+    subject_rel_context: str,
+    subject_gender: str | None = None,
+) -> list[dict]:
+    """Capture everything a single story reveals about `subject` — character and
+    anecdotes as well as vital facts — returning
+    ``[{"fact", "evidence", "confidence"}, ...]``.
+
+    Empty when the story reveals nothing about the subject (relevance gate). The
+    narrator's identity, and crucially the words they use for the subject
+    ("my dad", "papa", …), are stated explicitly so informal references resolve
+    to the subject, while the narrator's OWN "I/me/my" life is excluded — unless
+    the narrator IS the subject.
+    """
+    narrator = story.get("narrator") or "A family member"
+    rel = story.get("narrator_rel")
+    if rel == "self":
+        who = (
+            f'The narrator IS {subject}, writing in the first person. '
+            f'Here "I", "me" and "my" refer to {subject}.'
+        )
+    else:
+        address = _subject_address(story, subject_gender)
+        # Generational guard: when the narrator is an ancestor (e.g. the subject's
+        # parent), the narrator's own early life is NOT the subject's — the subject
+        # was born later. This stops a parent's childhood stories (often mis-linked
+        # to a same-named child) from being credited to that child.
+        gen_note = ""
+        if _narrator_is_ancestor(rel):
+            gen_note = (
+                f' IMPORTANT: {narrator} is from an OLDER generation than {subject} — '
+                f'{subject} is their descendant and was born later. Anything {narrator} '
+                f'recalls from their OWN childhood, youth, upbringing, or life before '
+                f'{subject} was born is about {narrator}, NOT {subject}. Capture only what '
+                f'{subject} personally did or experienced in {subject}\'s own life.'
+            )
+        if address:
+            who = (
+                f'The narrator is {narrator}, and in this story {subject} is {address}. '
+                f'When the narrator uses those words — or "he"/"she"/"they" clearly '
+                f'referring to {subject} — they mean {subject}. '
+                f'The narrator\'s OWN "I", "me", "my" refer to {narrator}, NOT {subject}.'
+                f'{gen_note}'
+            )
+        else:
+            who = (
+                f'The narrator is {narrator}, not {subject}. '
+                f'"I", "me", "my" refer to the narrator. Treat a statement as being about '
+                f'{subject} only when it clearly refers to {subject} by name or role.'
+                f'{gen_note}'
+            )
+
+    system = (
+        f"You read one family memoir story and capture everything it reveals about "
+        f"ONE person: {subject}{alias_str}.\n"
+        f"{who}\n"
+        f"{subject_rel_context}\n\n"
+        f"Capture what makes {subject} a real person — NOT just vital statistics. Include:\n"
+        "- personality, character, temperament, values and beliefs;\n"
+        f"- how they treated people and their role in the family;\n"
+        "- habits, quirks, skills, work, interests, faith, appearance;\n"
+        "- memorable things they did or said, and specific anecdotes involving them;\n"
+        "- life facts: birth, death, places lived, occupation, education, marriage, children.\n"
+        "RULES:\n"
+        f"- Capture only things about {subject}. Exclude the narrator's OWN life and other "
+        f"people — EXCEPT where it characterises {subject} (how {subject} treated the "
+        f"narrator, or a moment they shared, DOES count as being about {subject}).\n"
+        "- Stay faithful to the story: paraphrase, don't invent or exaggerate.\n"
+        f"- A story can be mostly about someone else and still reveal a little about "
+        f"{subject} — capture those pieces.\n"
+        f"- Only if the story genuinely reveals nothing about {subject}, return "
+        '{"claims": []}.\n'
+        'Return JSON exactly: {"claims": [{"fact": "<short third-person statement '
+        f'about {subject}>", "evidence": "<the exact words from the story that '
+        'support it>", "confidence": <0.0-1.0>}]}'
+    )
+    user = (
+        (f'Story prompt: "{story["prompt"]}"\n' if story.get("prompt") else "")
+        + (f'Title: "{story["title"]}"\n' if story.get("title") else "")
+        + f"\nSTORY:\n{(story.get('text') or '')[:3000]}"
+    )
+
+    data = await _llm_json(system, user, timeout=120)
+    raw_claims = data.get("claims") if isinstance(data, dict) else None
+    out: list[dict] = []
+    if isinstance(raw_claims, list):
+        for c in raw_claims:
+            if isinstance(c, str):
+                fact = c.strip()
+                if fact:
+                    out.append({"fact": fact, "evidence": "", "confidence": 0.7})
+                continue
+            if not isinstance(c, dict):
+                continue
+            fact = (c.get("fact") or c.get("claim") or "").strip()
+            if not fact:
+                continue
+            try:
+                conf = float(c.get("confidence", 0.7))
+            except (TypeError, ValueError):
+                conf = 0.7
+            out.append({
+                "fact": fact,
+                "evidence": (c.get("evidence") or "").strip(),
+                "confidence": max(0.0, min(1.0, conf)),
+            })
+    return out
+
+
+# ── Article rubric: fixed section order = the information hierarchy ──────────
+# (key, heading, priority) — lower priority number = more important, trimmed last.
+_RUBRIC: list[tuple[str, str, int]] = [
+    ("background", "Background & Early Life", 1),
+    ("family",     "Family",                  2),
+    ("work",       "Work & Education",        3),
+    ("character",  "Character",               4),
+    ("events",     "Notable Events & Anecdotes", 5),
+    ("later",      "Later Life & Legacy",     6),
+]
+_RUBRIC_KEYS = [k for k, _, _ in _RUBRIC]
+_RUBRIC_TITLES = {k: t for k, t, _ in _RUBRIC}
+
+# Per-section maximum number of distinct points that may appear.
+_SECTION_CAPS: dict[str, int] = {
+    "background": 5, "family": 5, "work": 5,
+    "character": 6, "events": 4, "later": 4,
+}
+
+# Length bands, chosen automatically from how much corroborated material exists.
+# Each is a HARD ceiling on words and on the number of points fed to the writer.
+_BANDS: dict[str, dict[str, int]] = {
+    "small":  {"max_words": 220, "max_points": 8},
+    "medium": {"max_words": 460, "max_points": 16},
+    "large":  {"max_words": 760, "max_points": 26},
+}
+
+
+def _pick_band(num_sources: int, num_points: int) -> str:
+    """Tier the article size by how much (corroborated) material exists."""
+    if num_sources <= 2 or num_points <= 6:
+        return "small"
+    if num_sources <= 6 or num_points <= 16:
+        return "medium"
+    return "large"
+
+
+async def _consolidate_claims(subject: str, alias_str: str, numbered_block: str) -> list[dict]:
+    """Merge/dedupe the raw per-story claims into ranked, sectioned points.
+
+    Each input line is ``[<n>] (source: <cite key>) <fact>``. The model references
+    those numbers so citations stay grounded (we map numbers → cite keys later).
+    Returns ``[{"section", "statement", "claims": [nums], "importance": float}]``.
+    """
+    if not numbered_block.strip():
+        return []
+    sections_desc = "; ".join(f'"{k}" = {t}' for k, t, _ in _RUBRIC)
+    system = (
+        f"You are an archive editor organising verified facts about {subject}{alias_str} "
+        "into a fixed structure.\n"
+        "You receive numbered facts, each tagged with its source. Do ALL of the following:\n"
+        "1. MERGE duplicates and near-duplicates into ONE point (combine facts a story "
+        "repeats or that several sources give).\n"
+        f"2. Assign each merged point to exactly ONE section: {sections_desc}.\n"
+        "3. Rate importance 0.0-1.0 — how central/defining the point is to who the person "
+        "is. Vital facts (birth, death, marriage, occupation) and points many sources agree "
+        "on rank highest; minor one-off details rank low.\n"
+        "4. List the source fact numbers each point draws from.\n"
+        'Return JSON exactly: {"points": [{"section": "<key>", "statement": "<concise '
+        'third-person fact>", "claims": [<numbers>], "importance": <0.0-1.0>}]}'
+    )
+    user = f"Subject: {subject}{alias_str}\n\nNumbered facts:\n{numbered_block}"
+    data = await _llm_json(system, user, timeout=180)
+    raw = data.get("points") if isinstance(data, dict) else None
+    out: list[dict] = []
+    if isinstance(raw, list):
+        for p in raw:
+            if not isinstance(p, dict):
+                continue
+            stmt = (p.get("statement") or "").strip()
+            if not stmt:
+                continue
+            sec = (p.get("section") or "").strip().lower()
+            if sec not in _RUBRIC_KEYS:
+                sec = "events"  # route unknowns into anecdotes rather than dropping
+            try:
+                imp = float(p.get("importance", 0.5))
+            except (TypeError, ValueError):
+                imp = 0.5
+            nums: list[int] = []
+            for cnum in (p.get("claims") or []):
+                try:
+                    nums.append(int(cnum))
+                except (TypeError, ValueError):
+                    continue
+            out.append({
+                "section": sec, "statement": stmt,
+                "claims": nums, "importance": max(0.0, min(1.0, imp)),
+            })
+    return out
+
+
+def _budget_points(
+    points: list[dict], claim_src: dict[int, str], band: str
+) -> tuple[list[str], dict[str, list[dict]], int]:
+    """Attach citation keys, rank, and enforce the size budget.
+
+    Applies per-section caps, then the band's global point cap by trimming the
+    lowest-priority sections first (this is where over-documented people get
+    compacted). Returns (section order, {section: [points]}, max_words).
+    """
+    cfg = _BANDS[band]
+    for p in points:
+        keys: list[str] = []
+        for cnum in p["claims"]:
+            k = claim_src.get(cnum)
+            if k and k not in keys:
+                keys.append(k)
+        p["cite_keys"] = keys
+        # Corroboration (distinct sources) boosts importance — agreed-on facts win.
+        p["score"] = p["importance"] + 0.15 * len(keys)
+
+    by_sec: dict[str, list[dict]] = {}
+    for p in points:
+        by_sec.setdefault(p["section"], []).append(p)
+
+    for sec, lst in by_sec.items():
+        lst.sort(key=lambda x: x["score"], reverse=True)
+        del lst[_SECTION_CAPS.get(sec, 4):]
+
+    def _total() -> int:
+        return sum(len(by_sec.get(k, [])) for k in _RUBRIC_KEYS)
+
+    for sec in reversed(_RUBRIC_KEYS):  # trim events/later before background/family
+        while _total() > cfg["max_points"] and by_sec.get(sec):
+            by_sec[sec].pop()  # remove the lowest-scoring point in this section
+
+    return _RUBRIC_KEYS, by_sec, cfg["max_words"]
+
+
 async def _do_generate(db: AsyncSession, article: WikiArticle, person_id: int, group_id: int) -> None:
     """Inner generation logic — db session is already open and article row exists."""
 
@@ -814,8 +1123,48 @@ async def _do_generate(db: AsyncSession, article: WikiArticle, person_id: int, g
     # Release connection before long LLM calls
     await db.commit()
 
-    # --- Pass 1: extract structured facts ---
+    # ── Stage A: per-story claim extraction (attribution + relevance gate) ──
+    # Replace each story's raw narrative with ONLY the facts explicitly about the
+    # subject, extracted one story at a time with the narrator's identity known.
+    # This is what stops a narrator's own first-person facts (e.g. the son's own
+    # life, written in a story that merely mentions his father) from being
+    # misattributed to the subject downstream. Stories that yield no subject-facts
+    # are dropped entirely as contamination.
     alias_str = f" (also known as: {', '.join(aliases)})" if aliases else ""
+    subject_gender = getattr(person, "gender", None)
+    distilled: list[dict] = []
+    for s in stories[:30]:
+        try:
+            claims = await _extract_subject_claims(
+                s, subject, alias_str, subject_rel_context, subject_gender
+            )
+        except Exception as e:  # noqa: BLE001 — never let one story kill the job
+            logger.warning("wiki claim extraction failed (resp=%s): %s", s.get("response_id"), e)
+            claims = []
+        claims = [c for c in claims if c.get("confidence", 0.7) >= 0.35]
+        if not claims:
+            continue
+        s = dict(s)  # copy — don't mutate the original story dict
+        s["claims"] = claims
+        # Downstream passes now see ONLY the vetted subject-facts, never raw narrative.
+        s["text"] = "\n".join(f"- {c['fact']}" for c in claims)
+        distilled.append(s)
+
+    # If attribution filtered everything out, produce a stub rather than
+    # fabricating a biography from contaminated raw text.
+    if not distilled:
+        await db.refresh(article)
+        article.content_md = _stub_article(person, aliases, relationships)
+        article.status = "ready"
+        article.source_count = 0
+        article.model_name = WIKI_MODEL
+        article.generated_at = datetime.now(timezone.utc)
+        await db.commit()
+        return
+
+    stories = distilled
+
+    # --- Pass 1: extract structured facts ---
 
     p1_sys = f"""\
 You are extracting verifiable biographical facts about ONE person: {subject}{alias_str}.
@@ -859,7 +1208,7 @@ Return JSON with this exact shape (use null for any field not found):
 
     facts = await _llm_json(p1_sys, p1_user, timeout=120)
 
-    # --- Pass 2: generate factual wiki article ---
+    # --- Pass 2: consolidate into the rubric, then write to a length budget ---
     narrators = sorted({s["narrator"] for s in stories})
     def _narrator_ctx_label(name: str) -> str:
         rel = next((s["narrator_rel"] for s in stories if s["narrator"] == name and s.get("narrator_rel")), None)
@@ -872,66 +1221,19 @@ Return JSON with this exact shape (use null for any field not found):
         + "."
     )
 
-    p2_sys = f"""\
-You are writing a biographical wiki article for a private family archive.
-The article is about: {subject}{alias_str}.
-{narrator_ctx}
-
-IMPORTANT DISTINCTION: The source material is personal memoir stories — vivid, emotional, \
-first-person accounts. Your job is to distill the FACTS out of those stories into a \
-concise, encyclopedic third-person article. Do NOT retell the stories. Do NOT quote \
-emotional passages. Write the way a careful family historian or Wikipedia editor would.
-
-RULES:
-1. State only facts that are directly supported by the source stories. Do not invent, infer, or fill gaps.
-2. Write in third person ("She was born…", "He worked as…").
-3. Cite inline using the provided citation keys in square brackets immediately after the fact they support. \
-   Example: "She was born in 1932 in Cork [Sarah 1] and later moved to Dublin [Nathan 2]."
-4. PRONOUN RESOLUTION — resolve relationship words using the narrator's perspective:
-   - If a narrator is marked "the subject, writing in the first person": \
-     "I", "me", "my" all refer to {subject} themselves. \
-     Use the relative list below to map role words to actual names — \
-     e.g. "my dad" = {subject}'s father, "my mom" = {subject}'s mother.{subject_rel_context}
-   - If a narrator has a stated relationship (e.g. "son of {subject}"): \
-     "my dad" or "my father" refers to {subject}; \
-     "my mom" refers to {subject}'s spouse/partner.
-   - Never confuse the narrator's relatives with the subject's relatives.
-5. Organise into 2–4 ## sections based on the actual facts available (e.g. Early Life, Career, Family).
-6. If information is thin, write a shorter article rather than padding with vague statements.
-7. Do NOT include a references or sources section — that will be added automatically.
-8. Output clean markdown only — no JSON, no preamble, no closing commentary.
-9. Target 250–500 words.
-{(chr(10) + world_block) if world_block else ""}"""
-
-    list_keys = {"key_traits", "notable_facts", "places_lived"}
-    facts_block = "\n".join(
-        f"- {k.replace('_', ' ').title()}: {v}"
-        for k, v in facts.items()
-        if v and k not in list_keys
-    )
-    for list_key in ("places_lived", "key_traits"):
-        vals = facts.get(list_key)
-        if vals:
-            facts_block += f"\n- {list_key.replace('_', ' ').title()}: {', '.join(vals)}"
-    if facts.get("notable_facts"):
-        facts_block += "\n- Notable facts:\n" + "\n".join(f"  • {f}" for f in facts["notable_facts"])
-
+    # Structured facts (Pass 1) feed the header's birth/death dates.
     eff_birth = facts.get("birth_year") or person.birth_year
     eff_death = facts.get("death_year") or person.death_year
-
     header = f"**{person.display_name}**"
     if eff_birth:
         header += f" (born {eff_birth}" + (f", died {eff_death}" if eff_death else "") + ")"
     if aliases:
         header += f"\nAlso known as: {', '.join(aliases)}"
-    # Relationships intentionally omitted — sidebar shows them; LLM should mention
-    # only the closest ones organically when supported by the source stories.
 
-    # Build per-narrator citation keys: [Nathan 1], [Nathan 2], [Sarah 1], …
+    # Per-narrator citation keys: [Nathan 1], [Nathan 2], [Sarah 1], …
     narrator_counters: dict[str, int] = {}
-    citation_map: dict[str, dict] = {}  # key → {response_id, narrator, narrator_rel, title, prompt}
-    cited_stories = stories[:20]
-    for s in cited_stories:
+    citation_map: dict[str, dict] = {}
+    for s in stories:
         n = s["narrator"]
         narrator_counters[n] = narrator_counters.get(n, 0) + 1
         key = f"{n} {narrator_counters[n]}"
@@ -941,35 +1243,103 @@ RULES:
             "narrator_rel": s["narrator_rel"],
             "title": s["title"] or s["prompt"] or "Untitled",
         }
-        s["cite_key"] = key  # attach to story dict for use in prompt
+        s["cite_key"] = key
 
-    cite_index = "\n".join(
-        f"[{key}] — {meta['narrator']}"
-        + (f" ({meta['narrator_rel']} of {subject})" if meta["narrator_rel"] else "")
-        + (f': "{meta["title"]}"' if meta["title"] else "")
-        for key, meta in citation_map.items()
-    )
+    # Number every extracted claim, remembering its source, for consolidation.
+    numbered_lines: list[str] = []
+    claim_src: dict[int, str] = {}
+    cnum = 0
+    for s in stories:
+        for c in s.get("claims", []):
+            cnum += 1
+            claim_src[cnum] = s["cite_key"]
+            numbered_lines.append(f"[{cnum}] (source: {s['cite_key']}) {c['fact']}")
 
-    p2_user = (
-        f"{header}\n\n"
-        + (f"Extracted facts:\n{facts_block}\n\n" if facts_block else "")
-        + f"Citation index (use these keys inline when you state a fact):\n{cite_index}\n\n"
-        + f"Source stories:\n\n"
-        + "\n\n---\n\n".join(
-            f"Citation key: [{s['cite_key']}]\nNarrator: {_narrator_label(s)}\n"
-            + (f'Story prompt: "{s["prompt"]}"\n' if s["prompt"] else "")
-            + (f"Subject's role: {s['role_hint']}\n" if s["role_hint"] and s['role_hint'] != 'subject' else "")
-            + s["text"][:2500]
-            for s in cited_stories
-        )
-    )
+    # ── Consolidation: merge/dedupe/rank the raw claims into rubric sections ──
+    points = await _consolidate_claims(subject, alias_str, "\n".join(numbered_lines))
+    if not points:
+        # Fallback: one point per raw claim so we still produce something.
+        points, idx = [], 0
+        for s in stories:
+            for c in s.get("claims", []):
+                idx += 1
+                points.append({
+                    "section": "events", "statement": c["fact"],
+                    "claims": [idx], "importance": c.get("confidence", 0.5),
+                })
 
-    content_md = await _llm_prose(p2_sys, p2_user, timeout=270)
+    # ── Length budget: pick a band from how much material exists, then trim ──
+    band = _pick_band(len(stories), len(points))
+    order, by_sec, max_words = _budget_points(points, claim_src, band)
 
-    if not content_md.strip():
+    # Ranked, budgeted, rubric-structured brief the writer must follow.
+    rubric_lines: list[str] = []
+    for sec in order:
+        lst = by_sec.get(sec)
+        if not lst:
+            continue
+        rubric_lines.append(f"## {_RUBRIC_TITLES[sec]}")
+        for p in lst:
+            cites = " ".join(f"[{k}]" for k in p["cite_keys"])
+            rubric_lines.append(f"- {p['statement']} {cites}".rstrip())
+        rubric_lines.append("")
+    rubric_block = "\n".join(rubric_lines).strip()
+
+    if not rubric_block:
         content_md = _stub_article(person, aliases, relationships)
     else:
-        content_md = _resolve_citations(content_md, citation_map, subject)
+        p2_sys = f"""\
+You are a journalist writing a factual profile of a person for a private family archive.
+The article is about: {subject}{alias_str}.
+{narrator_ctx}
+
+You are given a BRIEF: the facts to report, already merged, ranked, and grouped under \
+fixed section headings. Write the profile strictly from the brief.
+
+STRUCTURE (follow exactly):
+- Open with a 1-3 sentence LEAD (no heading): who {subject} is — name, dates if known, \
+  and their defining identity.
+- Then write the sections in the SAME ORDER and under the SAME ## headings as the brief. \
+  Skip any section not in the brief. Add no sections or headings of your own.
+
+STYLE:
+- Neutral, factual, third-person reporting voice — a newspaper profile or reference entry, \
+  NOT a sentimental tribute. No flowery language, no direct address, no invented scenes.
+- Attribute characterizations to their source (e.g. "According to his son, …"); where the \
+  brief gives differing accounts, report them plainly.
+
+RULES:
+1. Report ONLY what the brief states. Do not add, infer, or embellish — the brief is the \
+   complete set of facts.
+2. Keep EVERY citation key exactly as given, in square brackets, right after the point it \
+   supports (a point may carry more than one key).
+3. Third person; past tense unless the subject is living.
+4. Be concise — about {max_words} words maximum. Do not pad; shorter is fine.
+5. Do NOT add a references or sources section — it is appended automatically.
+6. Output clean markdown only — no preamble or commentary.
+{(chr(10) + world_block) if world_block else ""}"""
+
+        used_keys = {k for sec in order for p in by_sec.get(sec, []) for k in p["cite_keys"]}
+        cite_index = "\n".join(
+            f"[{key}] — {meta['narrator']}"
+            + (
+                " (the subject)" if meta["narrator_rel"] == "self"
+                else f" ({meta['narrator_rel']} of {subject})" if meta["narrator_rel"]
+                else ""
+            )
+            for key, meta in citation_map.items() if key in used_keys
+        )
+        p2_user = (
+            f"{header}\n\n"
+            + (f"Source legend (who each citation is):\n{cite_index}\n\n" if cite_index else "")
+            + "BRIEF — report these points, in this order, under these headings:\n\n"
+            + rubric_block
+        )
+        content_md = await _llm_prose(p2_sys, p2_user, timeout=270)
+        if not content_md.strip():
+            content_md = _stub_article(person, aliases, relationships)
+        else:
+            content_md = _resolve_citations(content_md, citation_map, subject)
 
     # --- Save ---
     # Save a revision snapshot of the outgoing AI article before overwriting.

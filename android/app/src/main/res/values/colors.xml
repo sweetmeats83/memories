@@ -1,0 +1,10 @@
+<resources>
+    <color name="brand">#7c3a2e</color>
+    <color name="brand_dark">#5a2a20</color>
+    <color name="background">#faf9f7</color>
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="record_yellow">#FFD43B</color>
+    <color name="record_red">#EF4444</color>
+    <color name="overlay_scrim">#B8000000</color>
+</resources>

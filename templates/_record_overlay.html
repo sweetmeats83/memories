@@ -407,8 +407,11 @@
     cfg.mode = next;
     setPillState();
 
-    // If overlay is open, switch preview immediately
-    if (overlay && !overlay.classList.contains('hidden')){
+    // If the overlay is actually OPEN, switch preview immediately.
+    // Visibility is driven by aria-modal (see CSS), not a 'hidden' class — the
+    // overlay has no 'hidden' class until it's been closed once, so checking the
+    // class alone fires getUserMedia on page load before the user opens anything.
+    if (overlay && overlay.getAttribute('aria-modal') === 'true'){
       ensurePreview().catch(err => {
         alert('Could not access devices. Please allow microphone/camera.');
         console.warn(err);

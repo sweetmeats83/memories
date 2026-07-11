@@ -137,6 +137,37 @@ Manage prompts, assign them to users, view all responses, and edit responses on 
 
 ---
 
+## Android app
+
+A native Android app lives in [`android/`](android/). It's a thin shell around the
+web app — the whole site runs in a WebView, so every feature is available — plus a
+**native audio/video recorder** with reliable chunked, resumable uploads for
+capturing memories on a phone. It authenticates by reusing the web login's session
+cookie, so **no backend changes are required**. Full details in
+[`android/README.md`](android/README.md).
+
+**Install (sideload):** the app is distributed as a signed APK. Grab it from the
+repo's [Releases](https://github.com/sweetmeats83/memories/releases) (the binary is
+not committed to the tree), copy it to an Android phone, and tap to install
+(allow "install unknown apps" for your browser/file manager once). On first launch
+it asks for your server URL (e.g. `https://memories.example.com`); after that,
+everyone logs in on the normal web login page.
+
+**Build it yourself:** open the `android/` folder in Android Studio and
+**Build ▸ Build APK(s)**, or from a local checkout:
+
+```bash
+cd android
+gradle wrapper --gradle-version 8.7   # once, if the wrapper jar isn't present
+./gradlew assembleRelease             # signed release (needs android/keystore.properties)
+# or: ./gradlew assembleDebug         # unsigned debug build for quick testing
+```
+
+Requires Android SDK platform 34 + build-tools, and a `keystore.properties` for
+release signing (see `android/README.md`). Min Android 8.0 (API 26).
+
+---
+
 ## Tech stack
 
 - Backend: FastAPI, async SQLAlchemy, PostgreSQL, Alembic migrations

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Solid black to match the site emblem's background, so the adaptive icon
+     reads as a clean black tile with the cream motif on any launcher shape. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#000000" />
+</shape>

@@ -13,7 +13,7 @@ from app.services.utils_weekly import (
     get_or_refresh_active_token, _now, mark_opened, mark_clicked,
     mark_completed_and_close, expire_active_tokens,
 )
-from app.services.scheduler import schedule_bulk_send, set_weekly_cron
+from app.services.scheduler import schedule_bulk_send, set_weekly_cron, _REMINDER_MESSAGES
 from app.services.mailer import send_weekly_email
 from app.services.assignment import get_on_deck_candidates, skip_current_prompt as _skip
 from app.llm_client import make_llm_followup_prompt
@@ -327,6 +327,28 @@ async def weekly_token_use(token: str=Form(...), db: AsyncSession=Depends(get_db
     if not tok:
         raise HTTPException(400, 'Token invalid or expired')
     return {'ok': True, 'user_id': tok.user_id, 'prompt_id': tok.prompt_id}
+
+_PENDING_WEEKLY_STATES = (
+    WeeklyState.sent, WeeklyState.queued, WeeklyState.opened,
+    WeeklyState.clicked, WeeklyState.not_sent,
+)
+
+@router.get('/api/weekly/status')
+async def api_weekly_status(user=Depends(require_authenticated_user), db: AsyncSession=Depends(get_db)):
+    """Lightweight poll target for the Android app's local reminder worker:
+    is there a current weekly prompt still unanswered, and if so what should
+    the reminder say. Mirrors the pending check in job_daily_reminder."""
+    pending = bool(user.weekly_current_prompt_id) and user.weekly_state in _PENDING_WEEKLY_STATES
+    if not pending:
+        return {'pending': False, 'prompt_id': None, 'prompt_text': None, 'message': None}
+    prompt = await db.get(Prompt, user.weekly_current_prompt_id)
+    message = _REMINDER_MESSAGES[datetime.utcnow().timetuple().tm_yday % len(_REMINDER_MESSAGES)]
+    return {
+        'pending': True,
+        'prompt_id': user.weekly_current_prompt_id,
+        'prompt_text': getattr(prompt, 'text', None),
+        'message': message,
+    }
 
 @router.get('/api/weekly/{user_id}/on_deck')
 async def api_weekly_on_deck(user_id: int, k: int=Query(5, ge=1, le=25), admin=Depends(require_admin_user), db: AsyncSession=Depends(get_db)):
