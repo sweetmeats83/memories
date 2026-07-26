@@ -52,5 +52,13 @@
             android:layout_marginTop="20dp"
             android:backgroundTint="@color/brand"
             android:text="@string/setup_save" />
+
+        <Button
+            android:id="@+id/backgroundSettingsButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/setup_background_settings"
+            style="?attr/materialButtonOutlinedStyle" />
     </LinearLayout>
 </ScrollView>

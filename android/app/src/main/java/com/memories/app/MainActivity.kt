@@ -64,7 +64,11 @@ class MainActivity : AppCompatActivity() {
         }
 
     private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op either way */ }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            // Whether granted or not, the next thing that can silently break reminders
+            // is background/battery restrictions — check for that regardless.
+            com.memories.app.reminder.BackgroundReliabilityHelper.maybeShow(this)
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -231,10 +235,17 @@ class MainActivity : AppCompatActivity() {
 
     /** Weekly-prompt reminder notifications need this on Android 13+. */
     private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            com.memories.app.reminder.BackgroundReliabilityHelper.maybeShow(this)
+            return
+        }
         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
-        if (!granted) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            com.memories.app.reminder.BackgroundReliabilityHelper.maybeShow(this)
+        }
     }
 
     private fun CookieBridgeFlush() {

@@ -30,11 +30,18 @@ class SettingsStore(context: Context) {
         get() = prefs.getInt(KEY_LAST_REMINDER_PROMPT_ID, -1)
         set(value) = prefs.edit().putInt(KEY_LAST_REMINDER_PROMPT_ID, value).apply()
 
+    /** Whether we've already auto-shown the "allow background activity" dialog once.
+     * Doesn't block the user from reopening it manually from Setup. */
+    var hasPromptedBackgroundReliability: Boolean
+        get() = prefs.getBoolean(KEY_PROMPTED_BG_RELIABILITY, false)
+        set(value) = prefs.edit().putBoolean(KEY_PROMPTED_BG_RELIABILITY, value).apply()
+
     companion object {
         const val PREFS_NAME = "memories_prefs"
         private const val KEY_BASE_URL = "server_url"
         private const val KEY_LAST_REMINDER_DAY = "last_reminder_epoch_day"
         private const val KEY_LAST_REMINDER_PROMPT_ID = "last_reminder_prompt_id"
+        private const val KEY_PROMPTED_BG_RELIABILITY = "prompted_bg_reliability"
 
         /**
          * Coerce user input into a usable base URL:

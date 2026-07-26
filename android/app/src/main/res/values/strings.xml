@@ -31,4 +31,12 @@
     <string name="reminder_channel_desc">Gentle nudges when your weekly memory prompt is ready and waiting</string>
     <string name="reminder_title_new_prompt">Your weekly prompt is ready</string>
     <string name="reminder_title_gentle">Memories</string>
+
+    <!-- Background reliability -->
+    <string name="setup_background_settings">Background &amp; notification settings</string>
+    <string name="bg_dialog_title">Keep reminders reliable</string>
+    <string name="bg_dialog_message">Some phones aggressively stop apps running in the background, which can silently block your weekly-prompt reminders. Allowing Memories to run without battery restrictions (and enabling autostart, if your phone offers it) keeps reminders arriving on time.</string>
+    <string name="bg_dialog_allow">Allow background activity</string>
+    <string name="bg_dialog_autostart">Autostart settings</string>
+    <string name="bg_dialog_not_now">Not now</string>
 </resources>

@@ -37,5 +37,9 @@ class SetupActivity : AppCompatActivity() {
             setResult(Activity.RESULT_OK)
             finish()
         }
+
+        findViewById<Button>(R.id.backgroundSettingsButton).setOnClickListener {
+            com.memories.app.reminder.BackgroundReliabilityHelper.show(this)
+        }
     }
 }
