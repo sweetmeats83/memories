@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import or_
-from app.models import RelationshipEdge, Person, ResponsePerson, Response, KinMembership
+from app.models import RelationshipEdge, Person, ResponsePerson, Response, KinMembership, UserProfile
 
 
 # Canonical sets
@@ -22,6 +22,15 @@ PARENT_EDGE_TYPES_REV: Set[str] = {
     "child-of",
     "son-of",
     "daughter-of",
+    "step-child-of",
+    "adoptive-child-of",
+}
+
+# Reverse-direction parent edge → equivalent forward type (for the parents index)
+_REV_TO_FWD_PARENT: Dict[str, str] = {
+    "child-of": "parent-of",
+    "step-child-of": "step-parent-of",
+    "adoptive-child-of": "adoptive-parent-of",
 }
 
 PARTNER_EDGE_TYPES: Set[str] = {
@@ -33,6 +42,13 @@ SIBLING_EDGE_TYPES: Set[str] = {
     "sibling-of",
     "half-sibling-of",
     "step-sibling-of",
+    "brother-of",
+    "sister-of",
+}
+
+# Full siblings only — safe to assume shared parents (half/step siblings are not)
+FULL_SIBLING_EDGE_TYPES: Set[str] = {
+    "sibling-of",
     "brother-of",
     "sister-of",
 }
@@ -119,7 +135,15 @@ class CandidateEdge:
 
 
 async def _load_people_for_user(db: AsyncSession, user_id: int) -> Dict[int, Person]:
-    rows = (await db.execute(select(Person).where(Person.owner_user_id == user_id))).scalars().all()
+    """People visible to this user: created by them OR shared via any of their kin groups."""
+    group_ids = await _group_ids_for_user(db, user_id)
+    if group_ids:
+        stmt = select(Person).where(
+            or_(Person.owner_user_id == user_id, Person.group_id.in_(group_ids))
+        )
+    else:
+        stmt = select(Person).where(Person.owner_user_id == user_id)
+    rows = (await db.execute(stmt)).scalars().all()
     return {int(p.id): p for p in rows}
 
 
@@ -154,7 +178,7 @@ async def _parents_index(db: AsyncSession, user_id: int) -> Dict[int, list[tuple
     )
     for src, dst, rt in rows1.all():
         out.setdefault(int(dst), []).append((int(src), _canon_rel(rt)))
-    # child -> parent
+    # child -> parent (translate to the forward type so step/adoptive checks work)
     rows2 = await db.execute(
         select(RelationshipEdge.src_id, RelationshipEdge.dst_id, RelationshipEdge.rel_type).where(
             scope,
@@ -162,7 +186,8 @@ async def _parents_index(db: AsyncSession, user_id: int) -> Dict[int, list[tuple
         )
     )
     for src, dst, rt in rows2.all():
-        out.setdefault(int(src), []).append((int(dst), _canon_rel(rt)))
+        fwd = _REV_TO_FWD_PARENT.get(_canon_rel(rt), "parent-of")
+        out.setdefault(int(src), []).append((int(dst), fwd))
     return out
 
 
@@ -181,14 +206,17 @@ async def _partners_index(db: AsyncSession, user_id: int) -> Dict[int, Set[int]]
     return out
 
 
-async def _siblings_index(db: AsyncSession, user_id: int) -> Dict[int, Set[int]]:
-    """Undirected sibling adjacency from any sibling edge types."""
+async def _siblings_index(
+    db: AsyncSession, user_id: int, types: Optional[Set[str]] = None
+) -> Dict[int, Set[int]]:
+    """Undirected sibling adjacency. `types` restricts which sibling edge types count
+    (defaults to all; pass FULL_SIBLING_EDGE_TYPES to exclude half/step siblings)."""
     group_ids = await _group_ids_for_user(db, user_id)
     out: Dict[int, Set[int]] = {}
     rows = await db.execute(
         select(RelationshipEdge.src_id, RelationshipEdge.dst_id, RelationshipEdge.rel_type)
         .where(_edge_scope_filter(user_id, group_ids))
-        .where(RelationshipEdge.rel_type.in_(SIBLING_EDGE_TYPES))
+        .where(RelationshipEdge.rel_type.in_(types or SIBLING_EDGE_TYPES))
     )
     for s, d, rt in rows.all():
         s = int(s); d = int(d)
@@ -210,6 +238,15 @@ def _has_explicit_conflict(existing: Dict[tuple[int, int], Set[str]], a: int, b:
 
 
 async def _find_me_person_id(db: AsyncSession, user_id: int) -> Optional[int]:
+    # 1) Authoritative (post shared-person migration): UserProfile.privacy_prefs["self_person_id"]
+    profile = (
+        await db.execute(select(UserProfile).where(UserProfile.user_id == user_id))
+    ).scalars().first()
+    if profile:
+        self_pid = (profile.privacy_prefs or {}).get("self_person_id")
+        if self_pid and await db.get(Person, int(self_pid)) is not None:
+            return int(self_pid)
+    # 2) Legacy fallback: owned person tagged connect_to_owner + role_hint you/self/me
     rows = (await db.execute(select(Person.id, Person.meta).where(Person.owner_user_id == user_id))).all()
     for pid, meta in rows:
         if isinstance(meta, dict) and meta.get("connect_to_owner"):
@@ -229,6 +266,7 @@ async def infer_edges_for_person(db: AsyncSession, user_id: int, person_id: int)
     parents_of = await _parents_index(db, user_id)
     partners = await _partners_index(db, user_id)
     siblings_idx = await _siblings_index(db, user_id)
+    full_siblings_idx = await _siblings_index(db, user_id, FULL_SIBLING_EDGE_TYPES)
     edges = await _load_edges_for_user(db, user_id)
 
     # Build existing map for quick checks (explicit/inferred both)
@@ -291,6 +329,69 @@ async def infer_edges_for_person(db: AsyncSession, user_id: int, person_id: int)
             if int(child) < int(sib):
                 _push(child, sib, rel, 0.7, "closure", expl, meta)
                 _push(sib, child, rel, 0.7, "closure", expl, meta)
+
+    # 1b) Parents via full sibling: a full sibling's parent is (very likely) my parent too.
+    # Only full sibling-of edges qualify — half/step siblings do NOT imply shared parents.
+    def _known_parent_ids(child: int) -> Set[int]:
+        return {p for (p, _t) in parents_of.get(child, [])}
+
+    def _parent_edge_exists(par: int, child: int) -> bool:
+        return (
+            "parent-of" in existing.get((par, child), set())
+            or "child-of" in existing.get((child, par), set())
+        )
+
+    my_parents = _known_parent_ids(pid)
+    for sib in full_siblings_idx.get(pid, set()):
+        for (par, prt) in parents_of.get(sib, []):
+            if par == pid or par in my_parents:
+                continue
+            # Don't propagate step/adoptive links across siblings — those are per-child facts
+            if prt in ("step-parent-of", "adoptive-parent-of"):
+                continue
+            if _parent_edge_exists(par, pid) or _has_explicit_conflict(existing, par, pid, "parent-of"):
+                continue
+            meta = {"inferred": True, "source": "closure", "kind": "parent", "via_sibling": int(sib)}
+            expl = f"Parent via full sibling: {par} is parent of sibling {sib}"
+            _push(par, pid, "parent-of", 0.68, "closure", expl, meta)
+            _push(pid, par, "child-of", 0.68, "closure", expl, meta)
+
+    # 1c) Parent's sole partner is likely the other parent.
+    # Conservative: only when pid has exactly ONE known parent and that parent has
+    # exactly ONE partner (multiple partners = ambiguous, could be a later spouse).
+    my_parents = _known_parent_ids(pid)  # refresh — 1b may not have committed, but keep local view simple
+    if len(my_parents) == 1:
+        (only_par,) = tuple(my_parents)
+        par_partners = partners.get(only_par, set()) - {pid}
+        if len(par_partners) == 1:
+            (co_par,) = tuple(par_partners)
+            if (
+                co_par not in my_parents
+                and not _parent_edge_exists(co_par, pid)
+                and not _has_explicit_conflict(existing, co_par, pid, "parent-of")
+            ):
+                meta = {"inferred": True, "source": "closure", "kind": "parent", "via_partner_of": int(only_par), "note": "may be step-parent"}
+                expl = f"Other parent via partner: {co_par} is partner of known parent {only_par}"
+                _push(co_par, pid, "parent-of", 0.66, "closure", expl, meta)
+                _push(pid, co_par, "child-of", 0.66, "closure", expl, meta)
+
+    # 1d) Symmetric downward form of 1c so per-person preview on the PARENT also shows it:
+    # for each partner of pid, each of the partner's sole-parented children is likely pid's child.
+    for partner in partners.get(pid, set()):
+        for (child, crt) in parent_to_children.get(partner, []):
+            if child == pid:
+                continue
+            child_parents = _known_parent_ids(child)
+            if child_parents != {partner}:
+                continue  # child has other/multiple known parents — ambiguous
+            if len(partners.get(partner, set()) - {child}) != 1:
+                continue  # partner has multiple partners — ambiguous
+            if _parent_edge_exists(pid, child) or _has_explicit_conflict(existing, pid, child, "parent-of"):
+                continue
+            meta = {"inferred": True, "source": "closure", "kind": "parent", "via_partner_of": int(partner), "note": "may be step-parent"}
+            expl = f"Child via partner: {child} is child of partner {partner}"
+            _push(pid, child, "parent-of", 0.66, "closure", expl, meta)
+            _push(child, pid, "child-of", 0.66, "closure", expl, meta)
 
     # 2) Grandparent/Grandchild: parent-of(parent) (upward path)
     for (mid_parent, _rt) in parents_of.get(pid, []):
@@ -608,6 +709,11 @@ async def infer_edges_for_person(db: AsyncSession, user_id: int, person_id: int)
             m = getattr(p, "meta", None)
             if not isinstance(m, dict):
                 continue
+            # role_hint is relative to whoever CREATED the person — for group-shared
+            # people created by another member, "mother" means THEIR mother, not this
+            # user's. Only trust hints on people this user created themselves.
+            if getattr(p, "owner_user_id", None) != user_id:
+                continue
             base = str(m.get("role_hint", "")).strip().lower()
             if not base:
                 continue
@@ -615,17 +721,20 @@ async def infer_edges_for_person(db: AsyncSession, user_id: int, person_id: int)
             if rid == me_pid:
                 continue
             if base in {"mother", "father", "parent"}:
-                if "parent-of" not in existing.get((rid, me_pid), set()):
+                if ("parent-of" not in existing.get((rid, me_pid), set())
+                        and "child-of" not in existing.get((me_pid, rid), set())):
                     meta = {"inferred": True, "source": "profile", "kind": "parent"}
                     _push(rid, me_pid, "parent-of", 0.9, "profile", "role_hint parent->you", meta)
                     _push(me_pid, rid, "child-of", 0.9, "profile", "role_hint parent->you", meta)
             elif base in {"son", "daughter", "child"}:
-                if "parent-of" not in existing.get((me_pid, rid), set()):
+                if ("parent-of" not in existing.get((me_pid, rid), set())
+                        and "child-of" not in existing.get((rid, me_pid), set())):
                     meta = {"inferred": True, "source": "profile", "kind": "child"}
                     _push(me_pid, rid, "parent-of", 0.9, "profile", "role_hint you->child", meta)
                     _push(rid, me_pid, "child-of", 0.9, "profile", "role_hint you->child", meta)
             elif base in {"spouse", "partner", "husband", "wife"}:
-                if "spouse-of" not in existing.get((me_pid, rid), set()) and "partner-of" not in existing.get((me_pid, rid), set()):
+                spouse_rels = existing.get((me_pid, rid), set()) | existing.get((rid, me_pid), set())
+                if "spouse-of" not in spouse_rels and "partner-of" not in spouse_rels:
                     meta = {"inferred": True, "source": "profile", "kind": "spouse"}
                     _push(me_pid, rid, "spouse-of", 0.85, "profile", "role_hint spouse", meta)
                     _push(rid, me_pid, "spouse-of", 0.85, "profile", "role_hint spouse", meta)
@@ -659,21 +768,26 @@ async def infer_edges_for_person(db: AsyncSession, user_id: int, person_id: int)
             me = await _find_me_person_id(db, user_id)
             if me is not None:
                 top, c = rh_sorted[0]
+                # 0.65 so repeated-mention parent/child hints clear the run-all commit
+                # threshold (>= 0.65); previously 0.6 meant they were always discarded.
                 if top in {"mother", "father", "parent"} and c >= 2:
-                    if "parent-of" not in existing.get((pid, me), set()):
+                    if ("parent-of" not in existing.get((pid, me), set())
+                            and "child-of" not in existing.get((me, pid), set())):
                         meta = {"inferred": True, "source": "text", "kind": "parent"}
-                        _push(pid, me, "parent-of", 0.6, "text", "mentions: 'my mother/father'", meta)
-                        _push(me, pid, "child-of", 0.6, "text", "mentions: 'my mother/father'", meta)
+                        _push(pid, me, "parent-of", 0.65, "text", "mentions: 'my mother/father'", meta)
+                        _push(me, pid, "child-of", 0.65, "text", "mentions: 'my mother/father'", meta)
                 if top in {"son", "daughter", "child"} and c >= 2:
-                    if "parent-of" not in existing.get((me, pid), set()):
+                    if ("parent-of" not in existing.get((me, pid), set())
+                            and "child-of" not in existing.get((pid, me), set())):
                         meta = {"inferred": True, "source": "text", "kind": "child"}
-                        _push(me, pid, "parent-of", 0.6, "text", "mentions: 'my child'", meta)
-                        _push(pid, me, "child-of", 0.6, "text", "mentions: 'my child'", meta)
+                        _push(me, pid, "parent-of", 0.65, "text", "mentions: 'my child'", meta)
+                        _push(pid, me, "child-of", 0.65, "text", "mentions: 'my child'", meta)
                 if top in {"spouse", "partner", "husband", "wife"} and c >= 2:
-                    if "spouse-of" not in existing.get((me, pid), set()):
+                    sp_rels = existing.get((me, pid), set()) | existing.get((pid, me), set())
+                    if "spouse-of" not in sp_rels and "partner-of" not in sp_rels:
                         meta = {"inferred": True, "source": "text", "kind": "spouse"}
-                        _push(me, pid, "spouse-of", 0.55, "text", "mentions: spouse/partner", meta)
-                        _push(pid, me, "spouse-of", 0.55, "text", "mentions: spouse/partner", meta)
+                        _push(me, pid, "spouse-of", 0.65, "text", "mentions: spouse/partner", meta)
+                        _push(pid, me, "spouse-of", 0.65, "text", "mentions: spouse/partner", meta)
     except Exception:
         pass
 
@@ -742,8 +856,9 @@ async def commit_inferred_edges(db: AsyncSession, user_id: int, candidates: list
 
 async def infer_all_for_user(db: AsyncSession, user_id: int, max_people: Optional[int] = None) -> Dict[int, list[CandidateEdge]]:
     out: Dict[int, list[CandidateEdge]] = {}
-    rows = (await db.execute(select(Person.id).where(Person.owner_user_id == user_id))).scalars().all()
-    ids = [int(x) for x in rows]
+    # Include group-shared persons (owner_user_id is NULL post-migration), not just owned ones
+    people = await _load_people_for_user(db, user_id)
+    ids = list(people.keys())
     if max_people:
         ids = ids[: max_people]
     for pid in ids:

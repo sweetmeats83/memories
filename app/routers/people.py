@@ -32,7 +32,10 @@ from app.services.people import upsert_person_for_user, resolve_person
 _inferring: set[int] = set()
 from app.services.auto_tag import WHITELIST, reload_whitelist
 from app.services.kinship import classify_kinship
-from app.services.infer import infer_edges_for_person, commit_inferred_edges, infer_all_for_user, FAMILY_EDGE_TYPES
+from app.services.infer import (
+    infer_edges_for_person, commit_inferred_edges, infer_all_for_user, FAMILY_EDGE_TYPES,
+    _edge_scope_filter, _group_ids_for_user,
+)
 from app.media_pipeline import MediaPipeline, UserBucketsStrategy
 
 router = APIRouter()
@@ -49,7 +52,13 @@ _INVERT_REL: dict[str, str] = {
     'sibling-of': 'sibling-of', 'half-sibling-of': 'half-sibling-of', 'step-sibling-of': 'step-sibling-of',
     'aunt-of': 'niece-of', 'uncle-of': 'nephew-of', 'niece-of': 'aunt-of', 'nephew-of': 'uncle-of',
     'cousin-of': 'cousin-of',
+    'parent-in-law-of': 'child-in-law-of', 'child-in-law-of': 'parent-in-law-of',
+    'father-in-law-of': 'child-in-law-of', 'mother-in-law-of': 'child-in-law-of',
+    'son-in-law-of': 'parent-in-law-of', 'daughter-in-law-of': 'parent-in-law-of',
+    'sibling-in-law-of': 'sibling-in-law-of',
+    'brother-in-law-of': 'sibling-in-law-of', 'sister-in-law-of': 'sibling-in-law-of',
     'aunt-in-law-of': 'niece-in-law-of', 'niece-in-law-of': 'aunt-in-law-of',
+    'uncle-in-law-of': 'nephew-in-law-of', 'nephew-in-law-of': 'uncle-in-law-of',
     'cousin-in-law-of': 'cousin-in-law-of',
     'spouse-of': 'spouse-of', 'partner-of': 'partner-of',
     'ex-partner-of': 'ex-partner-of', 'ex-spouse-of': 'ex-spouse-of',
@@ -855,11 +864,7 @@ async def api_people_infer_preview(person_id: int, user=Depends(require_authenti
         try:
             res = await classify_kinship(db, user_id=user.id, ego_id=c.src_id, alter_id=c.dst_id)
             if res and res.label_neutral and (str(res.label_neutral).lower() != 'related'):
-                lname = res.label_neutral
-                if res.label_gendered and (not ('aunt/uncle' in lname or 'niece/nephew' in lname)):
-                    label = res.label_gendered
-                else:
-                    label = lname
+                label = res.label_gendered or res.label_neutral
         except Exception:
             label = None
         out.append({'src_id': c.src_id, 'dst_id': c.dst_id, 'rel_type': c.rel_type, 'confidence': c.confidence, 'source': c.source, 'explain': c.explain, 'label': label})
@@ -1628,9 +1633,12 @@ async def api_infer_run_all(db: AsyncSession=Depends(get_db), user=Depends(requi
 
 
 async def _do_infer_run_all(db: AsyncSession, user):
-    # Require at least 3 edges before bothering
+    # Require at least 3 edges before bothering.
+    # Count group-scoped family edges too — post-migration they have user_id NULL,
+    # so counting only user-owned edges made rich graphs read as empty.
+    _gids = await _group_ids_for_user(db, user.id)
     edge_count = (await db.execute(
-        select(func.count()).select_from(RelationshipEdge).where(RelationshipEdge.user_id == user.id)
+        select(func.count()).select_from(RelationshipEdge).where(_edge_scope_filter(user.id, _gids))
     )).scalar_one()
     if edge_count < 3:
         return {'ok': True, 'committed': 0, 'skipped': 'not_enough_edges'}

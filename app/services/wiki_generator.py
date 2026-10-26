@@ -127,6 +127,19 @@ _INVERT_REL: dict[str, str] = {
     "niece-of": "aunt-of",
     "nephew-of": "uncle-of",
     "cousin-of": "cousin-of",
+    "parent-in-law-of": "child-in-law-of",
+    "father-in-law-of": "child-in-law-of",
+    "mother-in-law-of": "child-in-law-of",
+    "child-in-law-of": "parent-in-law-of",
+    "son-in-law-of": "parent-in-law-of",
+    "daughter-in-law-of": "parent-in-law-of",
+    "sibling-in-law-of": "sibling-in-law-of",
+    "brother-in-law-of": "sibling-in-law-of",
+    "sister-in-law-of": "sibling-in-law-of",
+    "aunt-in-law-of": "niece-in-law-of",
+    "uncle-in-law-of": "nephew-in-law-of",
+    "niece-in-law-of": "aunt-in-law-of",
+    "nephew-in-law-of": "uncle-in-law-of",
     "spouse-of": "spouse-of",
     "partner-of": "partner-of",
     "ex-spouse-of": "ex-spouse-of",
@@ -160,6 +173,11 @@ _REL_SPECIFICITY: dict[str, int] = {
     "aunt-of": 8, "uncle-of": 8,
     "niece-of": 8, "nephew-of": 8,
     "cousin-of": 7,
+    "parent-in-law-of": 6, "father-in-law-of": 6, "mother-in-law-of": 6,
+    "child-in-law-of": 6, "son-in-law-of": 6, "daughter-in-law-of": 6,
+    "sibling-in-law-of": 6, "brother-in-law-of": 6, "sister-in-law-of": 6,
+    "aunt-in-law-of": 6, "uncle-in-law-of": 6,
+    "niece-in-law-of": 6, "nephew-in-law-of": 6,
     "grandparent-of": 5, "grandchild-of": 5,
     "parent-of": 5, "child-of": 5,
     "sibling-of": 5, "half-sibling-of": 5,
@@ -179,6 +197,16 @@ _GENDER_TO_MALE: dict[str, str] = {
     "step-parent-of": "step-father-of",
     "step-sibling-of": "step-brother-of",
     "adoptive-parent-of": "adoptive-father-of",
+    # infer.py always stores the neutral/feminine-looking form ("aunt-of", "niece-of",
+    # "aunt-in-law-of", ...) regardless of the actual person's gender — these entries
+    # are what make a male aunt-of/niece-of/in-law edge render correctly as uncle/nephew.
+    "aunt-of": "uncle-of",
+    "niece-of": "nephew-of",
+    "aunt-in-law-of": "uncle-in-law-of",
+    "niece-in-law-of": "nephew-in-law-of",
+    "parent-in-law-of": "father-in-law-of",
+    "child-in-law-of": "son-in-law-of",
+    "sibling-in-law-of": "brother-in-law-of",
 }
 
 _GENDER_TO_FEMALE: dict[str, str] = {
@@ -191,6 +219,12 @@ _GENDER_TO_FEMALE: dict[str, str] = {
     "step-parent-of": "step-mother-of",
     "step-sibling-of": "step-sister-of",
     "adoptive-parent-of": "adoptive-mother-of",
+    # aunt-of/niece-of/aunt-in-law-of/niece-in-law-of are already the stored feminine
+    # form, so no entry is needed for those — only the "-in-law-of" bases that don't
+    # encode gender at all need a female mapping here.
+    "parent-in-law-of": "mother-in-law-of",
+    "child-in-law-of": "daughter-in-law-of",
+    "sibling-in-law-of": "sister-in-law-of",
 }
 
 

@@ -205,12 +205,9 @@ console.info("people_graph.js — click path & hover path build loaded");
       const j = await r.json();
       const ln = (j && j.label_neutral) || null;
       const lg = (j && j.label_gendered) || null;
-      // Prefer neutral for aunt/uncle and niece/nephew families (incl. grand/great forms)
-      const nlc = String(ln || '').toLowerCase();
-      const preferNeutral = (
-        nlc.includes('aunt/uncle') || nlc.includes('niece/nephew')
-      );
-      const lbl = preferNeutral ? (ln || lg) : (lg || ln);
+      // Prefer the gendered label when the server has one (e.g. "uncle" over "aunt/uncle").
+      // Falls back to neutral only when gender is unknown for that person.
+      const lbl = lg || ln;
       if (lbl) {
         if (kinCache.size >= KIN_CACHE_MAX) kinCache.delete(kinCache.keys().next().value);
         kinCache.set(key, lbl);

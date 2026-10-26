@@ -220,8 +220,18 @@ def _gendered_variant(neutral: str, alter_gender: Optional[str]) -> Optional[str
         "niece/nephew": "nephew" if g == "male" else "niece",
         "grandaunt/uncle": "granduncle" if g == "male" else "grandaunt",
         "grandniece/nephew": "grandnephew" if g == "male" else "grandniece",
+        # In-law forms — "parent"/"child"/"sibling" don't encode gender at all, so
+        # without these a male parent-in-law would render as the neutral
+        # "parent-in-law" instead of "father-in-law" (same class of bug as aunt/uncle).
+        "parent-in-law": "father-in-law" if g == "male" else "mother-in-law",
+        "child-in-law": "son-in-law" if g == "male" else "daughter-in-law",
+        "sibling-in-law": "brother-in-law" if g == "male" else "sister-in-law",
     }
     # handle great- chains by replacing the base token (suffix replacement preserves "great-" prefixes)
+    if neutral.endswith("grandparent-in-law"):
+        return neutral.replace("grandparent-in-law", "grandfather-in-law" if g == "male" else "grandmother-in-law")
+    if neutral.endswith("grandchild-in-law"):
+        return neutral.replace("grandchild-in-law", "grandson-in-law" if g == "male" else "granddaughter-in-law")
     if neutral.endswith("grandparent"):
         return neutral.replace("grandparent", "grandfather" if g == "male" else "grandmother")
     if neutral.endswith("grandchild"):
@@ -454,7 +464,7 @@ async def classify_kinship(
         if neutral:
             return KinshipResult(
                 ego_id=ego_id, alter_id=alter_id, label_neutral=neutral,
-                label_gendered=None if neutral.endswith("-in-law") else _gendered_variant(neutral, alter_gender),
+                label_gendered=_gendered_variant(neutral, alter_gender),
                 cousin_degree=None, removed=None, ancestor_steps=None, descendant_steps=None,
                 is_half=False, is_step=False, is_adoptive=False, mrca_id=None, is_affinal=True,
             )
@@ -469,10 +479,10 @@ async def classify_kinship(
         L = (b.label_neutral or '').lower()
         if L == 'parent': neutral = 'parent-in-law'
         elif L == 'grandparent' or L.endswith('grandparent') or L.endswith('great-grandparent'):
-            neutral = f"grandparent-in-law"
+            neutral = f"{b.label_neutral}-in-law"
         elif L == 'child': neutral = 'child-in-law'
         elif L == 'grandchild' or L.endswith('grandchild') or L.endswith('great-grandchild'):
-            neutral = f"grandchild-in-law"
+            neutral = f"{b.label_neutral}-in-law"
         elif L == 'sibling': neutral = 'sibling-in-law'
         elif 'aunt/uncle' in L: neutral = b.label_neutral
         elif 'niece/nephew' in L: neutral = b.label_neutral
@@ -480,7 +490,7 @@ async def classify_kinship(
         if neutral:
             return KinshipResult(
                 ego_id=ego_id, alter_id=alter_id, label_neutral=neutral,
-                label_gendered=None, cousin_degree=None, removed=None,
+                label_gendered=_gendered_variant(neutral, alter_gender), cousin_degree=None, removed=None,
                 ancestor_steps=None, descendant_steps=None,
                 is_half=False, is_step=False, is_adoptive=False, mrca_id=None, is_affinal=True,
             )
