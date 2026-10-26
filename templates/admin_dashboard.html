@@ -1714,6 +1714,7 @@ const WeeklyUI = (() => {
         <button data-act="queue" data-id="${r.user_id}" class="pill pill-sm">Queue next</button>
         <button data-act="follow" data-id="${r.user_id}" class="pill pill-sm">Follow-up</button>
         <button data-act="copy" data-id="${r.user_id}" class="pill pill-sm">Copy link</button>
+        <button data-act="mute" data-id="${r.user_id}" data-muted="${r.muted ? '1' : '0'}" class="pill pill-sm" title="${r.muted ? 'Resume scheduled emails and reminders' : 'Stop scheduled emails and reminders'}">${r.muted ? 'Unmute' : 'Mute'}</button>
         ${r.completed_at ? `<a href="/response/latest?user_id=${r.user_id}&prompt_id=${r.current_prompt?.id||''}" class="pill pill-sm">View response</a>` : ''}
       </div>
     `;
@@ -1744,6 +1745,7 @@ const WeeklyUI = (() => {
         </div>
         <div class="mt-2 flex items-center gap-2 flex-wrap">
           ${badge(r.state, r.sent_at || r.opened_at || r.clicked_at || r.completed_at)}
+          ${r.muted ? '<span class="badge badge-xs" title="Scheduled emails and reminders are off for this user">muted</span>' : ''}
           ${r.token_status ? badge(r.token_status, r.expires_at) : ''}
           ${ (Array.isArray(r.on_deck_candidates) && r.on_deck_candidates.length)
               ? r.on_deck_candidates.slice(0,2).map((c,i)=>`<span class="chip chip-xs">On-deck ${i+1}: ${esc(c.title)}</span>`).join(' ')
@@ -1816,6 +1818,10 @@ const WeeklyUI = (() => {
       if (act === 'send') {
         optimistic();
         await fetch('/api/admin/weekly/send', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ user_id: id }) });
+        fetchRows();
+      } else if (act === 'mute') {
+        optimistic();
+        await fetch('/api/admin/weekly/mute', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ user_id: id, muted: btn.dataset.muted !== '1' }) });
         fetchRows();
       } else if (act === 'skip') {
         optimistic();

@@ -62,6 +62,8 @@ class User(Base):
     must_change_password = Column(Boolean, default=False)
     notify_new_responses = Column(Boolean, default=False, nullable=False)
     notify_daily_reminders = Column(Boolean, default=False, nullable=False)
+    # Admin-set kill switch: no scheduled weekly emails, pushes or daily reminders.
+    notifications_muted = Column(Boolean, default=False, nullable=False, server_default="false")
     relationship_status = Column(String, nullable=True)  # ✅ renamed
     goals = Column(String, nullable=True)
     # ---- Weekly pointers & state ----

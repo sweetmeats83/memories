@@ -47,6 +47,7 @@ class WeeklyRow(BaseModel):
     expires_at: Optional[str] = None
     token_status: Optional[str] = None
     token_link: Optional[str] = None
+    muted: bool = False
 
 class WeeklyListResp(BaseModel):
     rows: List[WeeklyRow]
@@ -99,7 +100,7 @@ async def admin_weekly_list(page: int=Query(1, ge=1), q: Optional[str]=Query(Non
                 p = pmap.get(pid)
                 if p:
                     cands.append({'id': p.id, 'title': p.text})
-        rows.append(WeeklyRow(user_id=u.id, display_name=_user_dn(u), email=u.email, current_prompt={'id': cur.id, 'title': cur.text, 'tags': [t.slug for t in cur.tags or []]} if cur else None, on_deck_prompt={'id': od.id, 'title': od.text} if od else None, on_deck_candidates=cands, state=u.weekly_state.value, queued_at=u.weekly_queued_at.isoformat() if u.weekly_queued_at else None, sent_at=u.weekly_sent_at.isoformat() if u.weekly_sent_at else None, opened_at=u.weekly_opened_at.isoformat() if u.weekly_opened_at else None, clicked_at=u.weekly_clicked_at.isoformat() if u.weekly_clicked_at else None, used_at=u.weekly_used_at.isoformat() if u.weekly_used_at else None, completed_at=u.weekly_completed_at.isoformat() if u.weekly_completed_at else None, skipped_at=u.weekly_skipped_at.isoformat() if u.weekly_skipped_at else None, expires_at=expires_iso, token_status=token_status, token_link=token_link))
+        rows.append(WeeklyRow(user_id=u.id, display_name=_user_dn(u), email=u.email, current_prompt={'id': cur.id, 'title': cur.text, 'tags': [t.slug for t in cur.tags or []]} if cur else None, on_deck_prompt={'id': od.id, 'title': od.text} if od else None, on_deck_candidates=cands, state=u.weekly_state.value, queued_at=u.weekly_queued_at.isoformat() if u.weekly_queued_at else None, sent_at=u.weekly_sent_at.isoformat() if u.weekly_sent_at else None, opened_at=u.weekly_opened_at.isoformat() if u.weekly_opened_at else None, clicked_at=u.weekly_clicked_at.isoformat() if u.weekly_clicked_at else None, used_at=u.weekly_used_at.isoformat() if u.weekly_used_at else None, completed_at=u.weekly_completed_at.isoformat() if u.weekly_completed_at else None, skipped_at=u.weekly_skipped_at.isoformat() if u.weekly_skipped_at else None, expires_at=expires_iso, token_status=token_status, token_link=token_link, muted=bool(u.notifications_muted)))
     return WeeklyListResp(rows=rows, total=total)
 
 class Ids(BaseModel):
@@ -123,6 +124,23 @@ async def admin_weekly_send(payload: Ids, db: AsyncSession=Depends(get_db), admi
         sent += 1
     await db.commit()
     return {'ok': True, 'sent': sent}
+
+class MuteReq(Ids):
+    muted: bool = True
+
+@router.post('/api/admin/weekly/mute')
+async def admin_weekly_mute(payload: MuteReq, db: AsyncSession=Depends(get_db), admin=Depends(require_admin_user)):
+    """Silence (or restore) scheduled weekly emails, pushes and daily reminders for users."""
+    ids = payload.user_ids or ([payload.user_id] if payload.user_id else [])
+    changed = 0
+    for uid in ids:
+        u = await db.get(User, uid)
+        if not u:
+            continue
+        u.notifications_muted = payload.muted
+        changed += 1
+    await db.commit()
+    return {'ok': True, 'muted': payload.muted, 'updated': changed}
 
 class ScheduleReq(BaseModel):
     user_ids: List[int]

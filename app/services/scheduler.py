@@ -84,6 +84,7 @@ async def job_weekly_send_scan():
         users = (await db.execute(
             select(User).where(
                 User.is_active == True,
+                User.notifications_muted.is_(False),
                 User.weekly_state.in_([
                     WeeklyState.not_sent,
                     WeeklyState.queued,
@@ -196,6 +197,7 @@ async def job_daily_reminder():
         users = (await db.execute(
             select(User).where(
                 User.is_active == True,
+                User.notifications_muted.is_(False),
                 User.weekly_current_prompt_id.isnot(None),
                 User.weekly_state.in_(pending_states),
             )
@@ -275,7 +277,7 @@ async def schedule_bulk_send(user_ids: list[int], when: datetime):
 async def job_send_one(user_id: int):
     async with async_session_maker() as db:
         u = await db.get(User, user_id)
-        if not u:
+        if not u or u.notifications_muted:
             return
         # Auto-promote on-deck to current if needed
         if not u.weekly_current_prompt_id and u.weekly_on_deck_prompt_id:
