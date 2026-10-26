@@ -6,6 +6,15 @@ It is not a social network. It is for a small, private group — one admin, a ha
 
 ![Memories app demo](memories.gif)
 
+**Technical highlights**
+
+- **Async FastAPI + PostgreSQL** with async SQLAlchemy, Alembic migrations, and fastapi-users for auth. Long-running work (transcription, LLM passes, media processing) runs as background tasks.
+- **Local-first AI.** Audio is transcribed with faster-whisper and cleaned up / compiled into memoir chapters by an Ollama-hosted LLM, so family recordings never go to a third party. See [Transcript cleanup and chapter compilation](#what-it-does) below.
+- **Chunked, resumable uploads** so large recordings survive flaky mobile connections.
+- **Kinship engine** that computes relationship labels (great-grandaunt, second cousin, mother-in-law, ...) from a family graph, rendered on an interactive canvas.
+- **Android app**: a thin WebView shell with a native background recorder, with no backend changes needed.
+- **Dockerized** with separate GPU (dev) and CPU (prod) images, plus a published Docker Hub image.
+
 ---
 
 ## Quick start
@@ -435,6 +444,17 @@ docker compose --profile dev up assets
 ```
 
 The prod image (`Dockerfile.prod`) always rebuilds Tailwind from source during `docker build`.
+
+---
+
+## Tests
+
+Unit tests cover the kinship labeling logic, transcript cleanup (with the Ollama call mocked), and the chapter-compilation text helpers. They need no database or running services.
+
+```bash
+pip install -r requirements.txt pytest
+pytest
+```
 
 ---
 
