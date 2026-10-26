@@ -1,7 +1,5 @@
 # Memories
 
-> **This app is completely vibe coded.**
-
 A private family storytelling platform. The core idea: send a link to an elder, they tap it on their phone and record a story. No account needed. You get the audio (and optionally a transcript) tied to a chapter in your family's archive.
 
 It is not a social network. It is for a small, private group — one admin, a handful of storytellers.
@@ -128,6 +126,18 @@ Record audio directly in the browser, or upload audio, video, or images. ffmpeg 
 
 **Transcription**
 Optional. If you run the GPU image (Dockerfile) with a CUDA-capable host, faster-whisper transcribes audio automatically in the background. The CPU/prod image (Dockerfile.prod) skips this. Transcripts appear alongside the recording and can be edited.
+
+**Transcript cleanup and chapter compilation (LLM)**
+Both run on a local Ollama model, so recordings and transcripts never leave your server. The guiding principle is that the storyteller's words are the source material and the model is an editor, not an author.
+
+- *Transcript cleanup* ([app/llm_client.py](app/llm_client.py), `polish_text`): a single low-temperature (0.2) pass that fixes punctuation, casing and obvious transcription errors. The prompt tells the model to keep the speaker's voice and meaning, not to add facts or invent content, and to stay as one paragraph unless there are clear breaks. A "paragraphs" style optionally splits the text into readable paragraphs. Model preambles ("Here is the cleaned transcript:") and any thinking blocks are stripped from the output.
+- *Chapter compilation* ([app/services/chapter_compile.py](app/services/chapter_compile.py)): a four-pass pipeline over a user's answers for one chapter.
+  1. **Group:** cluster the question/answer pairs into 3-6 thematic sections (JSON output). Per-chapter description and editorial guidance set by the admin are included in the prompt.
+  2. **Draft:** write each section as first-person prose. The prompt requires using only names, places, dates and events that appear in the answers, keeping vague answers vague rather than filling gaps with guesses, and preserving the person's own phrasing and vocabulary.
+  3. **Assemble:** add an opening, transitions and a closing, ordering sections naturally. This pass is explicitly "light editing only" and may not introduce any detail not already in the drafts.
+  4. **Gap analysis:** suggest 3-6 follow-up questions for things that seem missing or thin, which the admin can turn into new prompts.
+
+  Temperatures are kept low (0.15 for JSON passes, 0.3 for prose) to favor fidelity over flourish. Each compilation is saved as a versioned draft along with the source responses that fed each section, so it can be traced back to what was actually said. If a pass fails, the pipeline falls back to the unpolished draft rather than inventing content.
 
 **People graph**
 An interactive canvas showing family members and relationships. You can add people, draw edges between them (parent, spouse, sibling, etc.), and the app infers additional relationships automatically. A gold path line traces how two people are related through the actual genealogical chain. Kinship labels (great-grandaunt, second cousin, etc.) are computed from the graph structure.
