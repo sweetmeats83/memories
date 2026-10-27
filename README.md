@@ -10,6 +10,7 @@ It is not a social network. It is for a small, private group — one admin, a ha
 
 - **Async FastAPI + PostgreSQL** with async SQLAlchemy, Alembic migrations, and fastapi-users for auth. Long-running work (transcription, LLM passes, media processing) runs as background tasks.
 - **Local-first AI.** Audio is transcribed with faster-whisper and cleaned up / compiled into memoir chapters by an Ollama-hosted LLM, so family recordings never go to a third party. See [Transcript cleanup and chapter compilation](#what-it-does) below.
+- **Family wiki.** Wikipedia-style articles for every person, place and event in your family's stories, generated from what the storytellers actually said and cited back to the source recordings. See [Family wiki](#what-it-does) below.
 - **Chunked, resumable uploads** so large recordings survive flaky mobile connections.
 - **Kinship engine** that computes relationship labels (great-grandaunt, second cousin, mother-in-law, ...) from a family graph, rendered on an interactive canvas.
 - **Android app**: a thin WebView shell with a native background recorder, with no backend changes needed.
@@ -147,6 +148,14 @@ Both run on a local Ollama model, so recordings and transcripts never leave your
   4. **Gap analysis:** suggest 3-6 follow-up questions for things that seem missing or thin, which the admin can turn into new prompts.
 
   Temperatures are kept low (0.15 for JSON passes, 0.3 for prose) to favor fidelity over flourish. Each compilation is saved as a versioned draft along with the source responses that fed each section, so it can be traced back to what was actually said. If a pass fails, the pipeline falls back to the unpolished draft rather than inventing content.
+
+**Family wiki**
+Under `/wiki`, every person, place and event mentioned in the stories gets its own article, written in the third person and shared by everyone in the family group ([app/services/wiki_generator.py](app/services/wiki_generator.py), [app/routers/wiki.py](app/routers/wiki.py)).
+
+- *Grounded generation:* the LLM first extracts claims about the subject from each story, then consolidates them across narrators, and only then writes the article. Every statement carries a citation key that is resolved into numbered footnotes pointing back to the narrator's response, so you can see who said what.
+- *Linked:* `[[wikilinks]]` connect articles to each other, and people, places and events are cross-linked through the same entity tables that power the people graph.
+- *Editable and reversible:* readers can add their own notes (kept across regeneration) or override the article body entirely. Every AI regeneration or user edit saves a revision that can be restored.
+- *Maintained:* generation runs in the background with a status per article, and a lint endpoint (`/api/wiki/lint`) flags entities with no article, articles that are stale because new stories were added, and generations that errored.
 
 **People graph**
 An interactive canvas showing family members and relationships. You can add people, draw edges between them (parent, spouse, sibling, etc.), and the app infers additional relationships automatically. A gold path line traces how two people are related through the actual genealogical chain. Kinship labels (great-grandaunt, second cousin, etc.) are computed from the graph structure.
