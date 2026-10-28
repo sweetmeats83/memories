@@ -105,3 +105,50 @@ def test_polish_text_empty_response_is_an_error(monkeypatch):
     monkeypatch.setattr(llm_client.httpx, "AsyncClient", _fake_client({"response": "<think>x</think>"}))
     with pytest.raises(OllamaError):
         asyncio.run(polish_text("hello"))
+
+
+# --- fidelity guard ---------------------------------------------------------
+
+ORIGINAL = (
+    "so um we moved to ohio in nineteen sixty two and my dad got a job at the steel mill "
+    "and mom stayed home with me and my brother"
+)
+
+
+def test_fidelity_accepts_light_cleanup():
+    cleaned = (
+        "We moved to Ohio in 1962, and my dad got a job at the steel mill. "
+        "Mom stayed home with me and my brother."
+    )
+    assert llm_client.check_fidelity(ORIGINAL, cleaned) == []
+
+
+def test_fidelity_flags_summary():
+    problems = llm_client.check_fidelity(ORIGINAL, "The family relocated to Ohio.")
+    assert problems
+
+
+def test_fidelity_flags_embellishment():
+    cleaned = ORIGINAL + " and we visited Aunt Margaret in Cleveland every Christmas with Uncle Walter"
+    problems = llm_client.check_fidelity(ORIGINAL, cleaned)
+    assert any("longer" in p or "names" in p for p in problems)
+
+
+def test_fidelity_flags_invented_names_and_numbers():
+    original = "we lived on a farm and my dad grew corn and we had a dog and some chickens out back"
+    cleaned = "We lived on a farm in 1950, and my dad, Walter, grew corn. We had a dog, Rex, and some chickens out back."
+    problems = llm_client.check_fidelity(original, cleaned)
+    assert any("numbers" in p for p in problems)
+    assert any("names" in p for p in problems)
+
+
+def test_fidelity_skips_very_short_text():
+    assert llm_client.check_fidelity("um hello there", "Completely different.") == []
+
+
+def test_polish_text_rejects_unfaithful_output(monkeypatch):
+    monkeypatch.setattr(
+        llm_client.httpx, "AsyncClient", _fake_client({"response": "The family relocated to Ohio."})
+    )
+    with pytest.raises(llm_client.UnfaithfulOutputError):
+        asyncio.run(polish_text(ORIGINAL))

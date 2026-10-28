@@ -61,6 +61,69 @@ def _sanitize_llm_text(out: str) -> str:
     return s
 
 
+class UnfaithfulOutputError(OllamaError):
+    """The model's cleanup drifted too far from the original transcript."""
+
+
+_WORD_RE = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z]+)?")
+_FILLERS = {"um", "uh", "uhm", "er", "erm", "hmm", "ah", "like", "so", "well", "yeah", "you", "know", "mean"}
+_NUMBER_WORDS = {
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+    "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+    "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred",
+    "thousand", "first", "second", "third", "fourth", "fifth",
+}
+_MIN_WORDS_TO_CHECK = 8  # too little text to judge reliably
+
+
+def check_fidelity(original: str, cleaned: str) -> list[str]:
+    """
+    Cheap guard against a cleanup that rewrote, summarized, or embellished the speaker's words.
+    Returns a list of human-readable problems (empty means the output looks faithful).
+    Deliberately lenient: cleanup may drop fillers, fix punctuation, and correct a few words.
+    """
+    orig_words = _WORD_RE.findall(original or "")
+    new_words = _WORD_RE.findall(cleaned or "")
+    if len(orig_words) < _MIN_WORDS_TO_CHECK:
+        return []
+
+    problems: list[str] = []
+    orig_lc = [w.lower() for w in orig_words]
+    new_lc = {w.lower() for w in new_words}
+
+    ratio = len(new_words) / len(orig_words)
+    if ratio < 0.6:
+        problems.append(f"output is much shorter than the original ({ratio:.0%} of the words)")
+    elif ratio > 1.3:
+        problems.append(f"output is much longer than the original ({ratio:.0%} of the words)")
+
+    content = [w for w in orig_lc if w not in _FILLERS]
+    if content:
+        recall = sum(1 for w in content if w in new_lc) / len(content)
+        if recall < 0.8:
+            problems.append(f"only {recall:.0%} of the original words survive")
+
+    # Numbers: digits may legitimately replace spelled-out numbers ("nineteen sixty two" -> 1962),
+    # so only flag new digits when the original had no number words to convert.
+    orig_digits = {re.sub(r"[,.]", "", t) for t in re.findall(r"\d[\d,.]*", original)}
+    new_digits = {re.sub(r"[,.]", "", t) for t in re.findall(r"\d[\d,.]*", cleaned)}
+    if (new_digits - orig_digits) and not (set(orig_lc) & _NUMBER_WORDS):
+        problems.append("introduces numbers that are not in the original")
+
+    # Names: capitalized words mid-sentence that the speaker never said. One may be a corrected
+    # spelling; two or more suggests invented people or places.
+    orig_set = set(orig_lc)
+    new_names = set()
+    for m in re.finditer(r"(?<![.!?]\s)(?<!^)\b([A-Z][a-z]+)\b", cleaned):
+        w = m.group(1).lower()
+        if w not in orig_set:
+            new_names.add(w)
+    if len(new_names) >= 2:
+        problems.append("introduces names that are not in the original: " + ", ".join(sorted(new_names)[:5]))
+
+    return problems
+
+
 async def polish_text(text: str, style: str = "clean") -> str:
     """
     Send text to Ollama /api/generate for a light-touch cleanup suitable for transcripts.
@@ -101,7 +164,12 @@ async def polish_text(text: str, style: str = "clean") -> str:
     out = _strip_thinking((data or {}).get("response", ""))
     if not out:
         raise OllamaError("Empty response from Ollama.")
-    return _sanitize_llm_text(out)
+    cleaned = _sanitize_llm_text(out)
+    problems = check_fidelity(text, cleaned)
+    if problems:
+        # Refuse to return text that may have lost or invented content; callers keep the original.
+        raise UnfaithfulOutputError("Cleanup rejected: " + "; ".join(problems))
+    return cleaned
 # llm_client.py (add)
 
 #------Prompt curation------------
